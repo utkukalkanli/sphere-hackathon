@@ -1,0 +1,53 @@
+# Decisions
+
+Newest first. Each entry says what was decided, when, and why. If a decision is reversed, replace
+the entry and say what changed.
+
+## Pipeline
+
+- **Start with a deterministic step, not a model** (2026-11-11, user). The first step builds the
+  bounding box from `facts.json` and cuts away what the views show as white. It is fast, cannot
+  hallucinate, and gives later steps a solid that already contains the part.
+- **Keep the isometric cut on** (2026-11-11). It raises the eval mean from 0.837 to 0.845, never cut
+  below the true volume, and the timeout bounds its cost. The gain is small, so do not spend time
+  making it faster.
+- **Use the `facts.json` hole list as step 2** (2026-11-11, user agreed). Silhouettes only find
+  holes that go all the way through along a view direction; the list also has blind and hidden
+  holes, with diameter, axis, length and centre. Still no model needed.
+- **When a hole group lists several lengths, cut the shortest** (2026-11-11). `lengths` holds the
+  distinct lengths of the group, not one per centre, so which hole has which is unknown. Cutting too
+  little costs less than cutting real material.
+- **Never cut below the true volume** (2026-11-11). `facts.json` gives the part's volume; a cut that
+  leaves less than 97 % of it is undone. Every step so far only removes material, so the solid
+  should always contain the part.
+- **Every cut runs in a child process with a timeout** (2026-11-11). OpenCascade booleans can hang
+  for minutes and cannot be interrupted in-process; the run has 20 minutes for all parts.
+- **Postponed: true arcs and circles instead of polygons** (2026-11-11). It would shrink the files
+  and speed up cuts, but adds little overlap.
+
+## Evaluation
+
+- **Local score is the volume ratio `min/max`** (2026-11-11). It needs no ground-truth geometry at
+  run time and matched the sampled overlap on 40 parts. It stops being valid once a step can remove
+  real material or add material; then use `--iou`.
+- **Routine evals use a fixed 24-part sample with caching** (2026-11-11, user). The user does not
+  want minutes of laptop compute on every change. The full 266 parts only on request.
+- **A 266-part local eval set in the organisers' format** (2026-11-11). The practice set has 9 parts
+  and no ground truth; the hidden set is different parts, so we need many parts to avoid overfitting.
+
+## Dashboard
+
+- **Three columns: inputs, our solid with a strip of per-step solids, ground truth**
+  (2026-11-11, user). Dark theme, minimal, little text. The user rejected the earlier layouts as too
+  complicated and too wordy.
+- **New pipeline steps need no UI change** (2026-11-11). A `with trace.step(...)` in the agent is
+  enough; the solid after each step is saved as a stage `.stp` and shown in the strip.
+- **Tracing is off in the Docker image** (`ENV TRACE=0`) (2026-11-11). It is a development aid and
+  the container may only write to the output directory and `/tmp`.
+
+## Repo
+
+- **Feature branches, merge to `main` only to submit** (2026-11-11). CI submits on every push to
+  `main`.
+- **`datasets/eval` is committed; raw downloads are not** (2026-11-11). Teammates get the eval set
+  from git; `datasets/raw` and `datasets/scan` are tens of GB.
