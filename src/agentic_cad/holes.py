@@ -116,3 +116,27 @@ def cut_holes(shape: TopoDS_Shape, holes: list[Cylinder]) -> TopoDS_Shape | None
     if solid is None or volume(solid) <= 0 or not BRepCheck_Analyzer(solid).IsValid():
         return None
     return solid
+
+
+def outline_hints(case_dir: Path | None, u: str, v: str, along: str) -> dict:
+    """What facts.json says about circles in the silhouette seen along box axis `along`, whose
+    horizontal and vertical directions are the box axes `u` and `v`: every listed radius, and the
+    projected centre and radius of each full cylinder whose axis points along the view."""
+    try:
+        facts = json.loads((case_dir / "facts.json").read_text())
+    except Exception:
+        return {}
+    index = {"x": 0, "y": 1, "z": 2}
+    radii = set()
+    for entry in (facts.get("cylindrical_holes_and_bores") or []) + (facts.get("cylindrical_shafts_and_bosses") or []) \
+            + (facts.get("partial_cylinders_arcs") or []):
+        if entry.get("diameter"):
+            radii.add(float(entry["diameter"]) / 2)
+    for entry in facts.get("fillets_rounds_from_cylinders") or []:
+        if entry.get("radius"):
+            radii.add(float(entry["radius"]))
+    circles = []
+    for cylinder in _cylinders(facts.get("cylindrical_holes_and_bores")) + _cylinders(facts.get("cylindrical_shafts_and_bosses")):
+        if abs(cylinder.axis[index[along]]) > 0.999:
+            circles.append(((cylinder.centre[index[u]], cylinder.centre[index[v]]), cylinder.radius))
+    return {"radii": sorted(radii), "circles": circles}

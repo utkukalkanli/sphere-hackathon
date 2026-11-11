@@ -1,6 +1,6 @@
 # Project state
 
-Last updated: 2026-11-11, about 19:50 CET.
+Last updated: 2026-11-11, about 20:20 CET.
 
 ## Pipeline
 
@@ -8,7 +8,7 @@ Everything so far is deterministic. No model is called anywhere yet.
 
 | step | file | status |
 | --- | --- | --- |
-| 1. Visual hull: a box with the `facts.json` dimensions, cut through wherever a view is white (front/back, right/left, top/bottom). A fourth cut along the isometric views is implemented but off since 2026-11-11 | `src/agentic_cad/visual_hull.py` | committed on `feat/visual-hull` |
+| 1. Visual hull: a box with the `facts.json` dimensions, cut through wherever a view is white (front/back, right/left, top/bottom). Before cutting, each traced outline is rebuilt from straight lines and circular arcs (`outline_fit.py`). A fourth cut along the isometric views is implemented but off since 2026-11-11 | `src/agentic_cad/visual_hull.py`, `src/agentic_cad/outline_fit.py` | committed on `feat/visual-hull`; the outline fitting is **uncommitted** |
 | 2. Holes: every cylindrical hole listed in `facts.json` is cut as a cylinder; a thinner coaxial boss inside a bore is kept | `src/agentic_cad/holes.py` | committed on `feat/visual-hull`, measured (below) |
 | 3. Anything that finds pockets and other inner cavities | none | not started |
 
@@ -64,23 +64,25 @@ Step 1 on the practice set, our volume / true volume (1 is perfect): parts 1, 2,
 between 1.07 and 1.26; part 6 is 3.66, part 7 is 2.54, part 9 is 2.68. Those three have inner
 cavities that no silhouette shows.
 
-Steps 1 + 2 without the isometric cut (the current pipeline), fixed 24-part eval sample, 2026-11-11.
-Score after each step:
+Steps 1 + 2 with fitted outlines, no isometric cut (the current pipeline), fixed 24-part eval
+sample, 2026-11-11. Score after each step, sampled IoU against the ground truth, and faces per solid:
 
-| | box | front/back | right/left | top/bottom | holes |
-| --- | --- | --- | --- | --- | --- |
-| simple (8) | 0.471 | 0.533 | 0.878 | 0.955 | 0.956 |
-| medium (8) | 0.511 | 0.621 | 0.804 | 0.837 | 0.841 |
-| complex (8) | 0.398 | 0.435 | 0.470 | 0.674 | 0.700 |
-| all (24) | 0.460 | 0.530 | 0.717 | 0.822 | 0.832 |
+| | box | front/back | right/left | top/bottom | holes | IoU | faces |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| simple (8) | 0.471 | 0.533 | 0.879 | 0.956 | 0.956 | 0.960 | 24 |
+| medium (8) | 0.511 | 0.622 | 0.805 | 0.839 | 0.842 | 0.838 | 33 |
+| complex (8) | 0.398 | 0.436 | 0.470 | 0.694 | 0.720 | 0.705 | 639 |
+| all (24) | 0.460 | 0.531 | 0.718 | 0.830 | 0.839 | 0.834 | 232 |
 
-- With the isometric cut the same sample scored 0.839 (holes included), and its sampled IoU against
-  the ground truth was 0.834 with holes, 0.824 without. Holes were cut on 14 of the 24 parts; none
-  got worse, the best gained 17 points (part 171).
-- Sampled IoU of the current pipeline on the sample: 0.827 (simple 0.956, medium 0.838, complex 0.688).
-- Lowest: parts 99 (0.11) and 51 (0.14), thin-walled parts whose true volume is 2 to 4 % of the box.
+- Outline fitting, same sample: traced pixels score 0.832 with 1245 faces per solid (IoU 0.827);
+  lines only 0.839 with 388 faces; lines and arcs 0.839 with 232 faces (IoU 0.834). The gain in score
+  is mostly part 99, whose cut now finishes inside the timeout (0.11 to 0.26).
+- Holes (measured with traced pixels and the isometric cut on): sampled IoU 0.834 with holes, 0.824
+  without. Holes were cut on 14 of the 24 parts; none got worse, the best gained 17 points (part 171).
+- Lowest: parts 51 (0.14) and 99 (0.26), thin-walled parts whose true volume is 2 to 4 % of the box.
 
-Where the remaining excess material is (same sample, 1200 sampled points per part, 2026-11-11):
+Where the remaining excess material is (same sample, traced-pixel outlines, 1200 sampled points per
+part, 2026-11-11):
 97 % of the points that are inside our solid but outside the ground truth can be seen from outside
 along +-X, +-Y or +-Z. Only 3 % are hidden from all six directions. If everything visible from an
 axis direction were removed, the sampled IoU would go from 0.827 to 0.970 (complex: 0.688 to 0.914).
@@ -89,7 +91,8 @@ We cut almost nothing that belongs to the part (0.4 % of the true volume, in com
 Practice set, steps 1 + 2 without the isometric cut, our volume / true volume: part 8 is 1.01,
 parts 1, 2, 3, 4, 5 are between 1.07 and 1.25, part 9 is 1.89, part 7 is 2.20, part 6 is 3.81.
 
-Run time and Docker, 2026-11-11: the 9 practice parts take 19 s alone on the laptop. The image
+Run time and Docker, 2026-11-11: the 9 practice parts take 8 s alone on the laptop with the fitted
+outlines (19 s with traced pixels, which is what the Docker check below was run with). The image
 builds for `linux/amd64` and runs as a non-root user with read-only inputs in 50 s (emulated on an
 ARM laptop); its 9 outputs have the same volumes as the local ones to 11 digits.
 
@@ -97,8 +100,8 @@ ARM laptop); its 9 outputs have the same volumes as the local ones to 11 digits.
 
 - Inner cavities and pockets are not found by either step. This is the largest loss, mostly on
   complex parts.
-- Round outlines come out as polygons traced from pixels, so output files are 1 to 7 MB with
-  hundreds of planar faces.
+- Outlines that are neither straight nor circular (splines, ellipses of slanted cylinders) stay
+  polylines. Practice outputs are now 0.05 to 1.3 MB (4.4 MB in total, was 44 MB).
 - The timeouts make the output depend on how fast the machine is: a cut that finishes here may time
   out on the organisers' machine and give a different solid.
 - Not yet submitted: the image and the outputs are ready (see Measurements), but nothing is on `main`.

@@ -16,7 +16,6 @@ Remove a question when it is answered, and record the answer in `decisions.md` o
 - **What exactly does the organisers' similarity score measure?** The eval pipeline is hidden. We
   assume something close to volume overlap. If it is surface-based (for example Chamfer distance) or
   counts faces, polygonal outlines could cost more than we think.
-- **Do large polygonal `.stp` files (1 to 7 MB) cause problems on their side?**
 
 ## Pipeline
 

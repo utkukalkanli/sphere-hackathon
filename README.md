@@ -41,7 +41,9 @@ account).
 Step 1 is deterministic, with no model involved ([src/agentic_cad/visual_hull.py](src/agentic_cad/visual_hull.py)):
 a box with the bounding-box dimensions from `facts.json` is cut through, view by view, wherever a
 view is white. Front/back, right/left and top/bottom each give one cutting direction. The result is
-the largest solid that matches those silhouettes. (Cutting along the isometric views as well is
+the largest solid that matches those silhouettes. Each outline is rebuilt from straight lines and
+circular arcs before cutting ([src/agentic_cad/outline_fit.py](src/agentic_cad/outline_fit.py)), so the
+faces come out flat and cylindrical instead of following the pixel grid. (Cutting along the isometric views as well is
 implemented but off: it gains under one point of overlap, is the slowest cut, and leaves slanted
 faces that are not features of the part.)
 

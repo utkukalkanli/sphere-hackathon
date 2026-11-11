@@ -27,8 +27,11 @@ the entry and say what changed.
   size still overlaps the part.
 - **Every cut runs in a child process with a timeout** (2026-11-11). OpenCascade booleans can hang
   for minutes and cannot be interrupted in-process; the run has 20 minutes for all parts.
-- **Postponed: true arcs and circles instead of polygons** (2026-11-11). It would shrink the files
-  and speed up cuts, but adds little overlap.
+- **Outlines are rebuilt from lines and circular arcs before cutting** (2026-11-11, user; was
+  postponed). Traced pixel outlines gave staircase faces, which the user saw as the main visible
+  defect. Fitted circles snap to the radii and hole centres of `facts.json` when they still fit the
+  pixels. If a cut with the fitted outline fails or goes below the true volume, that direction is
+  cut again with the traced pixels.
 
 ## Evaluation
 

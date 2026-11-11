@@ -9,6 +9,7 @@ import tempfile
 from pathlib import Path
 
 from agentic_cad import holes as hl
+from agentic_cad import outline_fit as of
 from agentic_cad import trace
 from agentic_cad import visual_hull as vh
 
@@ -93,22 +94,38 @@ class VisualHullAgent:
 
     def _cut_direction(self, step, name: str, views: list[Path], dims: dict, solid, target: float | None):
         """The solid cut along one direction, or None when there is nothing usable to cut with."""
-        if name == "iso":
-            silhouette = vh.iso_silhouette(views, dims, solid)
-        else:
-            silhouette = vh.ortho_silhouette(name, views, dims)
+        case_dir = views[0].parent.parent if views else None
+
+        def silhouette_for(mode: str | None):
+            if name == "iso":
+                return vh.iso_silhouette(views, dims, solid)
+            spec = vh.ORTHO[name]
+            hints = hl.outline_hints(case_dir, spec["u"], spec["v"], spec["along"])
+            return vh.ortho_silhouette(name, views, dims, hints, mode)
+
+        silhouette = silhouette_for(None)
         if silhouette is None:
             step.fail("no usable silhouette for this direction; nothing cut")
             return None
-        holes = sum(len(o["holes"]) for o in silhouette.outlines)
-        points = sum(len(o["outer"]) + sum(len(h) for h in o["holes"]) for o in silhouette.outlines)
-        step.log(f"views {' + '.join(silhouette.views)}: {len(silhouette.outlines)} outline(s), "
-                 f"{holes} hole(s), {points} points")
+        loops = [loop for o in silhouette.outlines for loop in (o["outer"], *o["holes"])]
+        kinds = {kind: sum(of.counts(loop)[kind] for loop in loops) for kind in ("line", "arc", "circle")}
+        step.log(f"views {' + '.join(silhouette.views)}: {len(loops)} loop(s) of {kinds['line']} lines, "
+                 f"{kinds['arc']} arcs, {kinds['circle']} full circles")
+        step.metric(**{f"{kind}s": count for kind, count in kinds.items()})
         if silhouette.info:
             step.log(silhouette.info)
         step.attach(f"silhouette_{name}.png", vh.preview(silhouette))
         timeout = ISO_CUT_TIMEOUT if name == "iso" else CUT_TIMEOUT
-        return self._guarded(step, solid, target, lambda: self.cutter.cut(solid, silhouette, timeout))
+        carved = self._guarded(step, solid, target, lambda: self.cutter.cut(solid, silhouette, timeout), quiet=True)
+        if carved is None and name != "iso" and vh.OUTLINE != "pixels":
+            # The fitted outline could not be cut (or cut too much): use the outline as traced
+            step.log("cutting with the fitted outline failed; retrying with the traced pixels", level="warning")
+            traced = silhouette_for("pixels")
+            if traced is not None:
+                carved = self._guarded(step, solid, target, lambda: self.cutter.cut(solid, traced, timeout), quiet=True)
+        if carved is None:
+            step.fail("the cut gave no valid solid; keeping the previous one")
+        return carved
 
     # -- step 2 --------------------------------------------------------------------------------
 

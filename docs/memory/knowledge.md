@@ -82,7 +82,14 @@ organisers' format:
 
 - **Straight cuts**: the two opposite views are mirrored onto each other and joined; a pixel is cut
   only if both views show background there. A pixel is background when its darkest channel is above
-  215. Outlines are simplified to 0.6 px.
+  215.
+- **Outlines** (`outline_fit.py`): the traced pixel outline is split at the corners of a 1.2 px
+  polygon; runs that fit a circle within 1 px and sweep at least 12 degrees become arcs, a whole
+  outline that fits a circle becomes a full circle, the rest are lines. Lines drifting under 1 px
+  (or 0.4 %) are made exactly horizontal or vertical. `HULL_OUTLINE=pixels|lines|arcs` switches the
+  mode (default `arcs`); `pixels` is the old 0.6 px polygon.
+- **The renders are hardly anti-aliased** (3 grey levels between part and background), so there is
+  no sub-pixel edge information to recover; a traced slanted edge is a true staircase.
 - **The solid is built with its bounding-box min corner at the origin**, the same frame as the
   positions in `facts.json` and the brief.
 - **`Cutter.run(operation, shape, argument, timeout)`** runs any boolean in a spawned child process.

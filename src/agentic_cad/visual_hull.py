@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import multiprocessing
+import os
 import re
 import tempfile
 from dataclasses import dataclass, field
@@ -29,14 +30,15 @@ import cv2
 import numpy as np
 from OCP.BRep import BRep_Builder, BRep_Tool
 from OCP.BRepAlgoAPI import BRepAlgoAPI_Common, BRepAlgoAPI_Fuse
-from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace, BRepBuilderAPI_MakePolygon
+from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeEdge, BRepBuilderAPI_MakeFace, BRepBuilderAPI_MakeWire
 from OCP.BRepCheck import BRepCheck_Analyzer
 from OCP.BRepGProp import BRepGProp
 from OCP.BRepMesh import BRepMesh_IncrementalMesh
 from OCP.BRepTools import BRepTools
 from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox, BRepPrimAPI_MakePrism
 from OCP.GProp import GProp_GProps
-from OCP.gp import gp_Pnt, gp_Vec
+from OCP.GC import GC_MakeArcOfCircle
+from OCP.gp import gp_Ax2, gp_Circ, gp_Dir, gp_Pnt, gp_Vec
 from OCP.IFSelect import IFSelect_RetDone
 from OCP.Interface import Interface_Static
 from OCP.ShapeUpgrade import ShapeUpgrade_UnifySameDomain
@@ -46,8 +48,13 @@ from OCP.TopExp import TopExp_Explorer
 from OCP.TopLoc import TopLoc_Location
 from OCP.TopoDS import TopoDS, TopoDS_Shape
 
+from agentic_cad import outline_fit
+
 BACKGROUND_MIN = 215   # a pixel is background when its darkest channel is above this
-SIMPLIFY_PX = 0.6      # Douglas-Peucker tolerance for the silhouette outlines, in pixels
+SIMPLIFY_PX = 0.6      # Douglas-Peucker tolerance for outlines kept as traced pixels
+# How outlines are rebuilt before cutting: "arcs" (lines and circular arcs, the default), "lines"
+# (straight lines only) or "pixels" (the traced polygon, staircase edges and all)
+OUTLINE = os.environ.get("HULL_OUTLINE", "arcs")
 MIN_AREA_PX = 12.0     # outlines smaller than this are rendering noise
 FRAME_MARGIN = 1.04    # the renders leave 4 % around the framed extent (half the image = extent * 1.04)
 ISO_CONTAINED = 0.998  # share of the iso silhouette that must fall inside the projected hull
@@ -71,7 +78,7 @@ class Silhouette:
     name: str                 # front_back, right_left, top_bottom, iso
     views: list[str]          # names of the views it was made from
     mask: np.ndarray          # uint8, 255 = part
-    outlines: list[dict]      # [{"outer": Nx2 float (a, b) in mm, "holes": [Nx2, ...]}]
+    outlines: list[dict]      # [{"outer": loop, "holes": [loop, ...]}], loops as in outline_fit, (a, b) in mm
     origin: np.ndarray        # 3D point of (a, b) = (0, 0), in front of the box
     right: np.ndarray         # 3D direction of a
     up: np.ndarray            # 3D direction of b
@@ -122,29 +129,44 @@ def find_view(views: list[Path], name: str) -> Path | None:
     return next((v for v in views if re.fullmatch(rf"view_\d+_{name}", v.stem)), None)
 
 
-def trace_outlines(mask: np.ndarray, to_mm) -> list[dict]:
-    """Outlines of the part in a mask (255 = part), each with its holes; `to_mm` maps Nx2 pixels to mm."""
+def trace_outlines(mask: np.ndarray, to_mm, px: float, known: dict | None = None,
+                   mode: str | None = None) -> list[dict]:
+    """Outlines of the part in a mask (255 = part), each with its holes, as loops of lines and arcs.
+    `to_mm` maps Nx2 pixels to mm, `px` is the size of a pixel in mm, `known` holds radii and circles
+    from facts.json that fitted circles may snap to."""
+    mode = mode or OUTLINE
     contours, hierarchy = cv2.findContours(mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE)
     if hierarchy is None:
         return []
 
-    def simplify(contour) -> np.ndarray | None:
+    def loop_of(contour) -> list | None:
         if cv2.contourArea(contour) < MIN_AREA_PX:
             return None
-        points = cv2.approxPolyDP(contour, SIMPLIFY_PX, True).reshape(-1, 2).astype(float)
-        return to_mm(points) if len(points) >= 3 else None
+        loop = []
+        if mode != "pixels":
+            try:
+                loop = outline_fit.fit_loop(contour, to_mm, px, known, arcs=mode == "arcs")
+            except Exception:
+                loop = []  # fall back to the traced polygon below
+        if not loop:
+            points = cv2.approxPolyDP(contour, SIMPLIFY_PX, True).reshape(-1, 2).astype(float)
+            if len(points) < 3:
+                return None
+            points = [tuple(map(float, p)) for p in to_mm(points)]
+            loop = [("line", a, b) for a, b in zip(points, points[1:] + points[:1])]
+        return loop
 
     outlines = []
     for index, contour in enumerate(contours):
         if hierarchy[0][index][3] != -1:  # a hole: handled with its parent
             continue
-        outer = simplify(contour)
+        outer = loop_of(contour)
         if outer is None:
             continue
         holes = []
         child = hierarchy[0][index][2]
         while child != -1:
-            hole = simplify(contours[child])
+            hole = loop_of(contours[child])
             if hole is not None:
                 holes.append(hole)
             child = hierarchy[0][child][0]
@@ -152,7 +174,8 @@ def trace_outlines(mask: np.ndarray, to_mm) -> list[dict]:
     return outlines
 
 
-def ortho_silhouette(name: str, views: list[Path], dims: dict[str, float]) -> Silhouette | None:
+def ortho_silhouette(name: str, views: list[Path], dims: dict[str, float], known: dict | None = None,
+                     mode: str | None = None) -> Silhouette | None:
     spec = ORTHO[name]
     masks, used = [], []
     for index, view in enumerate(spec["views"]):
@@ -177,8 +200,9 @@ def ortho_silhouette(name: str, views: list[Path], dims: dict[str, float]) -> Si
     mask = part.astype(np.uint8) * 255
 
     du, dv = dims[spec["u"]], dims[spec["v"]]
+    px = (du / (width - 1) + dv / (height - 1)) / 2
     outlines = trace_outlines(mask, lambda p: np.column_stack(
-        [p[:, 0] / (width - 1) * du, (height - 1 - p[:, 1]) / (height - 1) * dv]))
+        [p[:, 0] / (width - 1) * du, (height - 1 - p[:, 1]) / (height - 1) * dv]), px, known, mode)
     if not outlines:
         return None
     margin = 0.05 * max(dims.values())
@@ -283,7 +307,7 @@ def iso_silhouette(views: list[Path], dims: dict[str, float], hull: TopoDS_Shape
     label, mm_per_px = chosen
 
     outlines = trace_outlines(mask, lambda p: np.column_stack(
-        [(p[:, 0] + 0.5 - half_px) * mm_per_px, (half_px - 0.5 - p[:, 1]) * mm_per_px]))
+        [(p[:, 0] + 0.5 - half_px) * mm_per_px, (half_px - 0.5 - p[:, 1]) * mm_per_px]), mm_per_px)
     if not outlines:
         return None
     reach = 2 * float(np.linalg.norm(centre))  # further than any point of the box from its centre
@@ -295,19 +319,29 @@ def iso_silhouette(views: list[Path], dims: dict[str, float], hull: TopoDS_Shape
 
 # -- solids ----------------------------------------------------------------------------------------
 
-def _signed_area(points: np.ndarray) -> float:
-    x, y = points[:, 0], points[:, 1]
-    return 0.5 * float(np.sum(x * np.roll(y, -1) - np.roll(x, -1) * y))
+def _wire(loop: list, silhouette: Silhouette, counter_clockwise: bool):
+    """The loop as a wire in 3D, walked counter-clockwise (outer boundary) or clockwise (hole)."""
+    if (outline_fit.signed_area(loop) > 0) != counter_clockwise:
+        loop = outline_fit.reverse(loop)
 
+    def point(ab) -> gp_Pnt:
+        return gp_Pnt(*map(float, silhouette.origin + ab[0] * silhouette.right + ab[1] * silhouette.up))
 
-def _wire(points: np.ndarray, silhouette: Silhouette, counter_clockwise: bool):
-    if (_signed_area(points) > 0) != counter_clockwise:
-        points = points[::-1]
-    polygon = BRepBuilderAPI_MakePolygon()
-    for a, b in points:
-        polygon.Add(gp_Pnt(*map(float, silhouette.origin + a * silhouette.right + b * silhouette.up)))
-    polygon.Close()
-    return polygon.Wire()
+    wire = BRepBuilderAPI_MakeWire()
+    for segment in loop:
+        if segment[0] == "circle":
+            normal = np.cross(silhouette.right, silhouette.up) * (1 if counter_clockwise else -1)
+            circle = gp_Circ(gp_Ax2(point(segment[1]), gp_Dir(*map(float, normal))), float(segment[2]))
+            wire.Add(BRepBuilderAPI_MakeEdge(circle).Edge())
+        elif segment[0] == "arc":
+            arc = GC_MakeArcOfCircle(point(segment[1]), point(segment[2]), point(segment[3]))
+            if arc.IsDone():
+                wire.Add(BRepBuilderAPI_MakeEdge(arc.Value()).Edge())
+            else:  # three points in a line
+                wire.Add(BRepBuilderAPI_MakeEdge(point(segment[1]), point(segment[3])).Edge())
+        else:
+            wire.Add(BRepBuilderAPI_MakeEdge(point(segment[1]), point(segment[2])).Edge())
+    return wire.Wire()
 
 
 def prism(silhouette: Silhouette) -> TopoDS_Shape:
@@ -428,8 +462,8 @@ def write_step(shape: TopoDS_Shape, path: Path) -> None:
 
 
 def preview(silhouette: Silhouette) -> bytes:
-    """PNG of the silhouette: grey is kept, white is cut through. Outlines are drawn back from their
-    mm coordinates (red = outer, blue = holes), so a wrong mapping shows as outlines off the grey."""
+    """PNG of the silhouette: grey is kept, white is cut through. The fitted outline is drawn back
+    from its mm coordinates: lines red, arcs and circles green, holes in lighter shades."""
     height, width = silhouette.mask.shape
     image = np.full((height, width, 3), 255, np.uint8)
     image[silhouette.mask > 0] = (205, 205, 205)
@@ -437,11 +471,18 @@ def preview(silhouette: Silhouette) -> bytes:
         scale = silhouette.info["mm_per_px"]
         to_px = lambda p: np.column_stack([p[:, 0] / scale + width / 2 - 0.5, height / 2 - 0.5 - p[:, 1] / scale])
     else:
-        span_a = max(o["outer"][:, 0].max() for o in silhouette.outlines)
-        span_b = max(o["outer"][:, 1].max() for o in silhouette.outlines)
+        outers = [outline_fit.sample(o["outer"]) for o in silhouette.outlines]
+        span_a, span_b = max(p[:, 0].max() for p in outers), max(p[:, 1].max() for p in outers)
         to_px = lambda p: np.column_stack([p[:, 0] / span_a * (width - 1), (height - 1) * (1 - p[:, 1] / span_b)])
     thickness = max(1, max(width, height) // 350)
     for outline in silhouette.outlines:
-        for points, colour in [(outline["outer"], (40, 40, 220))] + [(h, (220, 120, 40)) for h in outline["holes"]]:
-            cv2.polylines(image, [to_px(points).round().astype(np.int32).reshape(-1, 1, 2)], True, colour, thickness)
+        for loop, hole in [(outline["outer"], False)] + [(h, True) for h in outline["holes"]]:
+            for segment in loop:
+                points = outline_fit.sample([segment], step=0.05)
+                if segment[0] != "circle":
+                    points = np.vstack([points, segment[-1]])
+                straight = segment[0] == "line"
+                colour = ((40, 40, 220) if straight else (40, 160, 40)) if not hole else ((120, 120, 240) if straight else (120, 200, 120))
+                cv2.polylines(image, [to_px(points).round().astype(np.int32).reshape(-1, 1, 2)],
+                              segment[0] == "circle", colour, thickness)
     return cv2.imencode(".png", image)[1].tobytes()

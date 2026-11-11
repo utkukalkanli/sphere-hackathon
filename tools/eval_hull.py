@@ -93,6 +93,8 @@ def evaluate(job: dict) -> dict:
     """One case, in a worker process."""
     os.environ["TRACE"] = "0"
     from OCP.BRepTools import BRepTools
+    from OCP.TopAbs import TopAbs_FACE
+    from OCP.TopExp import TopExp_Explorer
 
     from agentic_cad import visual_hull as vh
     from agentic_cad.hull_agent import VisualHullAgent
@@ -118,7 +120,11 @@ def evaluate(job: dict) -> dict:
             volumes_path.write_text(json.dumps(agent.volumes))
         if options["holes"]:
             solid = agent.cut_holes(solid, case)
-        row = {"name": name, "true": vh.read_volume(case), "volumes": agent.volumes,
+        faces, explorer = 0, TopExp_Explorer(vh.tidy(solid), TopAbs_FACE)
+        while explorer.More():
+            faces += 1
+            explorer.Next()
+        row = {"name": name, "true": vh.read_volume(case), "volumes": agent.volumes, "faces": faces,
                "seconds": round(time.time() - started, 2)}
         if options["iou"]:
             row["iou"] = round(sampled_iou(solid, name, vh.read_dimensions(case)), 4)
@@ -147,8 +153,10 @@ def main() -> None:
         tiers = {f"test_case_{row['n']}": row["tier"] for row in csv.DictReader(f)}
     names = args.only or (list(tiers) if args.all else sample(tiers, args.cases))
     options = {"iso": args.iso, "holes": not args.no_holes, "iou": args.iou}
-    hull_key = digest(SRC / "visual_hull.py", {"iso": options["iso"]})
-    result_key = digest(SRC / "visual_hull.py", SRC / "holes.py", SRC / "hull_agent.py", Path(__file__), options)
+    outline = os.environ.get("HULL_OUTLINE", "arcs")
+    hull_key = digest(SRC / "visual_hull.py", SRC / "outline_fit.py", {"iso": options["iso"], "outline": outline})
+    result_key = digest(SRC / "visual_hull.py", SRC / "outline_fit.py", SRC / "holes.py", SRC / "hull_agent.py",
+                        Path(__file__), options, {"outline": outline})
     CACHE.mkdir(parents=True, exist_ok=True)
     jobs = [{"name": n, "options": options, "hull_key": hull_key, "result_key": result_key,
              "cache": not args.no_cache} for n in names]
@@ -174,7 +182,7 @@ def main() -> None:
         values = list(values)
         return sum(values) / len(values) if values else float("nan")
 
-    header = f"{'':10}{'cases':>6}" + "".join(f"{s:>12}" for s in steps) + ("         IoU" if args.iou else "")
+    header = f"{'':10}{'cases':>6}" + "".join(f"{s:>12}" for s in steps) + ("         IoU" if args.iou else "") + "       faces"
     print(header)
     for label in ("simple", "medium", "complex", "all"):
         group = [r for r in rows if label == "all" or tiers[r["name"]] == label]
@@ -183,7 +191,7 @@ def main() -> None:
         line = f"{label:10}{len(group):>6}" + "".join(f"{mean(scores(r)[i] for r in group):>12.4f}" for i in range(len(steps)))
         if args.iou:
             line += f"{mean(r['iou'] for r in group):>12.4f}"
-        print(line)
+        print(line + f"{mean(r['faces'] for r in group):>12.0f}")
 
     worst = sorted(rows, key=lambda r: scores(r)[-1])[:5]
     print("\nlowest:", ", ".join(f"{r['name'].removeprefix('test_case_')} ({scores(r)[-1]:.2f})" for r in worst))
