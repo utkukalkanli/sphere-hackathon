@@ -14,27 +14,69 @@ herkes SSH / VS Code ile bağlanıp kendi klasöründe çalışıyor.
 
 1. Brev org davet linkini takımdan al ve tarayıcıda aç (link 7 gün geçerli).
 2. GitHub'da repo'ya collaborator olarak eklendiğinden emin ol (repo private).
-3. Brev CLI'ı kur ve giriş yap:
+3. Brev CLI'ı kur ve giriş yap (Windows için [aşağıdaki bölüme](#windows) bak):
 
    ```sh
    # macOS
    brew install brevdev/homebrew-brev/brev
    # Linux
-   sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/brevdev/brev-cli/main/bin/install-latest.sh)"
+   bash -c "$(curl -fsSL https://raw.githubusercontent.com/brevdev/brev-cli/main/bin/install-latest.sh)"
 
-   brev login      # davet ettiğimiz org'u seç
+   brev login      # org listesinde utkukalkanli.dev-533d83-7s9r seçili olmalı (değilse: brev set)
    brev refresh    # ~/.ssh/config'e sphere-gpu kaydını ekler
    ssh sphere-gpu  # bağlantı testi
    ```
 
-4. Push yapabilmek için kendi GitHub SSH anahtarını VM'e iletmen gerekiyor (anahtar VM'e
-   kopyalanmaz). `~/.ssh/config` içindeki `Host sphere-gpu` bloğuna şunu ekle:
+4. Push için kendi GitHub SSH anahtarın VM'e iletilir (Brev'in SSH kaydında `ForwardAgent yes`
+   zaten var; anahtar VM'e kopyalanmaz). Anahtarın ssh-agent'a yüklü olsun: `ssh-add -l` boşsa
+   `ssh-add ~/.ssh/id_ed25519`. VM'de `ssh -T git@github.com` ile test et.
 
-   ```
-   ForwardAgent yes
+### Windows
+
+Brev CLI Windows'ta sadece **WSL** içinde çalışıyor ve SSH ayarlarını WSL tarafına yazıyor;
+Windows'taki VS Code onları göremez. Bu yüzden ek bir adım var:
+
+1. PowerShell'i **yönetici olarak** aç, WSL'i kur, bilgisayarı yeniden başlat:
+
+   ```powershell
+   wsl --install -d Ubuntu-22.04
    ```
 
-   Terminalden bağlanırken `ssh -A sphere-gpu` de aynı işi görür.
+2. Başlat menüsünden **Ubuntu**'yu aç ve Brev'i orada kur:
+
+   ```sh
+   bash -c "$(curl -fsSL https://raw.githubusercontent.com/brevdev/brev-cli/main/bin/install-latest.sh)"
+   brev login
+   brev refresh
+   ```
+
+3. Brev'in SSH kaydını Windows tarafına kopyala (Ubuntu içinde):
+
+   ```sh
+   curl -fsSL -o brev-windows-ssh.sh https://raw.githubusercontent.com/utkukalkanli/sphere-hackathon/feat/llm-cad-agent/scripts/brev-windows-ssh.sh
+   ```
+
+   Repo private olduğu için bu link çalışmazsa, script'i GitHub web arayüzünden
+   (`scripts/brev-windows-ssh.sh`) kopyalayıp Ubuntu'da aynı isimle kaydet. Sonra:
+
+   ```sh
+   bash brev-windows-ssh.sh
+   ```
+
+   Script `C:\Users\<sen>\.ssh\config` dosyasına `sphere-gpu` kaydını ve anahtarı yazar.
+   **Makine her `brev start` sonrası** SSH portu değişebilir: o zaman Ubuntu'da
+   `brev refresh && bash brev-windows-ssh.sh` komutunu tekrar çalıştır.
+
+4. PowerShell'de test et: `ssh sphere-gpu`. Sonra VS Code adımlarına geç (VS Code'u Windows'a
+   normal şekilde kur, WSL içine değil).
+
+5. GitHub push için (opsiyonel): Windows ssh-agent'ı aç ve GitHub anahtarını ekle
+   (PowerShell, yönetici):
+
+   ```powershell
+   Get-Service ssh-agent | Set-Service -StartupType Automatic; Start-Service ssh-agent
+   ssh-add $env:USERPROFILE\.ssh\id_ed25519
+   ```
 
 ## 2. VS Code
 
