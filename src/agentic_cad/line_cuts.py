@@ -45,7 +45,7 @@ from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox, BRepPrimAPI_MakeCylinder
 from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt
 from OCP.TopoDS import TopoDS_Shape
 
-from agentic_cad import edges
+from agentic_cad import edges, revolve
 from agentic_cad import visual_hull as vh
 from agentic_cad.views import ORTHO_VIEWS
 
@@ -232,7 +232,7 @@ def region_depths(view: str, region: np.ndarray, line_views: edges.LineViews, di
 
 
 def boss_options(view: str, region: np.ndarray, circle: tuple[float, float, float], dims: np.ndarray,
-                 depths: list[float]) -> list[tuple[str, dict]]:
+                 depths: list[float], views: list[Path] | None = None) -> list[tuple[str, dict, object]]:
     """For a circle in a straight view: a cylinder standing towards the viewer, base at each depth."""
     (u, flip_u), (v, flip_v) = ORTHO_VIEWS[view]
     height, width = region.shape
@@ -257,9 +257,14 @@ def boss_options(view: str, region: np.ndarray, circle: tuple[float, float, floa
         point[u], point[v], point[axis] = cu, cv, -margin
         cylinder_axis = np.zeros(3)
         cylinder_axis[axis] = 1.0
+        face = 0.0 if direction[axis] > 0 else float(dims[axis])
+        base = depth if direction[axis] > 0 else float(dims[axis]) - depth
+        turned = revolve.boss_option(views, dims, axis, {u: cu, v: cv}, radius, face, base) if views else None
+        if turned is not None:  # shaped by the side views: a cone or a dome as well as a cylinder
+            options.append((turned[0], turned[1], revolve.cut_revolved))
         options.append((f"boss d {2 * radius:.2f} at ({cu:.1f}, {cv:.1f}), base {depth:.2f} mm deep", {
             "low": low, "high": high, "point": point, "axis": cylinder_axis, "radius": radius,
-            "length": dims[axis] + 2 * margin}))
+            "length": dims[axis] + 2 * margin}, cut_boss))
     return options
 
 
@@ -381,6 +386,33 @@ def carve(solid, views: list[Path], dims: tuple[float, float, float], target: fl
     candidates.sort(key=lambda item: -item[0])  # most unexplained lines first; shading-only ones last
     step.log(f"{len(candidates)} region(s) to try, {sum(1 for c in candidates if c[1])} of them shaded like a cylinder")
 
+    def evaluate(operation, argument, label: str):
+        """Try one cut on the current solid: ((score, iso, solid, missing), None) if it passes the
+        volume and silhouette checks and the iso views agree better, else (None, reason)."""
+        try:
+            carved = cutter.run(operation, solid, argument, cut_timeout)
+        except Exception:
+            carved = None
+        if carved is None:
+            return None, "failed"
+        after = vh.volume(carved)
+        if after >= vh.volume(solid) - 1e-6:
+            return None, "nothing"
+        if target and after < min_volume_share * target:
+            return None, "too much"
+        now = view_set.missing(carved)
+        if any(now[v] - missing_now[v] > view_set.tolerance(v) for v in now):
+            return None, "too much"  # opened background where the part is
+        try:
+            result = line_views.mismatch(carved)
+        except Exception as error:  # the line drawing failed for this candidate: skip it
+            step.log(f"could not draw the lines for {label} ({error!r})", level="warning")
+            return None, "failed"
+        score, iso = total(result), total(result, ISO_VIEWS)
+        if iso >= current_iso:  # the isometric views must agree better too
+            return None, "iso"
+        return (score, iso, carved, now), None
+
     tried = kept = 0
     for unexplained, curved, view, region, depths in candidates:
         if time.monotonic() > deadline:
@@ -399,7 +431,8 @@ def carve(solid, views: list[Path], dims: tuple[float, float, float], target: fl
                     replace(silhouette, depth=silhouette.depth + depth), True) for depth in depths[:MAX_DEPTHS]]
         circle = circle_of(region)
         if circle is not None:  # a circle in the view: the top of a cylinder standing on a face below
-            options = [(label, cut_boss, spec, False) for label, spec in boss_options(view, region, circle, dims, depths)] + options
+            options = [(label, operation, spec, False)
+                       for label, spec, operation in boss_options(view, region, circle, dims, depths, views)] + options
         if curved:  # shaded like a cylinder: try cylinders first, flat pockets after (a light gradient
             # on a flat face looks the same, so the flat ones are not dropped)
             options = [(label, cut_curved, spec, False)
@@ -413,33 +446,12 @@ def carve(solid, views: list[Path], dims: tuple[float, float, float], target: fl
             if deeper_removes_more and flat_blocked:
                 break
             tried += 1
-            try:
-                carved = cutter.run(operation, solid, argument, cut_timeout)
-            except Exception:
-                carved = None
-            if carved is None:
+            outcome, reason = evaluate(operation, argument, label)
+            if outcome is None:
+                flat_blocked = flat_blocked or (deeper_removes_more and reason == "too much")
                 continue
-            after = vh.volume(carved)
-            if after >= vh.volume(solid) - 1e-6:  # removed nothing
-                continue
-            if target and after < min_volume_share * target:
-                flat_blocked = flat_blocked or deeper_removes_more
-                continue
-            now = view_set.missing(carved)
-            if any(now[v] - missing_now[v] > view_set.tolerance(v) for v in now):
-                flat_blocked = flat_blocked or deeper_removes_more  # deeper flat pockets only open more
-                continue
-            try:
-                result = line_views.mismatch(carved)
-            except Exception as error:  # the line drawing failed for this candidate: skip it
-                step.log(f"{view}: could not draw the lines for {label} ({error!r})", level="warning")
-                continue
-            score, iso = total(result), total(result, ISO_VIEWS)
-            # the isometric views must agree too: they show where a pocket's walls and floor meet
-            if iso >= current_iso:
-                continue
-            if best is None or score < best[0]:
-                best = (score, iso, label, carved, now)
+            if best is None or outcome[0] < best[0]:
+                best = (outcome[0], outcome[1], label, outcome[2], outcome[3])
         if best is not None and best[0] < current - max(MIN_GAIN_PX, MIN_GAIN * current):
             score, iso, label, carved, now = best
             rows, cols = np.where(region)
@@ -451,5 +463,17 @@ def carve(solid, views: list[Path], dims: tuple[float, float, float], target: fl
                      f"volume {vh.volume(solid):.0f} -> {vh.volume(carved):.0f} mm3")
             solid, current, current_iso, missing_now = carved, score, iso, now
             kept += 1
+    # a part whose outline is round along an axis: try it as a turned part, after the pockets. Judged
+    # by the isometric views: a revolved profile has a circle at every kink, which the straight views
+    # count as extra lines although the part looks right from every side.
+    for label, spec in revolve.whole_part_options(views, dims):
+        outcome, reason = evaluate(revolve.cut_revolved, spec, label)
+        if outcome is not None and outcome[1] < current_iso - max(MIN_GAIN_PX, MIN_GAIN * current_iso):
+            step.log(f"{label}: iso mismatch {current_iso} -> {outcome[1]} px (all views {current} -> {outcome[0]}), "
+                     f"volume {vh.volume(solid):.0f} -> {vh.volume(outcome[2]):.0f} mm3")
+            current, current_iso, solid, missing_now = outcome
+            kept += 1
+        else:
+            step.log(f"{label}: not kept ({reason or 'too little gain'})")
     step.metric(regions=len(candidates), tried=tried, kept=kept, line_mismatch=current)
     return solid, kept

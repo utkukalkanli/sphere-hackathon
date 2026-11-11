@@ -15,6 +15,9 @@ the entry and say what changed.
   suggested coordinates across views, circles and shading). Measured on the practice set: region
   depths and circles 0.785 -> 0.804; shaded regions put first made it worse, so they keep the normal
   order and flat pockets stay allowed for them.
+- **Turned parts and cones: a profile from the side views revolved about the axis of a round
+  outline, judged by the iso views** (2026-11-12, user asked for cones, tried on part 6). Tried after
+  the pockets (tried first, it blocked the flange pocket of part 3). Practice score 0.804 -> 0.810.
 - **Model-planned cuts are step 4, after the holes and the line cuts, and off without `OPENAI_MODEL`** (2026-11-11,
   user asked to bring back the useful parts of 9364253). The model only gives numbers; every cut is
   checked against the true volume and all eight views, so a wrong answer is rejected, not submitted.

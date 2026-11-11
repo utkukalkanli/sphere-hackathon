@@ -1,6 +1,6 @@
 # Project state
 
-Last updated: 2026-11-12, about 00:30 CET (step 3: region depths, circles, shading).
+Last updated: 2026-11-12, about 00:20 CET (step 3: turned parts and cone bosses).
 
 ## Pipeline
 
@@ -12,7 +12,7 @@ regenerate them in the amd64 image before a submission. A separate model-based a
 | --- | --- | --- |
 | 1. Visual hull: a box with the `facts.json` dimensions, cut through wherever a view is white (front/back, right/left, top/bottom). Before cutting, each traced outline is rebuilt from straight lines and circular arcs (`outline_fit.py`). A fourth cut along the isometric views is implemented but off since 2026-11-11 | `src/agentic_cad/visual_hull.py`, `src/agentic_cad/outline_fit.py` | committed on `feat/visual-hull` |
 | 2. Holes: every cylindrical hole listed in `facts.json` is cut as a cylinder; a thinner coaxial boss inside a bore is kept | `src/agentic_cad/holes.py` | committed on `feat/visual-hull`, measured (below) |
-| 3. Line cuts: in each straight view, regions enclosed by the render's dark lines are tried when their boundary has lines our solid lacks or their shading shows a cylinder. Depths come from the side-view lines that run across the region's own extent (falling back to any line across). A filled circle is tried as a cylinder standing towards the viewer: the square block around it is rounded down to a base depth. A region shaded like a cylinder (tone constant along one image axis) is also tried as a concave or convex cylinder, with diameters from `facts.json`. Kept only if the volume stays at or above the true volume, no view opens background, the line mismatch of all 8 views drops by 1 % and that of the two iso views drops too. 40 tries per case, at most 10 per region (`LINE_MAX_TRIES`), 90 s hard stop | `src/agentic_cad/edges.py`, `src/agentic_cad/line_cuts.py`, `hull_agent.cut_lines` | on `ananas`, measured on the practice set (below) |
+| 3. Line cuts: in each straight view, regions enclosed by the render's dark lines are tried when their boundary has lines our solid lacks or their shading shows a cylinder. Depths come from the side-view lines that run across the region's own extent (falling back to any line across). A filled circle is tried as a cylinder standing towards the viewer: the square block around it is rounded down to a base depth. A region shaded like a cylinder (tone constant along one image axis) is also tried as a concave or convex cylinder, with diameters from `facts.json`. Turned parts (`revolve.py`): if a view's outline is round, the part is tried as a profile revolved about that axis, the radius at each height read from the two side views (cone, cylinder, dome, flange in one); circles are also tried as such profiled bosses (cones). Turned cuts are judged by the iso line mismatch only, since every profile kink draws a circle the straight views count as extra. Kept only if the volume stays at or above the true volume, no view opens background, the line mismatch of all 8 views drops by 1 % and that of the two iso views drops too. 40 tries per case, at most 10 per region (`LINE_MAX_TRIES`), 90 s hard stop | `src/agentic_cad/edges.py`, `src/agentic_cad/line_cuts.py`, `hull_agent.cut_lines` | on `ananas`, measured on the practice set (below) |
 | 4. Model-planned cuts: the brief, `facts.json` and the drilled holes go to an OpenAI-compatible model, which answers with box, cylinder and prism cuts as numbers. All are tried at once, then one by one; a cut is kept only if the solid stays at 97 % of the true volume or more and no view (6 straight + 2 iso, `views.py`) shows more than a few pixels of new background where the render shows the part. 75 s per case in all (`PLANNED_BUDGET`), 20 s per boolean, 60 s per request | `src/agentic_cad/features.py`, `src/agentic_cad/llm_cuts.py`, `hull_agent.cut_planned` | on `ananas`, measured with Qwen3-30B (below) |
 
 Unused inputs without a model: the text of `description.md` (only its Envelope line is read, as a fallback),
@@ -111,9 +111,16 @@ set is no longer used, see decisions.md). Score = mean of min/max over the 9 par
 | steps 1 + 2 | 1.066 | 1.232 | 1.085 | 1.242 | 1.230 | 3.807 | 2.201 | 1.008 | 1.891 | 0.725 |
 | lines only (733b9f6) | 1.002 | 1.118 | 1.001 | 1.163 | 1.013 | 3.318 | 2.195 | 1.008 | 1.891 | 0.780 |
 | + 10 tries per region | 1.002 | 1.120 | 1.001 | 1.163 | 1.013 | 3.318 | 2.195 | 1.008 | 1.724 | 0.785 |
-| + region depths, circles (current) | 1.002 | 1.120 | 1.001 | 1.130 | 1.009 | 3.318 | 2.142 | 1.008 | 1.403 | 0.804 |
+| + region depths, circles (5c71e2c) | 1.002 | 1.120 | 1.001 | 1.130 | 1.009 | 3.318 | 2.142 | 1.008 | 1.403 | 0.804 |
+| + turned parts, cone bosses (current) | 1.002 | 1.120 | 1.001 | 1.130 | 1.011 | 2.845 | 2.142 | 1.008 | 1.403 | 0.810 |
 
-- Run time of the current version: 10 to 73 s per part, about 5.5 minutes for all 9.
+- Run time of the current version: 19 to 97 s per part, about 7 minutes for all 9 on the Windows PC.
+- Turned parts: recognised on 2 (about y), 3 (about x) and 6 (about z), not on the crankshaft 4.
+  Kept on 6 (3.32 -> 2.84). Rejected on 2 and 3 because the revolved profile opened background in a
+  view ("too much"): the radius read from the silhouettes is not quite safe there. On 6 most of the
+  excess is in the deep V grooves and is not touched by turning.
+- Part 5 is slightly worse than before (1.009 -> 1.011): the profiled boss tries failed in the line
+  drawing (`Standard_OutOfRange`) and used up tries that went to a second boss before.
 - Circles: kept on parts 5 (two of the six d 51 bores' bosses, base 12.8 mm deep) and 7.
 - Shading: no cylinder cut was ever kept. Putting shaded regions first used up the tries and made
   parts 2 to 5 worse (score below 0.78); now they are tried in the normal order, cylinders before

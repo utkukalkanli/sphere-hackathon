@@ -34,3 +34,15 @@ def test_depths_come_from_the_side_views():
     line_views = edges.LineViews(views, np.array(dims), edges.cameras_for(ViewSet(views, dims, vh.box(dict(zip("xyz", dims))))))
     # seen from the back, the rib stands 5 mm proud of the plate's back face
     assert any(abs(d - 5.0) < 0.2 for d in line_cuts.depth_candidates("back", line_views, np.array(dims)))
+
+
+def test_turned_parts_are_recognised_by_their_round_outline():
+    from agentic_cad import revolve
+
+    found = {}
+    for n in (2, 3, 4, 6):
+        case = CASE.parent / f"test_case_{n}"
+        views = sorted((case / "images").glob("view_*.png"))
+        found[n] = [spec["axis"] for _, spec in revolve.whole_part_options(views, np.array(vh.read_dimensions(case)))]
+    # poppet valve about y, bushing about x, cone about z; the crankshaft is not round in any view
+    assert found == {2: [1], 3: [0], 4: [], 6: [2]}
