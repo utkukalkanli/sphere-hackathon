@@ -51,6 +51,11 @@ pockets, recesses and steps that sit behind a wall in every silhouette but are o
 enclosed cavities are 3 %. The information is in the views as shading and face-boundary lines; what is
 missing is depth.
 
+**Round sections come out square.** A cylinder or turned profile whose axis lies across two views is
+cut by both as a strip, so its cross-section stays a square: up to 4/pi = 1.27 times the true
+volume. Practice outputs of steps 1 + 2 (2026-11-11): part 2 (poppet valve) is 1.23 times the true
+volume, part 4 (crankshaft) 1.24.
+
 **`context.png`** shows the part in orange inside a translucent grey assembly, from an unstated
 angle. 6 of the 9 practice parts have one (not 7 and 8).
 
@@ -96,9 +101,15 @@ organisers' format:
   mode (default `arcs`); `pixels` is the old 0.6 px polygon.
 - **The renders are hardly anti-aliased** (3 grey levels between part and background), so there is
   no sub-pixel edge information to recover; a traced slanted edge is a true staircase.
-- **Booleans can differ between platforms.** A circle that touches the box faces (a round part seen
-  end-on, practice part 6) cuts fine on the ARM laptop and fails in the amd64 image, where the
-  traced-pixel fallback takes over. A fuzzy tolerance on the cut might remove the difference; not tried.
+- **OpenCascade booleans with curved faces can return a wrong solid without saying so**, and
+  differently per platform (found 2026-11-11 on practice part 6, a round part seen end-on): the
+  result is valid, just not fully cut, or empty. On the ARM laptop a slightly enlarged circle gave
+  2 to 5 % too much volume; in the amd64 image the same cut came back empty. A fuzzy tolerance does
+  not help (1e-6 gives a wrong volume, 1e-4 an empty result). Flat faces are reliable. Hence the
+  projection check after every cut. What made part 6 cut cleanly on both platforms was fitting
+  fillets exactly tangent to the lines beside them and lines exactly onto the box faces.
+- **A fitted loop can cross itself** after its corners are moved; `trace_outlines` checks every loop
+  as a face and keeps the traced polygon for the ones that fail (eval part 99: 1 of 32 loops).
 - **The solid is built with its bounding-box min corner at the origin**, the same frame as the
   positions in `facts.json` and the brief.
 - **`Cutter.run(operation, shape, argument, timeout)`** runs any boolean in a spawned child process.

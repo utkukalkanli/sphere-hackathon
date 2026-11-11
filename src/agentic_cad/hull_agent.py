@@ -6,6 +6,7 @@ Step 2 (holes): the cylindrical holes listed in facts.json cut out of it.
 
 import os
 import tempfile
+import time
 from pathlib import Path
 
 from agentic_cad import holes as hl
@@ -20,6 +21,8 @@ MIN_VOLUME_SHARE = 0.97
 CUT_TIMEOUT = float(os.environ.get("HULL_CUT_TIMEOUT", 30))
 ISO_CUT_TIMEOUT = float(os.environ.get("HULL_ISO_CUT_TIMEOUT", 40))
 HOLES_TIMEOUT = float(os.environ.get("HULL_HOLES_TIMEOUT", 40))
+# Cutting again in another order is only tried while a case has used less than this many seconds
+RETRY_BUDGET = float(os.environ.get("HULL_RETRY_BUDGET", 20))
 
 
 class VisualHullAgent:
@@ -80,52 +83,135 @@ class VisualHullAgent:
                              "true_volume_mm3": target})
             self._record(step, solid, "box")
 
-        for name in [*vh.ORTHO, *(["iso"] if self.use_iso else [])]:
-            with trace.step(f"cut_{name}", kind="code") as step:
-                try:
-                    carved = self._cut_direction(step, name, views, dims, solid, target)
-                except Exception as error:  # one direction failing must not lose the others
-                    step.fail(f"this direction raised {error!r}; keeping the previous solid")
+        names = [*vh.ORTHO, *(["iso"] if self.use_iso else [])]
+        started = time.time()
+        box = solid
+        solid, silhouettes, troubled = self._carve(box, names, views, dims, target)
+
+        # A direction whose fitted outline could not be cut often can be when it is cut first, before
+        # the other directions have left curved faces for it to run into.
+        for first in [n for n in troubled if n in vh.ORTHO]:
+            if time.time() - started > RETRY_BUDGET:
+                break
+            with trace.step(f"retry_{first}_first", kind="other") as step:
+                order = [first] + [n for n in names if n != first]
+                kept = dict(self.volumes)
+                again, again_silhouettes, again_troubled = self._carve(box, order, views, dims, target)
+                if again_troubled:
+                    self.volumes = kept
+                    step.fail(f"still not clean for {again_troubled}; keeping the first result")
                     continue
-                if carved is not None:
-                    solid = carved
-                    self._record(step, solid, name)
+                solid, silhouettes, troubled = again, again_silhouettes, []
+                step.log("every direction cut cleanly in this order; using this solid")
+                break
+
+        with trace.step("check_views", kind="check") as step:
+            worst = self._check(step, solid, silhouettes)
+            if worst is not None and worst > vh.CHECK_AREA and vh.OUTLINE != "pixels":
+                # Something is off that no single cut showed: rebuild with the outlines as traced
+                # (flat faces only, which OpenCascade cuts reliably) and keep whichever agrees better
+                step.log("rebuilding with the traced outlines", level="warning")
+                kept = dict(self.volumes)
+                traced, traced_silhouettes, _ = self._carve(box, names, views, dims, target, mode="pixels")
+                traced_worst = self._check(step, traced, traced_silhouettes)
+                if traced_worst is not None and traced_worst < worst:
+                    solid, worst = traced, traced_worst
+                else:
+                    self.volumes = kept
+                if worst > vh.CHECK_AREA:
+                    step.fail("the solid does not match its silhouettes")
+            if worst is not None:
+                step.metric(worst_mismatch=round(worst, 5))
         return solid
 
-    def _cut_direction(self, step, name: str, views: list[Path], dims: dict, solid, target: float | None):
-        """The solid cut along one direction, or None when there is nothing usable to cut with."""
+    def _check(self, step, solid, silhouettes: list) -> float | None:
+        """Largest disagreement between the solid's projection and any silhouette it was cut with."""
+        worst = None
+        for silhouette in silhouettes:
+            try:
+                error = vh.projection_error(solid, silhouette)
+            except Exception as failure:
+                step.log(f"could not check {silhouette.name}: {failure!r}", level="warning")
+                continue
+            if error is None:
+                continue
+            step.log(f"{silhouette.name}: {error[0]:.4f} outside the silhouette, {error[1]:.4f} of it not covered")
+            worst = max(worst or 0.0, *error)
+        return worst
+
+    def _carve(self, box, names: list[str], views: list[Path], dims: dict, target: float | None,
+               mode: str | None = None):
+        """Cut `box` along `names` in this order. Returns the solid, the silhouettes that were cut, and
+        the directions that did not cut cleanly with their fitted outline."""
+        solid, silhouettes, troubled = box, [], []
+        for name in names:
+            with trace.step(f"cut_{name}", kind="code") as step:
+                try:
+                    carved, silhouette, clean = self._cut_direction(step, name, views, dims, solid, target, mode)
+                except Exception as error:  # one direction failing must not lose the others
+                    step.fail(f"this direction raised {error!r}; keeping the previous solid")
+                    troubled.append(name)
+                    continue
+                if not clean:
+                    troubled.append(name)
+                if carved is not None:
+                    solid = carved
+                    silhouettes.append(silhouette)
+                    self._record(step, solid, name)
+        return solid, silhouettes, troubled
+
+    def _cut_direction(self, step, name: str, views: list[Path], dims: dict, solid, target: float | None,
+                       mode: str | None = None):
+        """Cut along one direction. Returns (solid or None, the silhouette it was cut with, whether the
+        fitted outline cut cleanly)."""
         case_dir = views[0].parent.parent if views else None
 
-        def silhouette_for(mode: str | None):
+        def silhouette_for(outline_mode: str | None):
             if name == "iso":
                 return vh.iso_silhouette(views, dims, solid)
             spec = vh.ORTHO[name]
             hints = hl.outline_hints(case_dir, spec["u"], spec["v"], spec["along"])
-            return vh.ortho_silhouette(name, views, dims, hints, mode)
+            return vh.ortho_silhouette(name, views, dims, hints, outline_mode)
 
-        silhouette = silhouette_for(None)
+        def attempt(silhouette):
+            """The cut, kept only if the result looks like the silhouette from this direction."""
+            carved = self._guarded(step, solid, target, lambda: self.cutter.cut(solid, silhouette, timeout), quiet=True)
+            if carved is None:
+                return None
+            error = vh.projection_error(carved, silhouette)
+            if error is not None and max(error) > vh.CHECK_AREA:
+                step.log(f"the result does not match the silhouette ({error[0]:.4f} outside it, "
+                         f"{error[1]:.4f} of it not covered): a wrong boolean result", level="warning")
+                return None
+            return carved
+
+        silhouette = silhouette_for(mode)
         if silhouette is None:
             step.fail("no usable silhouette for this direction; nothing cut")
-            return None
+            return None, None, True
         loops = [loop for o in silhouette.outlines for loop in (o["outer"], *o["holes"])]
         kinds = {kind: sum(of.counts(loop)[kind] for loop in loops) for kind in ("line", "arc", "circle")}
         step.log(f"views {' + '.join(silhouette.views)}: {len(loops)} loop(s) of {kinds['line']} lines, "
                  f"{kinds['arc']} arcs, {kinds['circle']} full circles")
         step.metric(**{f"{kind}s": count for kind, count in kinds.items()})
-        if silhouette.info:
+        if silhouette.info.get("scale"):
             step.log(silhouette.info)
         step.attach(f"silhouette_{name}.png", vh.preview(silhouette))
         timeout = ISO_CUT_TIMEOUT if name == "iso" else CUT_TIMEOUT
-        carved = self._guarded(step, solid, target, lambda: self.cutter.cut(solid, silhouette, timeout), quiet=True)
-        if carved is None and name != "iso" and vh.OUTLINE != "pixels":
-            # The fitted outline could not be cut (or cut too much): use the outline as traced
+        carved = attempt(silhouette)
+        if carved is not None:
+            return carved, silhouette, True
+        if name != "iso" and (mode or vh.OUTLINE) != "pixels":
+            # The fitted outline could not be cut, cut too much, or gave a wrong solid: use the outline as traced
             step.log("cutting with the fitted outline failed; retrying with the traced pixels", level="warning")
             traced = silhouette_for("pixels")
             if traced is not None:
-                carved = self._guarded(step, solid, target, lambda: self.cutter.cut(solid, traced, timeout), quiet=True)
-        if carved is None:
-            step.fail("the cut gave no valid solid; keeping the previous one")
-        return carved
+                carved = attempt(traced)
+                if carved is not None:
+                    step.metric(outline="traced pixels")
+                    return carved, traced, False
+        step.fail("the cut gave no valid solid; keeping the previous one")
+        return None, None, False
 
     # -- step 2 --------------------------------------------------------------------------------
 

@@ -34,8 +34,9 @@ Remove a question when it is answered, and record the answer in `decisions.md` o
 - **Do the bosses in `facts.json` help?** Step 2 only uses them to keep a boss inside a bore. A full
   convex cylinder with known diameter, axis and length also says where material around it must be
   absent.
-- **Do we use a model at all, and which one?** If yes: what runs on the one RTX PRO 6000 (96 GB
-  VRAM), served from the Brev instance, within the 20 minutes. `OPENAI_BASE_URL`, `OPENAI_API_KEY`
+- **Which model, and what does it do?** A model will be used (see `decisions.md`); a teammate is
+  setting up a VLM and an LLM on the Brev instance. Open: which models run on the one RTX PRO 6000
+  (96 GB VRAM) within the 20 minutes, and which step calls them. `OPENAI_BASE_URL`, `OPENAI_API_KEY`
   and `OPENAI_MODEL` are not set anywhere yet, and the endpoint must be public and stay up until
   judging ends.
 - **`context.png` is not used.** Is there anything in it worth using? It is absent for some parts.

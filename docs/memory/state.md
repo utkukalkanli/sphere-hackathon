@@ -1,6 +1,6 @@
 # Project state
 
-Last updated: 2026-11-11, about 20:20 CET.
+Last updated: 2026-11-11, about 20:45 CET.
 
 ## Pipeline
 
@@ -22,6 +22,11 @@ Guards around every cut (`hull_agent.py`):
   cut and for the holes (`HULL_CUT_TIMEOUT`, `HULL_ISO_CUT_TIMEOUT`, `HULL_HOLES_TIMEOUT`). On a
   timeout or a failed boolean the previous solid is kept.
 - A cut that leaves less than 97 % of the true volume from `facts.json` is undone.
+- After each straight cut the solid is projected back onto that view and compared with the silhouette
+  (`vh.projection_error`, 3 px band, at most 0.2 % of the area off). A cut that fails any of these is
+  repeated with the traced-pixel outline; if a direction needed that, the whole hull is cut again
+  with that direction first (only while the case has used under 20 s). A final `check_views` step
+  compares the solid with all three silhouettes and rebuilds with traced outlines if it disagrees.
 - If cutting all holes at once is refused, they are retried one `facts.json` entry at a time.
 - An exception in one view direction or in the hole step keeps the solid carved so far; an
   exception anywhere else in a case makes `scripts/main.py` write the bounding box for that case
@@ -91,13 +96,12 @@ We cut almost nothing that belongs to the part (0.4 % of the true volume, in com
 Practice set, steps 1 + 2 without the isometric cut, our volume / true volume: part 8 is 1.01,
 parts 1, 2, 3, 4, 5 are between 1.07 and 1.25, part 9 is 1.89, part 7 is 2.20, part 6 is 3.81.
 
-Run time and Docker, 2026-11-11, with fitted outlines: the 9 practice parts take 8 s alone on the
-laptop. The image builds for `linux/amd64` and runs as a non-root user with read-only inputs in 24 s
-(emulated on an ARM laptop). Two runs of the image give identical files apart from the time stamp.
-Against a native run on the ARM laptop, 8 of the 9 solids have the same volume to 7 digits or better;
-part 6 differs by 0.05 % (392 faces instead of 32), because the cut with a full circle that touches
-four faces of the box fails in the image and falls back to the traced outline. **The committed
-`artifacts/outputs` are the files the image produced**, not the laptop's.
+Run time and Docker, 2026-11-11, with fitted outlines and the projection check: the 9 practice parts
+take 8 s alone on the laptop. The image builds for `linux/amd64` and runs as a non-root user with
+read-only inputs in 36 s with tracing on (emulated on an ARM laptop). In the image all 9 parts cut
+cleanly: no fallback, no retry, no warning. Against a native run on the ARM laptop every solid has
+the same face count and the same volume to 7 digits or better. **The committed `artifacts/outputs`
+are the files the image produced**.
 
 ## Known weaknesses
 

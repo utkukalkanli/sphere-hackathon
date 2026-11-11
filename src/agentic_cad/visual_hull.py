@@ -57,6 +57,8 @@ SIMPLIFY_PX = 0.6      # Douglas-Peucker tolerance for outlines kept as traced p
 OUTLINE = os.environ.get("HULL_OUTLINE", "arcs")
 MIN_AREA_PX = 12.0     # outlines smaller than this are rendering noise
 FRAME_MARGIN = 1.04    # the renders leave 4 % around the framed extent (half the image = extent * 1.04)
+CHECK_BAND_PX = 3      # how far a solid's projection may stray from the silhouette it was cut with
+CHECK_AREA = 0.002     # ... over at most this share of the silhouette's area
 ISO_CONTAINED = 0.998  # share of the iso silhouette that must fall inside the projected hull
 
 # name -> (main view, opposite view, axis to flip the opposite one onto the main one),
@@ -129,6 +131,17 @@ def find_view(views: list[Path], name: str) -> Path | None:
     return next((v for v in views if re.fullmatch(rf"view_\d+_{name}", v.stem)), None)
 
 
+def _loop_is_valid(loop: list) -> bool:
+    """Whether a fitted loop makes a proper face: closed and not crossing itself."""
+    flat = Silhouette(name="", views=[], mask=np.zeros((1, 1), np.uint8), outlines=[], origin=np.zeros(3),
+                      right=UNIT["x"], up=UNIT["y"], direction=UNIT["z"], depth=1.0)
+    try:
+        face = BRepBuilderAPI_MakeFace(_wire(loop, flat, True), True)
+        return face.IsDone() and BRepCheck_Analyzer(face.Face()).IsValid()
+    except Exception:
+        return False
+
+
 def trace_outlines(mask: np.ndarray, to_mm, px: float, known: dict | None = None,
                    mode: str | None = None) -> list[dict]:
     """Outlines of the part in a mask (255 = part), each with its holes, as loops of lines and arcs.
@@ -146,6 +159,8 @@ def trace_outlines(mask: np.ndarray, to_mm, px: float, known: dict | None = None
         if mode != "pixels":
             try:
                 loop = outline_fit.fit_loop(contour, to_mm, px, known, arcs=mode == "arcs")
+                if loop and not _loop_is_valid(loop):
+                    loop = []  # moving the corners made it cross itself
             except Exception:
                 loop = []  # fall back to the traced polygon below
         if not loop:
@@ -209,7 +224,7 @@ def ortho_silhouette(name: str, views: list[Path], dims: dict[str, float], known
     along = UNIT[spec["along"]]
     return Silhouette(name=name, views=used, mask=mask, outlines=outlines, origin=-margin * along,
                       right=UNIT[spec["u"]], up=UNIT[spec["v"]], direction=along,
-                      depth=dims[spec["along"]] + 2 * margin)
+                      depth=dims[spec["along"]] + 2 * margin, info={"extent": (du, dv)})
 
 
 def full_mask(image_path: Path) -> np.ndarray | None:
@@ -438,6 +453,39 @@ class Cutter:
         if self._pool is not None:
             self._pool.terminate()
             self._pool = None
+
+
+def projection_error(solid: TopoDS_Shape, silhouette: Silhouette) -> tuple[float, float] | None:
+    """Compare what `solid` looks like from the silhouette's view with the silhouette itself.
+
+    A solid cut with a silhouette, that still contains the part, projects onto exactly that silhouette.
+    Returns (outside, missing): the area of the projection that lies outside the silhouette, and the
+    area of the silhouette the projection does not cover, as shares of the silhouette's area and with
+    a band of CHECK_BAND_PX pixels forgiven along the outline. None for views without a known extent.
+
+    This is what catches a boolean operation that returned a valid-looking but wrong solid, which
+    OpenCascade does now and then with curved faces, differently from one platform to the next.
+    """
+    extent = silhouette.info.get("extent")
+    if not extent:
+        return None
+    height, width = silhouette.mask.shape
+    size = float(max(extent))
+    tris = triangles(solid, 0.0015 * size) - silhouette.origin
+    if not len(tris):
+        return 1.0, 1.0
+    cols = (tris @ silhouette.right) / extent[0] * (width - 1)
+    rows = (height - 1) * (1 - (tris @ silhouette.up) / extent[1])
+    polygons = np.stack([cols, rows], axis=2).round().astype(np.int32)
+    projected = np.zeros((height, width), np.uint8)
+    for triangle in polygons:
+        cv2.fillConvexPoly(projected, triangle, 255)
+    kernel = np.ones((2 * CHECK_BAND_PX + 1, 2 * CHECK_BAND_PX + 1), np.uint8)
+    area = float((silhouette.mask > 0).sum()) or 1.0
+    outside = float(((projected > 0) & (cv2.dilate(silhouette.mask, kernel) == 0)).sum()) / area
+    inner = cv2.erode(silhouette.mask, kernel, borderType=cv2.BORDER_CONSTANT, borderValue=0)
+    missing = float(((inner > 0) & (projected == 0)).sum()) / area
+    return outside, missing
 
 
 def tidy(shape: TopoDS_Shape) -> TopoDS_Shape:

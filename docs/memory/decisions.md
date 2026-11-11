@@ -5,6 +5,9 @@ the entry and say what changed.
 
 ## Pipeline
 
+- **A model will be used** (2026-11-11, user). A teammate has rented a GPU on Brev and is setting
+  up a VLM and an LLM there. Until it is reachable, work goes into the deterministic steps and into
+  what the model step will need from them.
 - **Start with a deterministic step, not a model** (2026-11-11, user). The first step builds the
   bounding box from `facts.json` and cuts away what the views show as white. It is fast, cannot
   hallucinate, and gives later steps a solid that already contains the part.
@@ -19,6 +22,8 @@ the entry and say what changed.
 - **When a hole group lists several lengths, cut the shortest** (2026-11-11). `lengths` holds the
   distinct lengths of the group, not one per centre, so which hole has which is unknown. Cutting too
   little costs less than cutting real material.
+- **Every cut is checked against the view it was cut from** (2026-11-11). Booleans with curved
+  faces can be silently wrong, so a result is only kept if its projection matches the silhouette.
 - **Never cut below the true volume** (2026-11-11). `facts.json` gives the part's volume; a cut that
   leaves less than 97 % of it is undone. Every step so far only removes material, so the solid
   should always contain the part.
@@ -36,8 +41,8 @@ the entry and say what changed.
 ## Evaluation
 
 - **Committed practice outputs come from the `linux/amd64` image, not from a native laptop run**
-  (2026-11-11). The organisers re-run the image and compare with the committed files; one part
-  (practice 6) comes out differently on ARM. Regenerate with `docker run` as in README "Code-freeze
+  (2026-11-11). The organisers re-run the image and compare with the committed files, and booleans
+  can differ between platforms (practice 6 did, before the tangent fit). Regenerate with `docker run` as in README "Code-freeze
   handover" and copy the files to `artifacts/outputs` before a submission.
 
 - **Local score is the volume ratio `min/max`** (2026-11-11). It needs no ground-truth geometry at
