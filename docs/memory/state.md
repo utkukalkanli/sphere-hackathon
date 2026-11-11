@@ -8,7 +8,7 @@ Everything so far is deterministic. No model is called anywhere yet.
 
 | step | file | status |
 | --- | --- | --- |
-| 1. Visual hull: a box with the `facts.json` dimensions, cut through wherever a view is white (front/back, right/left, top/bottom). Before cutting, each traced outline is rebuilt from straight lines and circular arcs (`outline_fit.py`). A fourth cut along the isometric views is implemented but off since 2026-11-11 | `src/agentic_cad/visual_hull.py`, `src/agentic_cad/outline_fit.py` | committed on `feat/visual-hull`; the outline fitting is **uncommitted** |
+| 1. Visual hull: a box with the `facts.json` dimensions, cut through wherever a view is white (front/back, right/left, top/bottom). Before cutting, each traced outline is rebuilt from straight lines and circular arcs (`outline_fit.py`). A fourth cut along the isometric views is implemented but off since 2026-11-11 | `src/agentic_cad/visual_hull.py`, `src/agentic_cad/outline_fit.py` | committed on `feat/visual-hull` |
 | 2. Holes: every cylindrical hole listed in `facts.json` is cut as a cylinder; a thinner coaxial boss inside a bore is kept | `src/agentic_cad/holes.py` | committed on `feat/visual-hull`, measured (below) |
 | 3. Anything that finds pockets and other inner cavities | none | not started |
 
@@ -91,10 +91,13 @@ We cut almost nothing that belongs to the part (0.4 % of the true volume, in com
 Practice set, steps 1 + 2 without the isometric cut, our volume / true volume: part 8 is 1.01,
 parts 1, 2, 3, 4, 5 are between 1.07 and 1.25, part 9 is 1.89, part 7 is 2.20, part 6 is 3.81.
 
-Run time and Docker, 2026-11-11: the 9 practice parts take 8 s alone on the laptop with the fitted
-outlines (19 s with traced pixels, which is what the Docker check below was run with). The image
-builds for `linux/amd64` and runs as a non-root user with read-only inputs in 50 s (emulated on an
-ARM laptop); its 9 outputs have the same volumes as the local ones to 11 digits.
+Run time and Docker, 2026-11-11, with fitted outlines: the 9 practice parts take 8 s alone on the
+laptop. The image builds for `linux/amd64` and runs as a non-root user with read-only inputs in 24 s
+(emulated on an ARM laptop). Two runs of the image give identical files apart from the time stamp.
+Against a native run on the ARM laptop, 8 of the 9 solids have the same volume to 7 digits or better;
+part 6 differs by 0.05 % (392 faces instead of 32), because the cut with a full circle that touches
+four faces of the box fails in the image and falls back to the traced outline. **The committed
+`artifacts/outputs` are the files the image produced**, not the laptop's.
 
 ## Known weaknesses
 

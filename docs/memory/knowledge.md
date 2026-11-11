@@ -90,6 +90,9 @@ organisers' format:
   mode (default `arcs`); `pixels` is the old 0.6 px polygon.
 - **The renders are hardly anti-aliased** (3 grey levels between part and background), so there is
   no sub-pixel edge information to recover; a traced slanted edge is a true staircase.
+- **Booleans can differ between platforms.** A circle that touches the box faces (a round part seen
+  end-on, practice part 6) cuts fine on the ARM laptop and fails in the amd64 image, where the
+  traced-pixel fallback takes over. A fuzzy tolerance on the cut might remove the difference; not tried.
 - **The solid is built with its bounding-box min corner at the origin**, the same frame as the
   positions in `facts.json` and the brief.
 - **`Cutter.run(operation, shape, argument, timeout)`** runs any boolean in a spawned child process.

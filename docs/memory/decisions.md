@@ -35,6 +35,11 @@ the entry and say what changed.
 
 ## Evaluation
 
+- **Committed practice outputs come from the `linux/amd64` image, not from a native laptop run**
+  (2026-11-11). The organisers re-run the image and compare with the committed files; one part
+  (practice 6) comes out differently on ARM. Regenerate with `docker run` as in README "Code-freeze
+  handover" and copy the files to `artifacts/outputs` before a submission.
+
 - **Local score is the volume ratio `min/max`** (2026-11-11). It needs no ground-truth geometry at
   run time and matched the sampled overlap on 40 parts. It stops being valid once a step can remove
   real material or add material; then use `--iou`.
