@@ -5,6 +5,17 @@ the entry and say what changed.
 
 ## Pipeline
 
+- **Tones are used to say what kind of face an area is and to check a proposed face, not to
+  measure a surface** (2026-11-12, user agreed to the approach; measurements in `knowledge.md`).
+  One tone is one equation for a normal with two unknowns and the table is good to a few degrees at
+  best, so a free surface integrated from tones would be off by about as much as the recesses are
+  deep. Radii and angles come from `facts.json`, positions from the solid and the lines.
+- **The curved-recess step runs right after the rounds** (2026-11-12). It continues the profile
+  the rounds step revolved, and it must see the flat ring before the level-face and shading steps
+  take it for a flat floor. Confirmed by the user the same day.
+- **Two tone tables ship with the agent, the organisers' renderer and our eval renderer, and the
+  agent picks one per case** (2026-11-12). Without the eval table the step could not be measured
+  locally. The organisers' table is the default and is only left when the other fits twice as well.
 - **No model or agent in any step for now** (2026-11-11 evening, user; narrows "a model will be
   used"). Every step, including the depth-from-shading step, stays deterministic. A teammate is
   still setting up a VLM and an LLM on a rented Brev GPU; whether a later step calls them is open.

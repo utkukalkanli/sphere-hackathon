@@ -60,6 +60,86 @@ the two isometric views.
 - **A gently sloping face has almost the tone of a face square to the view** (Lambert: 15 degrees
   is 3 % darker), so tone cannot tell them apart. What does: the solid usually has the slope right
   already from the side silhouette, and then its outline lands on the isometric lines as it is.
+- **In the real renders the tone depends on which way a face tilts, not only on how much**
+  (measured 2026-11-12 on the dish of practice 2, back view, whose shape is known from the brief:
+  a torus of minor radius 15.25 around the stem). Facing tone 186. At 25 degrees of tilt the four
+  tilt directions (right, down, left, up in the image) give 167, 125, 154, 230; at 5 degrees 179,
+  170, 176, 184. Reversing the tilt reverses the pattern, so a dent and a bump look different in one
+  view. So the Lambert figure in the bullet above ("15 degrees is 3 % darker") understates it for
+  these renders: the light is not at the camera. `tone = 63 + 16 nx - 86 ny + 113 nz` (image axes,
+  nz towards the camera) fits the dish with an rms of 6.6 levels, about 4 degrees; the rest is a
+  highlight (230 is brighter than facing). One tone is still one equation for the two unknowns of a
+  normal.
+- **The tone is one function of the normal in the camera's frame, the same for every view and every
+  part, in both renderers** (`tools/check_normals.py`, 2026-11-12). A table of the median tone per
+  direction of the normal (21 x 21 cells), built from the other parts, predicts a part it has not
+  seen: on the 24 eval parts (normals from the ground truth) with an rms of 2.3 grey levels, median
+  0, and no view worse than 3.3; on the 9 practice parts (normals from our solid after steps 1 to 4,
+  so wrong where the solid is) with a median of 2 levels, 1 to 2 on seven parts, 4 on part 7 and 24
+  on part 6. The light moves with the camera and comes from above it in both: as one distant light,
+  direction (x +0.13, y +0.70, z +0.70) with x to the right of the image, y up, z to the camera.
+  Eval: `tone = 120 + 10 x + 50 y + 53 z`; practice: `90 + 15 x + 76 y + 77 z`. The linear form is
+  only rough (rms 5.4 on eval); the table is what fits.
+- **How much a tilt shows depends on its direction** (same run, tone by the table; facing is 184 in
+  the practice renders, 178 in the eval renders):
+
+  | tilt | practice: right, up, left, down | eval: right, up, left, down |
+  | --- | --- | --- | --- |
+  | 5 to 15 degrees | 176, 186, 170, 164 | 178, 184, 176, 170 |
+  | 15 to 30 | 167, 210, 155, 128 | 175, 194, 167, 148 |
+  | 30 to 50 | 157, 202, 136, 90 | 168, 198, 154, 117 |
+  | 50 to 75 | 134, 186, 107, 76 | 150, 187, 130, 112 |
+
+  A face tilting down (its normal turning towards the bottom of the image) loses about 2 levels per
+  degree; tilting up it first gets brighter and then darker again, so the tone there has two answers.
+- **Where the practice tone does not fit the table, our solid is wrong there**: the rms on the
+  practice parts is 4 to 13 levels on parts 1, 2, 3, 4, 8 (volume within 10 % of the truth) and 18
+  to 42 on parts 5, 6, 7, 9 (the ones with large excess). Not yet used.
+- **Areas between the lines can be told apart by tone alone, except flat faces at some angles**
+  (`src/agentic_cad/regions.py`, `tools/check_regions.py`, 24 eval parts, 1367 areas of at least
+  250 px in the six straight views, truth from the ground truth's normals, 2026-11-12). Called
+  facing (even tone, the facing one), slanted (even, another tone) or curved (uneven): right for
+  98.0 % of the area and 91.3 % of the areas. By area: facing 99.9 % right, curved 98.6 %, slanted
+  68 %. A third of the slanted area is called facing, and no threshold fixes that: other directions
+  have the facing tone too (tilts of 5 to 30 degrees to the right or upwards, and some steep ones:
+  eval 211 back at 72 degrees shows 177 against 178). It takes a second view of the same face.
+- **The facing tone has to be taken from even areas, not from pixels.** The commonest tone of a
+  view, or the middle one of the six, is wrong on round parts, whose side views show no flat face
+  (it called 3.4 % of the truly facing area slanted). The tone that most of the even area of the six
+  views has got every facing area of the 24 parts right.
+- **The real renders light a flat face unevenly**: up to about 8 levels across the image, smoothly
+  (practice 1 right: 178 to 186 on one flat face; practice 2 front: 183 to 186). A plane plus a bowl
+  around the image centre, fitted per area, leaves about 1 level. Without that, large flat faces of
+  the practice parts count as curved (practice 1: 53 % of the area facing, 77 % with it). The eval
+  renders have none of it.
+- **Where a bright face meets a dark one the line between them is not found** (practice 1 front: the
+  flat block and the dark start of the recess were one area). `find_lines` wants a line 28 levels
+  darker than both sides. `regions.segment` also splits where neighbouring pixels differ by 24
+  levels. In the eval renders that splits some curved faces into their triangles, which then look
+  flat (complex tier 98.2 % to 95.6 % of the area right); the real renders are smooth.
+- **Which renderer made a case can be read off the solid** (2026-11-12): the median difference
+  between the views' tones and a tone table applied to our solid's faces is 1.0 with the right
+  table and 11 to 15 with the other (eval 249: eval 1.0, organisers 14.6; practice 2: organisers
+  1.3, eval 11.3). `tone.choose` takes the organisers' table unless another has under half its misfit.
+- **The tone table confirms a proposed face but does not measure its angle to 10 degrees**
+  (2026-11-12). Faces proposed rightly by `curved.py` sit 0.5 to 3 levels (median) from the tones
+  the table gives them, the flat face they replace 8 to 22 away; the wrong proposals on practice 5
+  were 20 to 40 away. But on eval 249 the true cone (half angle 53.9) is 9 levels off and a wrong
+  one (43.9) 1.5: the ground truth normals there are 36 degrees from the camera and the render is 7
+  to 16 levels darker than the table says for that direction on the lower half of the ring. Why is
+  not known.
+- **The verifier prefers whatever brings the volume closer**, since its score is multiplied by the
+  volume ratio: between three cones on eval 249 its line terms were equal to three digits and it
+  chose by volume alone. That is right only when the candidate accounts for the whole recess (the
+  cone carried through to the axis), and wrong when part of the excess is elsewhere (the same cone
+  stopped at the next line: it picked a steeper one that cut into the part, IoU 0.83 against 0.88).
+- **The eval renders are flat-shaded per triangle** (`smooth_shading=False`, triangles up to 0.15
+  rad apart), the real renders are smooth. A curved face has steps of tone in the eval renders.
+- **Practice 2 after step 3 is exactly the revolved silhouette** (12095 mm3 against 12131 computed
+  from the pixels; true 10947). All of the excess is one ring-shaped trough in the dish behind the
+  rim: the R15.25 arc that the silhouette shows leaving the stem carries on below the rim's edge
+  between radius 12.4 and 24.4 mm, 1.23 mm deep (about 1140 mm3 computed). No silhouette shows it;
+  the back view shows it as shading, and `facts.json` has the radius (`fillets_from_tori_minor_radii`).
   Such a face is left alone (`shading.confirmed`).
 - **The outline of a region must be taken on the middle of the lines around it.** A region ends
   where the line begins; that offset of 2 to 3 px misses the 2.5 px tolerance once projected.
@@ -82,6 +162,13 @@ the two isometric views.
 
 **What the silhouettes miss is open to a view, not enclosed.** After steps 1 + 2, 97 % of the excess
 material (24-part eval sample, 2026-11-11) has a free line of sight to the outside along an axis:
+- **A triangulation stays on the shape it was made for.** `verify.tessellate(solid, ..., angular)`
+  with a finer angle than the default leaves that mesh on the solid, and every later
+  `verify.draw` of it (level faces, shading) then sees other triangles and decides differently
+  (practice 7: 2.076 to 2.090 with no cut in between). A step that needs a finer mesh takes it from
+  a `BRepBuilderAPI_Copy(solid, True, False)`.
+- **A solid can be valid in memory and invalid in the file.** Practice 4 after the rounds step
+  passes `BRepCheck_Analyzer` before and after `vh.tidy` and fails it once the `.stp` is read back.
 pockets, recesses and steps that sit behind a wall in every silhouette but are open to one view. Truly
 enclosed cavities are 3 %. The information is in the views as shading and face-boundary lines; what is
 missing is depth.

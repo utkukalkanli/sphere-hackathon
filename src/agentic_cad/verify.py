@@ -162,8 +162,9 @@ class Mesh:
     normal: np.ndarray      # (n, 3) unit normals (sign arbitrary)
 
 
-def tessellate(shape: TopoDS_Shape, deflection: float) -> Mesh:
-    BRepMesh_IncrementalMesh(shape, deflection, False, 0.35, True)
+def tessellate(shape: TopoDS_Shape, deflection: float, angular: float = 0.35) -> Mesh:
+    """`angular` (radians) is how far the normals of neighbouring triangles on a curved face may differ."""
+    BRepMesh_IncrementalMesh(shape, deflection, False, angular, True)
     triangles, faces = [], []
     explorer = TopExp_Explorer(shape, TopAbs_FACE)
     index = 0

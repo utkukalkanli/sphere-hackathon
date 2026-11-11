@@ -1,6 +1,6 @@
 # Project state
 
-Last updated: 2026-11-12, about 01:00 CET.
+Last updated: 2026-11-12.
 
 ## Pipeline
 
@@ -10,6 +10,7 @@ Everything so far is deterministic. No model is called anywhere yet.
 | --- | --- | --- |
 | 1. Visual hull: a box with the `facts.json` dimensions, cut through wherever a view is white (front/back, right/left, top/bottom). Before cutting, each traced outline is rebuilt from straight lines and circular arcs (`outline_fit.py`). A fourth cut along the isometric views is implemented but off since 2026-11-11 | `src/agentic_cad/visual_hull.py`, `src/agentic_cad/outline_fit.py` | committed on `feat/visual-hull` |
 | 2. Holes: every cylindrical hole listed in `facts.json` is cut as a cylinder; a thinner coaxial boss inside a bore is kept | `src/agentic_cad/holes.py` | committed on `feat/visual-hull`, measured (below) |
+| Curved recesses around an axis (runs after step 3, before step 4): seen along a boss or bore axis of `facts.json`, a ring that is flat in our solid but whose tones change in the view is a curved face the side views could not show. If the solid has the start of that face next to the ring, it is fitted (line or circle, the radius snapped to a torus radius of `facts.json`) and carried on under the ring; if not, a cone of each half angle and a torus of each radius listed in `facts.json` are tried and the one the verifier rates highest is kept. A candidate is dropped if its tones, by the renderer's tone table, are more than 10 levels off the view or fit worse than the flat face, or if it would reach through the box (`HULL_SKIP=curved` switches the step off) | `src/agentic_cad/curved.py`, `tone.py`, `tone_tables.npz`, `regions.py` | uncommitted, hooked into `LATER_STEPS`, measured (below) |
 | 3. Rounds: along every boss or bore axis of `facts.json`, where both side views show one strip of the same width centred on the axis, the square the silhouettes left is cut to the circle (revolved fitted outline). Only where `facts.json` lists a boss of that radius there, or the part is a disc seen along the axis and has only lathe faces | `src/agentic_cad/rounds.py` | committed on `feat/visual-hull`, measured (below) |
 | 4. Level faces: in each straight view, an area between the dark lines with the flat tone of a face looking at the camera is one face at one depth. Where it covers several flat levels of our solid, the whole area is cut down to the lowest (if that level covers at least 5 % of the area) | `src/agentic_cad/depth.py` | committed on `feat/visual-hull`, measured (below) |
 | Verifier (not a step): draws a candidate solid from the 8 cameras and compares silhouettes, face-boundary lines, volume and area with the inputs. Steps 3 and 4 keep a cut only if its score does not drop | `src/agentic_cad/verify.py`, `tools/check_verify.py` | committed on `feat/visual-hull`, measured (below) |
@@ -165,6 +166,53 @@ flat floor square to a view that the isometric camera certainly sees.
 - Run time of the step, 4 processes at once: up to 44 s on the eval sample, 51 s on practice part 7.
 - The chosen depths are 3 to 5 px shallower than the true floor on most checked cuts (110, 236, 38),
   which is the safe side; a few small regions are 2 to 12 px too deep (171 bottom, 3 front).
+Curved recesses (`curved.py`), 2026-11-12:
+
+- Practice 2 (poppet valve): 1.105 to 1.018 times the true volume, verifier 0.835 to 0.917. The cut
+  is the ring-shaped trough of the dish, R15.25 from `facts.json`, 950 mm3.
+- The fixed 24 eval parts: the step cuts on none of them, so their scores do not move.
+- The 37 eval parts with only lathe faces (planes, cylinders, cones, tori, spheres) and a listed
+- **Practice part 4 (crankshaft) is written as an invalid solid since the rounds step** (found
+  2026-11-12 by the session working on lines, confirmed here). The solid is valid in memory and
+  after `vh.tidy`, but `BRepCheck_Analyzer` on the `.stp` read back says invalid. Hull and holes
+  read back valid; rounds does not (also with every later step skipped). The other 8 practice
+  outputs read back valid. No check in the pipeline reads the file back. The committed
+  `artifacts/outputs` are steps 1 + 2 and valid. Not fixed.
+
+  axis, steps 1 to 3 then this step alone, sampled IoU: it cut on 5 and none got worse. Part 249 (a
+  funnel) 0.725 to 0.981 (volume 1.361 to 1.007); 263 0.876 to 0.883; 79, 81 and 113 gain under
+  0.002 (chamfers). 12 of the 37 have more than 5 % excess after step 3; the other 11 are not
+  recesses around an axis (tyre tread, a spring, plates).
+- Practice set after the whole pipeline with this step (2026-11-12, another session running),
+  our volume / true volume: 1.003, 1.018, 1.000, 1.027, 1.226, 3.728, 2.076, 1.006, 1.822 for parts
+  1 to 9. Only part 2 is cut by this step (was 1.10); part 7 was checked with and without it (2.076
+  both). Part 4 is now 2.75 MB with 436 faces and part 7 2.14 MB; where that growth comes from was
+  not looked into.
+- Cost of the step: 0.6 s on practice 7 (no curved ring around any axis in the views, so the solid
+  is never drawn), 1.6 s on practice 2, 4 s on practice 5 (faces proposed and then dropped by the
+  tone check, which draws the solid from all 8 cameras).
+- A first version cut wrongly on practice 5: a cone of 5 degrees through the whole part around three
+  round bulges of the back view, 1.224 to 1.17, and the verifier accepted it because the volume came
+- `tools/check_normals.py --table FILE.npz` writes the tone table the agent reads. The two in
+  `src/agentic_cad/tone_tables.npz` were made that way: `organisers` from the 9 practice parts
+  (normals of our own solid), `eval` from the 24 eval parts (ground truth normals).
+- `tools/check_normals.py`: measures how well the tone of a pixel is predicted by the normal under
+  it (ground truth normals on the 24 eval parts, our solid's on the practice parts with
+  `--practice`, which needs the cache of `tools/check_shading.py --practice`). 96 s for the 24 parts
+  with 4 processes. Uncommitted. Results in `knowledge.md` ("The tone is one function of the
+  normal"). Nothing in the pipeline uses a normal from tone yet.
+- `src/agentic_cad/regions.py` and `tools/check_regions.py`: every area between the lines of a
+  straight view is called facing, slanted or curved from its tones alone (no solid needed).
+  Uncommitted, **not a step and not used by any step yet**. 98.0 % of the area right on the 24 eval
+  parts; details and limits in `knowledge.md`. `--practice --save DIR` writes the practice views
+  with the areas coloured (the only check there is for them: by eye).
+  closer. The tone check and the box check were added for that; with them practice 5 gets no cut.
+- `tools/eval_hull.py --iou` on the 24 parts gave 0.8757 volume score and 0.8736 sampled IoU in
+  this run against 0.8672 and 0.8612 an hour earlier with the same result for this step (no cut).
+  The difference is in the complex tier from the top/bottom cut on (0.6935 to 0.7219), which this
+  work did not touch; another session was running at the same time, so a cut that timed out in one
+  run may have finished in the other. Not looked into.
+
 - The image has not been built or run with step 5.
 
 Verifier on the same 24 parts, 2026-11-11: the ground truth scores 0.96 on average (0.91 to 0.99),

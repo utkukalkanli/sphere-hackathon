@@ -7,6 +7,10 @@ Remove a question when it is answered, and record the answer in `decisions.md` o
 - **How fast is the organisers' machine?** The practice run now takes 87 s on the laptop (steps 1
   to 4), and the run budget in `scripts/main.py` guarantees a file for every case within 17 minutes.
   What stays open: a cut that times out or a step that is skipped there but not here changes the
+- **Practice part 4 reads back as an invalid solid once the rounds step has run** (see Known
+  weaknesses in `state.md`). Whether the organisers' scorer rejects it is unknown; a broken file
+  scores 0. Open: what exactly is invalid, whether a repair on export fixes it, and whether the
+  export should read every file back and fall back to the solid before the offending step.
   output, and the image has not been run with steps 3 and 4 yet.
 - **When do we make the first submission?** Nothing is on the leaderboard yet. The image and the
   outputs of steps 1 + 2 are ready on `feat/visual-hull`; it takes a merge to `main`, which the user decides.
@@ -25,6 +29,26 @@ Remove a question when it is answered, and record the answer in `decisions.md` o
   isometric views (0.854 to 0.856). Still open: floors the isometric camera does not certainly see
   (deep or narrow pockets): a second, tone-only search now takes the large ones (0.856 to 0.861).
   Still missed: floors not in sight of either isometric camera at all (eval 38: the inside of a
+- **How do we turn tones into geometry?** (2026-11-12) The tone gives one equation per pixel for a
+  normal with two unknowns, through a table that is the same for all parts (`knowledge.md`). Idea
+  agreed with the user so far: do not integrate a free surface; use the tone to say which regions
+  are flat, slanted or curved and which way they fall, and fit planes, cylinders, cones and tori
+  whose radii and angles are in `facts.json`. Open: where the table comes from at run time (a fixed
+  one shipped with the agent, measured on the practice renders, or built per case from the faces of
+  the hull, which in a blocky part cover few directions); how a region gets its depth when it
+  touches no face of known depth; whether the steps should share one table of regions per view
+  (class, normal, depth, source) instead of each finding its own.
+  `regions.py` now gives the areas and their kind. Next undecided piece: telling a slanted face
+  from a facing one where the tone is the same, and the normal of a slanted face, both of which
+  need the same face found in a second view (the isometric one, through the solid, as step 5 does).
+- **Curved faces that are not rings around a listed axis** (2026-11-12). `curved.py` only handles
+  recesses of revolution about a boss or bore axis along x, y or z. Fillets along straight edges,
+  cylindrical pockets seen from the side and anything about a tilted axis are untouched. On the
+  eval set the step found work on 5 of 37 lathe-type parts, so how much the hidden parts gain is
+  unknown.
+- **Is the organisers' tone table good enough?** It was measured on our own solids of the 9 practice
+  parts, which are wrong in places, and fills 692 of about 1300 directions; the rest is
+  interpolated. A wrong table makes `curved.py` drop right proposals (it cannot make it cut).
   U-channel, tone share 0 at the true depth), which need another source, such as the lines of the
   two perpendicular straight views; small floors; and floors only partly in sight (eval 236 and 171
   back). Also open: slanted faces with no neighbour of known depth (practice 9), which

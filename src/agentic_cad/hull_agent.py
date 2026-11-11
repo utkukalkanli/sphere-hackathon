@@ -11,6 +11,7 @@ from pathlib import Path
 
 from agentic_cad import holes as hl
 from agentic_cad import outline_fit as of
+from agentic_cad import curved
 from agentic_cad import depth
 from agentic_cad import rounds
 from agentic_cad import shading
@@ -28,8 +29,8 @@ HOLES_TIMEOUT = float(os.environ.get("HULL_HOLES_TIMEOUT", 40))
 RETRY_BUDGET = float(os.environ.get("HULL_RETRY_BUDGET", 20))
 
 
-# Steps after the holes, in order; HULL_SKIP=rounds,depth,shading switches some off
-LATER_STEPS = {"rounds": rounds, "depth": depth, "shading": shading}
+# Steps after the holes, in order; HULL_SKIP=rounds,curved,depth,shading switches some off
+LATER_STEPS = {"rounds": rounds, "curved": curved, "depth": depth, "shading": shading}
 SKIP_STEPS = {name for name in os.environ.get("HULL_SKIP", "").split(",") if name}
 
 
