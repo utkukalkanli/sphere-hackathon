@@ -3,6 +3,7 @@
     uv run python tools/eval_hull.py              # 24 fixed cases, 4 processes; seconds when cached
     uv run python tools/eval_hull.py --all        # all 266 cases (minutes)
     uv run python tools/eval_hull.py --iou        # also measure the real overlap with the ground truth
+    uv run python tools/eval_hull.py --planned --iou   # with step 3 (needs OPENAI_MODEL and its endpoint)
 
 It is built to be cheap to re-run:
 - a fixed sample of 24 cases (8 per tier), not the whole set, unless --all / --cases N / --only;
@@ -33,7 +34,7 @@ ROOT = Path(__file__).resolve().parents[1]
 EVAL = ROOT / "datasets" / "eval"
 SRC = ROOT / "src" / "agentic_cad"
 CACHE = ROOT / "runs" / "_eval_cache"
-STEPS = ["box", "front_back", "right_left", "top_bottom", "iso", "holes"]
+STEPS = ["box", "front_back", "right_left", "top_bottom", "iso", "holes", "planned"]
 IOU_POINTS = 1500
 
 
@@ -120,6 +121,8 @@ def evaluate(job: dict) -> dict:
             volumes_path.write_text(json.dumps(agent.volumes))
         if options["holes"]:
             solid = agent.cut_holes(solid, case)
+        if options["planned"]:
+            solid = agent.cut_planned(case.joinpath("description.md").read_text(), views, solid, case)
         faces, explorer = 0, TopExp_Explorer(vh.tidy(solid), TopAbs_FACE)
         while explorer.More():
             faces += 1
@@ -145,6 +148,7 @@ def main() -> None:
     parser.add_argument("--iso", action="store_true", help="also make the isometric cut (off in the pipeline; slow)")
     parser.add_argument("--no-holes", action="store_true", help="skip step 2")
     parser.add_argument("--iou", action="store_true", help="measure the real overlap with the ground truth (slower)")
+    parser.add_argument("--planned", action="store_true", help="also run step 3, the model-planned cuts (needs OPENAI_MODEL)")
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--no-cache", action="store_true")
     args = parser.parse_args()
@@ -152,11 +156,17 @@ def main() -> None:
     with open(EVAL / "index.csv", newline="") as f:
         tiers = {f"test_case_{row['n']}": row["tier"] for row in csv.DictReader(f)}
     names = args.only or (list(tiers) if args.all else sample(tiers, args.cases))
-    options = {"iso": args.iso, "holes": not args.no_holes, "iou": args.iou}
+    options = {"iso": args.iso, "holes": not args.no_holes, "iou": args.iou, "planned": args.planned}
+    if args.planned:
+        from agentic_cad import llm_cuts
+        if not llm_cuts.configured():
+            sys.exit("--planned needs OPENAI_MODEL (and OPENAI_BASE_URL) set")
+        options["model"] = {k: os.environ.get(k) for k in ("OPENAI_MODEL", "LLM_VISION", "LLM_THINKING")}
     outline = os.environ.get("HULL_OUTLINE", "arcs")
     hull_key = digest(SRC / "visual_hull.py", SRC / "outline_fit.py", {"iso": options["iso"], "outline": outline})
     result_key = digest(SRC / "visual_hull.py", SRC / "outline_fit.py", SRC / "holes.py", SRC / "hull_agent.py",
-                        Path(__file__), options, {"outline": outline})
+                        Path(__file__), options, {"outline": outline},
+                        *([SRC / "features.py", SRC / "llm_cuts.py", SRC / "views.py"] if args.planned else []))
     CACHE.mkdir(parents=True, exist_ok=True)
     jobs = [{"name": n, "options": options, "hull_key": hull_key, "result_key": result_key,
              "cache": not args.no_cache} for n in names]

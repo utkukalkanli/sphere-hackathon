@@ -49,3 +49,10 @@ def test_llm_answer_parsing_drops_bad_entries():
 def test_step_3_is_off_without_a_model(monkeypatch):
     monkeypatch.delenv("OPENAI_MODEL", raising=False)
     assert not llm_cuts.configured()
+
+
+def test_llm_answer_with_arithmetic_in_numbers():
+    answer = """{"cuts": [{"name": "a", "kind": "box", "min": [26.67 + 1.27, 66.04 - 66.04, -2],
+              "max": [(10 + 2) / 2, 3*2, 1e1]}]}"""
+    cuts = llm_cuts.parse(answer)
+    assert cuts[0].params["min"] == [27.94, 0.0, -2] and cuts[0].params["max"] == [6.0, 6.0, 10.0]
