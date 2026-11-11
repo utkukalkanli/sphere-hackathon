@@ -1,5 +1,6 @@
-// Dashboard front end: case list, expected-vs-ours comparison, step trace. No build step, no framework.
-import { createViewer, VIEWS, COLORS } from '/static/viewer.js';
+// Dashboard front end. Three columns: the input (reference renders, description, facts), our solid
+// with the pipeline steps that built it, and the ground truth. No build step, no framework.
+import { createViewer, setView, fit, zoomBy, VIEWS, COLORS } from '/static/viewer.js';
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -7,27 +8,37 @@ const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => (
   { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 const VIEW_NAMES = Object.keys(VIEWS);
-const VIEW_LABEL = (name) => name.replace(/^view_\d+_/, '').replaceAll('_', ' ');
+const DEFAULT_VIEW = 'view_6_iso_front_right_top';
+const viewLabel = (name) => name.replace(/^view_\d+_/, '').replaceAll('_', ' ');
+
+const icon = (path) => `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${path}</svg>`;
+const ICON = {
+  prev: icon('<path d="M10 3.5 5.5 8l4.5 4.5"/>'),
+  next: icon('<path d="M6 3.5 10.5 8 6 12.5"/>'),
+  minus: icon('<path d="M3.5 8h9"/>'),
+  plus: icon('<path d="M3.5 8h9M8 3.5v9"/>'),
+  fit: icon('<path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10"/>'),
+  play: icon('<path d="M5 3.5v9l7-4.5z" fill="currentColor"/>'),
+  stop: icon('<rect x="4" y="4" width="8" height="8" rx="1" fill="currentColor"/>'),
+};
 
 const S = {
   datasets: [], runs: [], cases: {}, now: 0,
   dataset: null, caseName: null, runId: null,  // runId '' = committed outputs / no run
-  view: 'view_6_iso_front_right_top', follow: true,
+  image: DEFAULT_VIEW,
+  sel: null,  // the step whose solid is shown; null = follow the latest
 };
-const open = new Set();        // expanded steps: "<run>/<case>/<step id>"
-const traces = new Map();      // "<run>/<case>" -> { events, loading }
-const textCache = new Map();   // artifact url -> text
-const openText = new Set();    // artifact urls shown inline
-let live = { id: 0, viewers: [] };
+const traces = new Map();  // "<run>/<case>" -> { events, loading, loaded, failed }
+let live = { id: 0, rows: [] };  // bumped whenever another case or run comes on screen
+let started = null;  // a run just launched here that /api/state may not list yet
 
 // -- helpers ------------------------------------------------------------------------------------
 
 const htmlCache = new WeakMap();
-function setHTML(element, html) {  // skip identical updates: keeps focus, open menus and scroll intact
-  if (!element || htmlCache.get(element) === html) return false;
+function setHTML(element, html) {  // skip identical updates: keeps focus, scroll and open <details> intact
+  if (!element || htmlCache.get(element) === html) return;
   htmlCache.set(element, html);
   element.innerHTML = html;
-  return true;
 }
 
 async function api(path, body) {
@@ -39,9 +50,10 @@ async function api(path, body) {
   return data;
 }
 
-function toast(message, bad = false) {
+function toast(message) {
   const node = document.createElement('div');
-  node.className = 'toast' + (bad ? ' bad' : '');
+  node.className = 'toast';
+  node.setAttribute('role', 'alert');
   node.textContent = message;
   document.body.append(node);
   setTimeout(() => node.remove(), 5000);
@@ -55,14 +67,11 @@ function duration(seconds) {
   if (seconds < 60) return `${seconds.toFixed(1)} s`;
   return `${Math.floor(seconds / 60)} m ${Math.round(seconds % 60)} s`;
 }
-function size(bytes) {
-  if (bytes == null) return '';
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} kB`;
-  return `${(bytes / 1048576).toFixed(1)} MB`;
-}
 const clock = (ts) => (ts ? new Date(ts * 1000).toLocaleString('en-GB', {
-  month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '');
+  month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '');
+const words = (name) => String(name).replaceAll('_', ' ');
+const isImage = (name) => /\.(png|jpe?g|gif|webp|svg)$/i.test(name);
+const isStep = (name) => /\.(stp|step)$/i.test(name);
 
 const dataset = () => S.datasets.find((d) => d.id === S.dataset);
 const cases = () => S.cases[S.dataset] || [];
@@ -71,24 +80,64 @@ const currentRun = () => S.runs.find((r) => r.id === S.runId);
 const datasetRuns = () => S.runs.filter((r) => !r.dataset || r.dataset === S.dataset);
 const runCase = (run, name) => run && run.cases.find((c) => c.name === name);
 
-function envelope(c) {
-  const b = c.facts && c.facts.bounding_box_mm;
-  return b ? `${num(b.x, 1)} × ${num(b.y, 1)} × ${num(b.z, 1)} mm` : '';
-}
-
-// Our output for the current case: from the selected run, else the committed file
-function oursFor(c) {
+// The .stp we are judged on for this case: from the selected run, else the committed file
+function outputOf(c) {
   const run = currentRun();
   if (run) {
     const rc = runCase(run, c.name);
-    if (rc && rc.output) {
-      const url = `/files/runs/${run.id}/${c.name}/${rc.output}`;
-      return { url, key: url, label: `run ${run.id}` };
-    }
-    return { missing: rc ? (rc.status === 'running' ? 'running' : 'no-output') : 'not-run' };
+    return rc && rc.output ? { url: `/files/runs/${run.id}/${c.name}/${rc.output}` } : null;
   }
-  if (c.output) return { url: c.output.url, key: `${c.output.url}?${c.output.mtime}`, label: 'artifacts/outputs' };
-  return { missing: dataset() && dataset().committed ? 'no-committed' : 'no-run' };
+  return c.output ? { url: c.output.url, key: `${c.output.url}?${c.output.mtime}` } : null;
+}
+
+// -- reference renders --------------------------------------------------------------------------
+
+// The renders come on a white sheet. Cut the sheet away (flood from the border) so the part sits
+// on the dark interface instead of in a glaring white square.
+const cutouts = new Map();
+function cutout(src) {
+  if (!cutouts.has(src)) {
+    cutouts.set(src, (async () => {
+      const bitmap = await createImageBitmap(await (await fetch(src)).blob());
+      const scale = Math.min(1, 768 / Math.max(bitmap.width, bitmap.height));
+      const w = Math.round(bitmap.width * scale), h = Math.round(bitmap.height * scale);
+      const canvas = Object.assign(document.createElement('canvas'), { width: w, height: h });
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(bitmap, 0, 0, w, h);
+      const image = ctx.getImageData(0, 0, w, h), px = image.data;
+      const light = (i) => Math.min(px[i * 4], px[i * 4 + 1], px[i * 4 + 2]);
+      const gone = new Uint8Array(w * h), stack = [];
+      const visit = (i) => { if (!gone[i] && light(i) >= 236) { gone[i] = 1; stack.push(i); } };
+      for (let x = 0; x < w; x++) { visit(x); visit((h - 1) * w + x); }
+      for (let y = 0; y < h; y++) { visit(y * w); visit(y * w + w - 1); }
+      while (stack.length) {
+        const i = stack.pop(), x = i % w;
+        if (x > 0) visit(i - 1);
+        if (x < w - 1) visit(i + 1);
+        if (i >= w) visit(i - w);
+        if (i < w * (h - 1)) visit(i + w);
+      }
+      for (let i = 0; i < w * h; i++) if (light(i) >= 250) gone[i] = 1;  // sheet enclosed by the part
+      for (let i = 0; i < w * h; i++) {
+        if (gone[i]) { px[i * 4 + 3] = 0; continue; }
+        const x = i % w;  // soften the antialiased rim that touched the sheet
+        const rim = (x > 0 && gone[i - 1]) || (x < w - 1 && gone[i + 1]) || (i >= w && gone[i - w]) || (i < w * (h - 1) && gone[i + w]);
+        if (rim && light(i) > 180) px[i * 4 + 3] = Math.round(255 * (236 - Math.min(light(i), 236)) / 56);
+      }
+      ctx.putImageData(image, 0, 0);
+      return URL.createObjectURL(await new Promise((resolve) => canvas.toBlob(resolve)));
+    })().catch(() => src));
+  }
+  return cutouts.get(src);
+}
+
+function hydrateImages(root = document) {
+  $$('img[data-cut]', root).forEach(async (img) => {
+    const src = img.dataset.cut;
+    if (img.dataset.done === src) return;
+    const url = await cutout(src);
+    if (img.dataset.cut === src) { img.src = url; img.dataset.done = src; }
+  });
 }
 
 // -- STEP loading -------------------------------------------------------------------------------
@@ -102,7 +151,7 @@ function loadStep(url, key = url) {
     if (!response.ok) throw new Error(`could not load file (${response.status})`);
     const buffer = await response.arrayBuffer();
     const head = new TextDecoder().decode(buffer.slice(0, 64)).trimStart();
-    if (!head.startsWith('ISO-10303-21')) throw new Error('not a STEP file (no ISO-10303-21 header)');
+    if (!head.startsWith('ISO-10303-21')) throw new Error('not a STEP file');
     if (!worker) {
       worker = new Worker('/static/step-worker.js');
       worker.onmessage = ({ data }) => {
@@ -114,14 +163,51 @@ function loadStep(url, key = url) {
     return new Promise((resolve, reject) => {
       const id = ++jobId;
       jobs.set(id, { resolve, reject });
-      worker.postMessage({ id, buffer }, [buffer]);
+      worker.postMessage({ id, buffer });
     });
   })();
   stepCache.set(key, promise);
-  promise.catch(() => {});
-  if (stepCache.size > 8) stepCache.delete(stepCache.keys().next().value);
+  promise.catch(() => stepCache.delete(key));
+  if (stepCache.size > 32) stepCache.delete(stepCache.keys().next().value);
   return promise;
 }
+
+// Show a .stp in a viewport. The previous solid stays up until the next one is ready, so stepping
+// through the pipeline swaps the part in place without a flash.
+async function showModel(viewport, url, key, color, empty = '', options = {}) {
+  const stage = $('.stage', viewport);
+  if (stage.dataset.url === (url || '')) return;
+  stage.dataset.url = url || '';
+  const fresh = () => stage.isConnected && stage.dataset.url === (url || '');
+  const clear = (html) => {
+    if (stage.viewer) stage.viewer.dispose();
+    stage.viewer = null;
+    stage.innerHTML = html;
+    viewport.classList.remove('live');
+  };
+  if (!url) return clear(empty);
+  if (!stage.viewer) stage.innerHTML = '<p class="note pulse">Loading…</p>';
+  try {
+    const { meshes } = await loadStep(url, key);
+    if (!fresh()) return;
+    const viewer = await createViewer(stage, meshes, color, options);
+    if (!fresh()) return viewer.dispose();
+    if (stage.viewer) stage.viewer.dispose();
+    stage.viewer = viewer;
+    stage.replaceChildren(viewer.canvas);
+    viewport.classList.add('live');
+  } catch (error) {
+    if (fresh()) clear(`<p class="note bad" title="${esc(error.message)}">Unreadable .stp</p>`);
+  }
+}
+
+const viewportHTML = (id, label) => `<div class="viewport" id="${id}">
+  <div class="stage" role="img" aria-label="${label}"></div>
+  <div class="tools">
+    <button data-zoom="0.8" title="Zoom out (−)" aria-label="Zoom out">${ICON.minus}</button>
+    <button data-zoom="1.25" title="Zoom in (+)" aria-label="Zoom in">${ICON.plus}</button>
+    <button data-fit title="Fit the part (F, or double-click)" aria-label="Fit the part">${ICON.fit}</button>
+  </div></div>`;
 
 // -- routing ------------------------------------------------------------------------------------
 
@@ -148,7 +234,12 @@ async function ensureCases(force = false) {
 function normalise() {
   if (!S.datasets.some((d) => d.id === S.dataset)) S.dataset = S.datasets[0] && S.datasets[0].id;
   const runs = datasetRuns();
-  if (S.runId == null || (S.runId && !runs.some((r) => r.id === S.runId))) S.runId = runs[0] ? runs[0].id : '';
+  if (runs.some((r) => r.id === started)) started = null;
+  if (S.runId && S.runId !== started && !runs.some((r) => r.id === S.runId)) S.runId = null;
+  if (S.runId == null) {  // the newest run that has this case; without a case, the newest run
+    const run = S.caseName ? runs.find((r) => runCase(r, S.caseName)) : runs[0];
+    S.runId = run ? run.id : '';
+  }
   if (cases().length && !currentCase()) {
     const run = currentRun();
     const first = run && run.cases[0] && cases().find((c) => c.name === run.cases[0].name);
@@ -158,229 +249,241 @@ function normalise() {
 
 // -- top bar ------------------------------------------------------------------------------------
 
-function runLabel(run) {
-  const done = run.cases.filter((c) => c.status !== 'running').length;
-  return `${clock(run.started_at)} · ${done} case${done === 1 ? '' : 's'} · ${run.status}`;
-}
+const envelope = (c) => {
+  const b = c.facts && c.facts.bounding_box_mm;
+  return b ? `${num(b.x, 1)} × ${num(b.y, 1)} × ${num(b.z, 1)} mm` : '';
+};
+const generic = (c) => !c.title || /^mechanical part$/i.test(c.title) || c.title === c.name;
 
-function caseLabel(c) {
-  const generic = !c.title || /^mechanical part$/i.test(c.title) || c.title === c.name;
-  return `#${c.number} · ${generic ? envelope(c) || c.name : c.title}${c.tier ? ` · ${c.tier}` : ''}`;
-}
-
-function renderTop() {
-  const ds = dataset(), run = currentRun(), runs = datasetRuns();
+function renderBar() {
+  const ds = dataset(), run = currentRun();
   const inRun = new Set(run ? run.cases.map((c) => c.name) : []);
+  const running = run && run.status === 'running';
   setHTML($('#bar'), `
-    <select id="case-select" aria-label="Test case">
-      ${S.datasets.map((d) => `<optgroup label="${esc(d.label)} (${d.count})">
-        ${(S.cases[d.id] || []).map((c) => `<option value="${d.id}/${c.name}" ${d.id === S.dataset && c.name === S.caseName ? 'selected' : ''}>
-          ${esc(caseLabel(c))}${d.id === S.dataset && inRun.has(c.name) ? ' ●' : ''}</option>`).join('')}</optgroup>`).join('')}
-    </select>
-    <button class="btn" data-move="-1" title="Previous case (k)" aria-label="Previous case">‹</button>
-    <button class="btn" data-move="1" title="Next case (j)" aria-label="Next case">›</button>
-    <label class="field">Run
+    <div class="group">
+      <button class="icon" data-move="-1" title="Previous case (←)" aria-label="Previous case">${ICON.prev}</button>
+      <select id="case-select" aria-label="Test case">
+        ${S.datasets.map((d) => `<optgroup label="${esc(d.label)} (${d.count})">
+          ${(S.cases[d.id] || []).map((c) => `<option value="${d.id}/${c.name}" ${d.id === S.dataset && c.name === S.caseName ? 'selected' : ''}>
+            ${esc(`${c.number} · ${generic(c) ? envelope(c) || c.name : c.title}${c.tier ? ` · ${c.tier}` : ''}`)}${d.id === S.dataset && inRun.has(c.name) ? ' •' : ''}</option>`).join('')}</optgroup>`).join('')}
+      </select>
+      <button class="icon" data-move="1" title="Next case (→)" aria-label="Next case">${ICON.next}</button>
+    </div>
+    <label class="field"><span>Run</span>
       <select id="run-select">
-        <option value="">${ds && ds.committed ? 'Committed outputs' : 'No run'}</option>
-        ${runs.map((r) => `<option value="${esc(r.id)}" ${r.id === S.runId ? 'selected' : ''}>${esc(runLabel(r))}</option>`).join('')}
+        <option value="">${ds && ds.committed ? 'Committed outputs' : 'None'}</option>
+        ${datasetRuns().map((r) => `<option value="${esc(r.id)}" ${r.id === S.runId ? 'selected' : ''}>
+          ${esc(`${clock(r.started_at)} · ${r.cases.length} case${r.cases.length === 1 ? '' : 's'} · ${r.status}`)}</option>`).join('')}
       </select>
     </label>
     <span class="spacer"></span>
-    ${run && run.status === 'running' && run.launched_by === 'ui' ? '<button class="btn" data-action="stop">Stop</button>' : ''}
-    <button class="btn primary" data-action="run" title="Run scripts/main.py on this case with tracing">Run this case</button>`);
+    <span class="offline-note">Dashboard server is not responding</span>
+    ${running && run.launched_by === 'ui' ? `<button data-action="stop">${ICON.stop}Stop</button>` : ''}
+    <button class="primary" data-action="run" title="Run scripts/main.py on this case with tracing">${ICON.play}Run this case</button>`);
 }
 
-// -- main ---------------------------------------------------------------------------------------
+// -- columns ------------------------------------------------------------------------------------
 
-function caseStatusHTML(c) {
-  const run = currentRun(), rc = runCase(run, c.name);
-  if (!run || !rc) return '';
-  const end = rc.ended_at || (rc.status === 'running' ? S.now : rc.last_ts);
-  return `<span class="st st-${rc.status}">${esc(rc.status)}</span>
-    <span class="muted">${rc.steps} step${rc.steps === 1 ? '' : 's'}${rc.errors ? `, ${rc.errors} failed` : ''} · ${duration(end - rc.started_at)}</span>`;
-}
-
-function renderMain(force = false) {
+function renderMain() {
   const main = $('#main'), c = currentCase();
-  if (!c) {
-    setHTML(main, `<p class="empty">${S.datasets.length ? 'Loading cases…' : 'No datasets found.'}</p>`);
-    return;
-  }
-  const ours = oursFor(c);
-  const key = [S.dataset, c.name, S.runId, ours.key || ours.missing].join('|');
-  if (force || main.dataset.key !== key) {
+  if (!c) return setHTML(main, `<p class="note center">${S.datasets.length ? 'Loading cases…' : 'No datasets found under artifacts/inputs or datasets/eval.'}</p>`);
+  const key = [S.dataset, c.name, S.runId].join('|');
+  if (main.dataset.key !== key) {
     main.dataset.key = key;
-    live.viewers.forEach((v) => v.dispose());
-    live = { id: live.id + 1, viewers: [] };
+    $$('.stage', main).forEach((stage) => stage.viewer && stage.viewer.dispose());
+    live = { id: live.id + 1, rows: [] };
     htmlCache.delete(main);
-    renderCompare(c, ours);
-    main.scrollTop = 0;
+    main.innerHTML = `
+      <section class="col" id="input" aria-label="Input"></section>
+      <section class="col bench" aria-label="Our solid">
+        <header class="pane-head"><i class="sw ours"></i><h2>Ours</h2><span id="stage-label"></span><span class="spacer"></span><span id="steps-status"></span></header>
+        ${viewportHTML('ours', 'Our solid. Drag to rotate, shift-drag to pan, scroll to zoom.')}
+        <div class="scroll"><div id="steps-note"></div><ol id="steps"></ol><div id="step-detail"></div></div>
+      </section>
+      <section class="col bench" aria-label="Ground truth">
+        <header class="pane-head"><i class="sw truth"></i><h2>${c.truth ? 'Ground truth' : 'Reference render'}</h2><span id="truth-label"></span></header>
+        ${viewportHTML('truth', 'Ground truth solid')}
+        <div class="scroll" id="metrics"></div>
+      </section>`;
+    renderInput(c);
+    renderTruth(c);
   }
   renderSteps(c);
-  setHTML($('#case-status'), caseStatusHTML(c));
+  measureOurs(c);
 }
 
-// -- compare ------------------------------------------------------------------------------------
+// -- left: input --------------------------------------------------------------------------------
 
-const MISSING = {
-  running: ['Still running', 'The output appears here as soon as this case finishes.'],
-  'no-output': ['No output file', 'This case ran but recorded no .stp. A missing file scores 0.'],
-  'not-run': ['Not part of this run', 'Pick another run, or run this case from “Run pipeline”.'],
-  'no-committed': ['No committed output', 'artifacts/outputs has no .stp for this case yet. Select a run or run the pipeline.'],
-  'no-run': ['No run selected', 'Run the pipeline on this dataset to see your output next to the expected part.'],
-};
+function fmt(value) {
+  if (value == null) return '–';
+  if (typeof value === 'number') return num(value);
+  if (typeof value !== 'object') return esc(value);
+  if (Array.isArray(value)) {
+    return value.map((v) => (Array.isArray(v) ? `(${v.map(fmt).join(', ')})` : fmt(v))).join(Array.isArray(value[0]) ? '<br>' : ', ') || '–';
+  }
+  return Object.entries(value).map(([k, v]) => `${fmt(v)} ${esc(words(k).toLowerCase())}`).join(' · ') || '–';
+}
 
-function renderCompare(c, ours) {
-  const ds = dataset(), base = `${ds.inputs_url}/${c.name}`;
+function factsHTML(facts) {
+  if (!facts) return '<p class="note">This case has no facts.json.</p>';
+  const box = facts.bounding_box_mm;
+  const spec = [
+    ['Envelope', box && `${num(box.x)} × ${num(box.y)} × ${num(box.z)} <small>mm</small>`],
+    ['Volume', facts.volume_mm3 != null && `${num(facts.volume_mm3 / 1000)} <small>cm³</small>`],
+    ['Surface', facts.surface_area_mm2 != null && `${num(facts.surface_area_mm2 / 100)} <small>cm²</small>`],
+    ['Solids', facts.solids],
+    ['Through holes', facts.through_holes_genus],
+    ['Faces · edges', facts.faces != null && `${num(facts.faces)} · ${num(facts.edges)}`],
+    ['Face types', facts.face_types && fmt(facts.face_types)],
+  ].filter(([, v]) => v != null && v !== false);
+  const shown = new Set(['bounding_box_mm', 'volume_mm3', 'surface_area_mm2', 'solids', 'through_holes_genus', 'faces', 'edges', 'face_types']);
+  const rest = Object.entries(facts).filter(([k, v]) => !shown.has(k) && !k.startsWith('_')
+    && v != null && (typeof v !== 'object' || Object.keys(v).length));
+  const feature = ([key, value]) => {
+    const title = `<h3>${esc(words(key))}</h3>`;
+    if (!Array.isArray(value) || typeof value[0] !== 'object') return `${title}<p class="mono">${fmt(value)}</p>`;
+    const columns = [...new Set(value.flatMap((item) => Object.keys(item)))];
+    return `${title}<table class="grid"><thead><tr>${columns.map((k) => `<th>${esc(words(k))}</th>`).join('')}</tr></thead>
+      <tbody>${value.map((item) => `<tr>${columns.map((k) => `<td>${fmt(item[k])}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+  };
+  return `<dl class="spec">${spec.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>
+    ${rest.length ? `<details class="fold"><summary>Features (${rest.length})</summary>${rest.map(feature).join('')}</details>` : ''}`;
+}
+
+// The description is the prompt our pipeline reads. Dimensions are lifted out of the prose so the
+// numbers can be found without reading every sentence.
+function markdown(text) {
+  const inline = (line) => line.split(/(\b\d+(?:\.\d+)?(?:\s?(?:mm|cm\^?[23]|°|%))?(?![\w.]*\d))/)
+    .map((part, i) => (i % 2 ? `<span class="q">${esc(part)}</span>` : esc(part))).join('')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/`([^`]+)`/g, '<code>$1</code>');
+  let html = '', list = false;
+  for (const line of text.split('\n')) {
+    const item = line.match(/^\s*[-*]\s+(.*)/), heading = line.match(/^(#{1,4})\s+(.*)/);
+    if (list && !item) { html += '</ul>'; list = false; }
+    if (item) { html += `${list ? '' : '<ul>'}<li>${inline(item[1])}</li>`; list = true; }
+    else if (heading) html += heading[1].length === 1 ? '' : `<h3>${inline(heading[2])}</h3>`;  // the title is the column heading
+    else if (line.trim()) html += `<p>${inline(line)}</p>`;
+  }
+  return html + (list ? '</ul>' : '');
+}
+
+const imageSrc = (c, name) => `${dataset().inputs_url}/${c.name}/${name === 'context' ? 'context.png' : `images/${name}.png`}`;
+
+function renderInput(c) {
   const images = [...c.views.map((file) => file.replace(/\.png$/, '')), ...(c.context ? ['context'] : [])];
-  if (!images.includes(S.view) || S.view === 'context') S.view = 'view_6_iso_front_right_top';
-  $('#main').innerHTML = `
-    <div class="layout">
-      <section class="images">
-        <div class="col-head"><span>Input images</span><span class="muted">click one to turn the 3D views to it</span></div>
-        <div class="img-grid">
-          ${images.map((name) => `<button data-view="${name}" aria-pressed="${name === S.view}">
-            <img loading="lazy" alt="${VIEW_LABEL(name)} view" src="${base}/${name === 'context' ? 'context.png' : `images/${name}.png`}">
-            <span>${VIEW_LABEL(name)}</span></button>`).join('')}
-        </div>
-      </section>
-      <figure class="pane">
-        <figcaption><span><i class="sw sw-ours"></i>Our output</span><span class="muted">${esc(ours.label || '')}</span></figcaption>
-        <div class="stage" id="stage-ours"></div>
-      </figure>
-      <figure class="pane">
-        <figcaption><span><i class="sw sw-expected"></i>Ground truth</span><span class="muted">${c.truth ? size(c.truth.size) : ''}</span></figcaption>
-        <div class="stage" id="stage-truth">${c.truth ? '' : `<div class="stage-msg"><strong>No ground truth file</strong>
-          <span>The practice set ships no expected .stp. Compare against the images and the numbers below.</span></div>`}</div>
-      </figure>
-    </div>
-    <div id="metrics"></div>
-    <section class="steps-section"><h2>Steps</h2><div id="steps"></div></section>
-    <details class="brief"><summary>Design brief</summary><article class="prose" id="brief-text"></article></details>`;
-  loadCompare(c, ours);
+  if (!images.includes(S.image)) S.image = images.includes(DEFAULT_VIEW) ? DEFAULT_VIEW : images[0];
+  const ds = dataset();
+  $('#input').innerHTML = `
+    <header class="part">
+      <h1>${esc(generic(c) ? `Case ${c.number}` : c.title)}</h1>
+      <p>${esc([generic(c) ? '' : `Case ${c.number}`, ds.label, c.tier, envelope(c)].filter(Boolean).join(' · '))}</p>
+    </header>
+    ${images.length ? `<figure class="ref"><img id="big" alt="Reference render, ${esc(viewLabel(S.image))}" src="${imageSrc(c, S.image)}" data-cut="${imageSrc(c, S.image)}">
+      <figcaption id="big-label">${esc(viewLabel(S.image))}</figcaption></figure>
+    <div class="thumbs">${images.map((name, i) => `<button data-image="${name}" aria-pressed="${name === S.image}"
+      title="${viewLabel(name)}${VIEWS[name] ? ` — turns the 3D views to this side (${i + 1})` : ''}">
+      <img alt="${viewLabel(name)}" src="${imageSrc(c, name)}" data-cut="${imageSrc(c, name)}"></button>`).join('')}</div>` : '<p class="note">This case has no reference renders.</p>'}
+    <h2>Description</h2><article class="prose clamp" id="brief"></article><button class="toggle" data-expand="brief">Show all</button>
+    <h2>Facts</h2>${factsHTML(c.facts)}`;
+  hydrateImages($('#input'));
   const id = live.id;
   fetch(`/api/description?dataset=${S.dataset}&case=${c.name}`).then((r) => r.text()).then((text) => {
-    if (id === live.id && $('#brief-text')) $('#brief-text').innerHTML = markdown(text);
+    if (id === live.id) $('#brief').innerHTML = markdown(text);
   });
 }
 
-function applyView() {
-  $$('.img-grid button').forEach((b) => b.setAttribute('aria-pressed', b.dataset.view === S.view));
-  if (S.view !== 'context') live.viewers.forEach((v) => v.setView(S.view));
+function showImage(name, turn = true) {
+  const c = currentCase();
+  if (!c || !$('#big')) return;
+  S.image = name;
+  $$('.thumbs button').forEach((b) => b.setAttribute('aria-pressed', b.dataset.image === name));
+  $$('#big, #truth img.ref').forEach((img) => { img.dataset.cut = imageSrc(c, name); });
+  $('#big-label').textContent = viewLabel(name);
+  if ($('#truth-label') && !c.truth) $('#truth-label').textContent = viewLabel(name);
+  hydrateImages();
+  if (turn && VIEWS[name]) setView(name);
 }
 
-function stageMessage(stage, title, detail, bad = false) {
-  if (stage) stage.innerHTML = `<div class="stage-msg ${bad ? 'bad' : ''}"><strong>${esc(title)}</strong><span>${esc(detail)}</span></div>`;
-}
+// -- right: ground truth ------------------------------------------------------------------------
 
-async function loadCompare(c, ours) {
-  const id = live.id;
-  const stale = () => id !== live.id;
-  const oursStage = $('#stage-ours'), truthStage = $('#stage-truth');
-  const loading = '<div class="stage-msg"><span class="spin"></span><span>Loading STEP…</span></div>';
-  const state = { ours: undefined, truth: undefined };
-  const settle = (promise) => promise.then((value) => ({ value }), (error) => ({ error }));
-  const mount = async (stage, meshes, color) => {
-    const viewer = await createViewer(stage, [{ meshes, color }]);
-    if (stale()) return viewer.dispose();
-    live.viewers.push(viewer);
-    viewer.setView(S.view);
-    return viewer;
-  };
-  const link = () => {  // rotating one view rotates the other
-    const [a, b] = [state.oursViewer, state.truthViewer];
-    if (!a || !b) return;
-    a.onChange((pose) => b.setPose(pose));
-    b.onChange((pose) => a.setPose(pose));
-  };
-
-  if (!ours.url) {
-    state.ours = null;
-    stageMessage(oursStage, ...MISSING[ours.missing]);
-  } else {
-    oursStage.innerHTML = loading;
-    settle(loadStep(ours.url, ours.key)).then(async (result) => {
-      if (stale()) return;
-      state.ours = result;
-      renderMetrics(c, ours, state);
-      if (result.error) return stageMessage(oursStage, 'Not a readable STEP solid', `${result.error.message}. This would score 0.`, true);
-      state.oursViewer = await mount(oursStage, result.value.meshes, COLORS.ours)
-        .catch((e) => stageMessage(oursStage, 'Could not render', e.message, true));
-      link();
-    });
-  }
+function renderTruth(c) {
+  const id = live.id, state = live.state = { truth: undefined, ours: null };
   if (c.truth) {
-    truthStage.innerHTML = loading;
-    settle(loadStep(c.truth.url, `${c.truth.url}?${c.truth.mtime}`)).then(async (result) => {
-      if (stale()) return;
-      state.truth = result;
-      renderMetrics(c, ours, state);
-      if (result.error) return stageMessage(truthStage, 'Could not read the ground truth .stp', result.error.message, true);
-      state.truthViewer = await mount(truthStage, result.value.meshes, COLORS.expected)
-        .catch((e) => stageMessage(truthStage, 'Could not render', e.message, true));
-      link();
+    const key = `${c.truth.url}?${c.truth.mtime}`;
+    showModel($('#truth'), c.truth.url, key, COLORS.truth);
+    settle(loadStep(c.truth.url, key)).then((m) => { state.truth = m; if (id === live.id) renderMetrics(c, state); });
+  } else {
+    state.truth = null;
+    $('#truth .stage').innerHTML = `<img class="ref" alt="Reference render" src="${imageSrc(c, S.image)}" data-cut="${imageSrc(c, S.image)}">`;
+    $('#truth-label').textContent = viewLabel(S.image);
+    hydrateImages($('#truth'));
+  }
+}
+
+const settle = (promise) => promise.then((data) => data.measured, () => null);
+
+// Called on every render: measures our output again whenever its file changes, so the table fills
+// in as soon as a run has written its .stp.
+function measureOurs(c) {
+  const shown = live, state = live.state, output = outputOf(c);
+  const key = output ? output.key || output.url : '';
+  if (!state || shown.out === key) return;
+  shown.out = key;
+  state.ours = output ? undefined : null;
+  if (output) {
+    settle(loadStep(output.url, output.key)).then((m) => {
+      if (live === shown && shown.out === key) { state.ours = m; renderMetrics(c, state); }
     });
   }
-  renderMetrics(c, ours, state);
+  renderMetrics(c, state);
 }
 
 function delta(expected, actual) {
-  if (expected == null || actual == null || !isFinite(expected) || !isFinite(actual) || !expected) return '<td class="num muted">–</td>';
-  const pct = (actual - expected) / expected * 100;
-  const level = Math.abs(pct) <= 1 ? 'good' : Math.abs(pct) <= 5 ? 'warn' : 'bad';
-  const mark = { good: '✓', warn: '~', bad: '✗' }[level];
-  const text = Math.abs(pct).toFixed(Math.abs(pct) < 10 ? 2 : 0);
-  return `<td class="num d-${level}">${mark} ${Number(text) === 0 ? '' : pct > 0 ? '+' : '−'}${text} %</td>`;
+  if (expected == null || actual == null || !isFinite(expected) || !isFinite(actual) || !expected) return '<td></td>';
+  const pct = (actual - expected) / expected * 100, abs = Math.abs(pct);
+  const text = abs.toFixed(abs < 10 ? 1 : 0);
+  return `<td class="${abs <= 1 ? 'good' : abs <= 5 ? 'warn' : 'bad'}">${Number(text) === 0 ? '±' : pct > 0 ? '+' : '−'}${text} %</td>`;
 }
 
-function renderMetrics(c, ours, state) {
+function renderMetrics(c, state) {
   const facts = c.facts || {}, box = facts.bounding_box_mm;
-  const truth = state.truth && state.truth.value && state.truth.value.measured;
-  const mine = state.ours && state.ours.value && state.ours.value.measured;
   const sorted = (dims) => (dims ? [...dims].sort((a, b) => b - a) : [null, null, null]);
-  const expectedBox = sorted(box ? [box.x, box.y, box.z] : truth && truth.bbox);
-  const mineBox = sorted(mine && mine.bbox);
+  const expectedBox = sorted(box ? [box.x, box.y, box.z] : state.truth && state.truth.bbox);
+  const oursBox = sorted(state.ours && state.ours.bbox);
   const rows = [
-    ['Longest side', 'mm', expectedBox[0], mineBox[0]],
-    ['Middle side', 'mm', expectedBox[1], mineBox[1]],
-    ['Shortest side', 'mm', expectedBox[2], mineBox[2]],
-    ['Volume', 'cm³', (facts.volume_mm3 ?? (truth && truth.volume)) / 1000, mine && mine.volume / 1000],
-    ['Surface area', 'cm²', (facts.surface_area_mm2 ?? (truth && truth.area)) / 100, mine && mine.area / 100],
+    ['Longest side', 'mm', expectedBox[0], oursBox[0]],
+    ['Middle side', 'mm', expectedBox[1], oursBox[1]],
+    ['Shortest side', 'mm', expectedBox[2], oursBox[2]],
+    ['Volume', 'cm³', (facts.volume_mm3 ?? (state.truth && state.truth.volume)) / 1000, state.ours && state.ours.volume / 1000],
+    ['Surface', 'cm²', (facts.surface_area_mm2 ?? (state.truth && state.truth.area)) / 100, state.ours && state.ours.area / 100],
   ];
-  const pending = ours.url && state.ours === undefined;
-  const invalid = state.ours && state.ours.error;
-  const note = pending ? 'measuring…' : invalid ? 'unreadable .stp' : !ours.url ? MISSING[ours.missing][0].toLowerCase() : '';
-  setHTML($('#metrics'), `
-    <div class="metrics">
-      <table>
-        <caption>Size check <span class="muted">— sides sorted by length; ours measured from the mesh (about ±0.5 %)</span></caption>
-        <thead><tr><th></th><th class="num">Ground truth</th><th class="num">Ours</th><th class="num">Difference</th></tr></thead>
-        <tbody>${rows.map(([label, unit, expected, actual]) => `<tr>
-          <th>${label}</th><td class="num">${num(expected)} <small>${unit}</small></td>
-          <td class="num">${actual == null ? `<span class="muted">${note || '–'}</span>` : `${num(actual)} <small>${unit}</small>`}</td>
-          ${delta(expected, actual)}</tr>`).join('')}</tbody>
-      </table>
-    </div>`);
+  const cell = (value, unit) => (value == null || !isFinite(value) ? '<td class="none">–</td>' : `<td>${num(value)} <small>${unit}</small></td>`);
+  const note = state.ours === undefined ? '<p class="note pulse">Measuring our output…</p>'
+    : state.ours === null ? '<p class="note">No output of ours yet.</p>' : '';
+  setHTML($('#metrics'), `<table class="metrics">
+    <thead><tr><th></th><th><i class="sw truth"></i>Truth</th><th><i class="sw ours"></i>Ours</th><th>Diff</th></tr></thead>
+    <tbody>${rows.map(([label, unit, expected, actual]) => `<tr><th>${label}</th>${cell(expected, unit)}${cell(actual, unit)}${delta(expected, actual)}</tr>`).join('')}</tbody>
+  </table>${note}`);
 }
 
-// -- steps --------------------------------------------------------------------------------------
+// -- middle: steps ------------------------------------------------------------------------------
 
 function buildTrace(events) {
-  const t = { steps: new Map(), roots: [], logs: [], artifacts: [], start: null, end: null, status: 'running', error: null, last: null };
+  const t = { steps: new Map(), list: [], start: null, end: null, status: 'running', error: null, last: null };
   for (const e of events) {
     if (t.start == null) t.start = e.ts;
     t.last = e.ts;
-    if (e.t === 'case_start') t.start = e.ts;
-    else if (e.t === 'case_end') Object.assign(t, { end: e.ts, status: e.status, error: e.error });
+    if (e.t === 'case_end') Object.assign(t, { end: e.ts, status: e.status, error: e.error });
     else if (e.t === 'step_start') {
-      const step = { ...e, start: e.ts, end: null, status: 'running', children: [], logs: [], artifacts: [] };
+      const parent = t.steps.get(e.parent);
+      const step = { ...e, start: e.ts, end: null, status: 'running', depth: parent ? parent.depth + 1 : 0, logs: [], artifacts: [] };
       t.steps.set(e.id, step);
-      (t.steps.get(e.parent) ? t.steps.get(e.parent).children : t.roots).push(step);
+      t.list.push(step);
     } else if (e.t === 'step_end') {
       const step = t.steps.get(e.id);
       if (step) Object.assign(step, { end: e.ts, status: e.status, output: e.output, metrics: e.metrics, error: e.error });
-    } else if (e.t === 'log') (t.steps.get(e.step) || t).logs.push(e);
-    else if (e.t === 'artifact') (t.steps.get(e.step) || t).artifacts.push(e);
+    } else if (e.t === 'log' && t.steps.get(e.step)) t.steps.get(e.step).logs.push(e);
+    else if (e.t === 'artifact' && e.role !== 'output' && t.steps.get(e.step)) t.steps.get(e.step).artifacts.push(e);
   }
   return t;
 }
@@ -393,170 +496,120 @@ async function fetchTrace(run, name) {
   entry.loading = true;
   try {
     const data = await api(`/api/events?run=${encodeURIComponent(run)}&case=${encodeURIComponent(name)}&after=${entry.events.length}`);
-    if (data.events.length || !entry.loaded) {
-      entry.events.push(...data.events);
-      entry.loaded = true;
-      if (S.runId === run && S.caseName === name) renderSteps(currentCase());
-    }
+    entry.events.push(...data.events);
+    entry.loaded = true;
+    entry.failed = null;
   } catch (error) { entry.failed = error.message; } finally { entry.loading = false; }
+  if (S.runId === run && S.caseName === name) renderSteps(currentCase());
 }
 
-function valueHTML(value, top = true) {
-  if (value == null) return '<span class="muted">none</span>';
-  if (typeof value === 'string') return `<pre>${esc(value)}</pre>`;
-  if (typeof value !== 'object') return `<code>${esc(value)}</code>`;
-  if (top && !Array.isArray(value) && Object.keys(value).length <= 16) {
-    return `<dl class="kv">${Object.entries(value).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${valueHTML(v, false)}</dd>`).join('')}</dl>`;
-  }
-  return `<pre>${esc(JSON.stringify(value, null, 2))}</pre>`;
-}
-
-function artifactsHTML(list, base) {
-  if (!list.length) return '';
-  const item = (a) => {
-    const url = `${base}/${a.path}`;
-    if (/\.(png|jpe?g|gif|webp|svg)$/i.test(a.name)) {
-      return `<button class="art art-img" data-image="${esc(url)}" title="${esc(a.name)}"><img loading="lazy" src="${esc(url)}" alt=""><span>${esc(a.name)}</span></button>`;
-    }
-    const meta = `<span class="muted">${size(a.size)}</span>${a.role === 'output' ? '<span class="tag">final output</span>' : ''}`;
-    if (/\.(stp|step)$/i.test(a.name)) {
-      return `<div class="art art-file"><span class="art-name">${esc(a.name)}</span>${meta}
-        <button class="link" data-step3d="${esc(url)}" data-name="${esc(a.name)}">View 3D</button><a class="link" href="${esc(url)}" target="_blank">Open</a></div>`;
-    }
-    const shown = openText.has(url);
-    return `<div class="art art-file"><span class="art-name">${esc(a.name)}</span>${meta}
-      <button class="link" data-text="${esc(url)}">${shown ? 'Hide' : 'Show'}</button><a class="link" href="${esc(url)}" target="_blank">Open</a>
-      ${shown ? `<pre>${esc(textCache.get(url) ?? 'Loading…')}</pre>` : ''}</div>`;
-  };
-  const images = list.filter((a) => /\.(png|jpe?g|gif|webp|svg)$/i.test(a.name));
-  const others = list.filter((a) => !images.includes(a));
-  return `<h4>Artifacts</h4>${images.length ? `<div class="art-grid">${images.map(item).join('')}</div>` : ''}${others.map(item).join('')}`;
-}
-
-function logsHTML(logs, start) {
-  if (!logs.length) return '';
-  return `<h4>Log</h4><div class="logs">${logs.map((l) => `<div class="log log-${esc(l.level)}">
-    <time>+${duration(l.ts - start)}</time><span>${esc(l.msg)}</span></div>`).join('')}</div>`;
-}
+const metricHTML = ([k, v]) => {
+  const unit = (k.match(/_(cm3|mm3|mm2|mm)$/) || [])[1];
+  return `${esc(words(unit ? k.slice(0, -unit.length - 1) : k))} <b>${esc(typeof v === 'number' ? num(v, 3) : v)}${unit ? ` ${unit.replace('3', '³').replace('2', '²')}` : ''}</b>`;
+};
+const raw = (value) => `<pre>${esc(typeof value === 'string' ? value : JSON.stringify(value, null, 2))}</pre>`;
 
 function renderSteps(c) {
-  const tab = $('#steps'), run = currentRun();
-  if (!tab) return;
-  if (!run) {
-    setHTML(tab, `<p class="muted">No run selected. Press <strong>Run this case</strong>; every <code>trace.step(...)</code>
-      in the agent then shows up here live, with its input, output, logs and files.</p>`);
-    return;
-  }
-  const key = `${run.id}/${c.name}`, entry = traces.get(key);
-  if (!entry || !entry.loaded) {
-    setHTML(tab, entry && entry.failed ? `<p class="empty">Could not load the trace: ${esc(entry.failed)}</p>` : '<p class="empty">Loading trace…</p>');
+  if (!$('#steps') || !c) return;
+  const run = currentRun(), output = outputOf(c);
+  const rows = [];
+  let note = '', status = '', running = false;
+  if (run) {
+    const key = `${run.id}/${c.name}`, entry = traces.get(key);
     if (!entry) fetchTrace(run.id, c.name);
-    return;
-  }
-  if (!entry.events.length) {
-    setHTML(tab, '<p class="muted">This case is not in the selected run. Pick another run, or press <strong>Run this case</strong>.</p>');
-    return;
-  }
-  const t = buildTrace(entry.events);
-  const running = run.status === 'running' && t.status === 'running';
-  if (!running && t.status === 'running') t.status = 'error';  // the process died mid-case
-  const now = Date.now() / 1000;
-  const end = t.end || (running ? now : t.last);
-  const total = Math.max(end - t.start, 1e-6);
-  const base = `/files/runs/${run.id}/${c.name}`;
-  const all = [...t.steps.values()];
-  if (running && S.follow) {
-    const active = all.filter((s) => !s.end).pop();
-    if (active) open.add(`${key}/${active.id}`);
-  }
-
-  const stepHTML = (s, depth) => {
-    const isOpen = open.has(`${key}/${s.id}`);
-    const status = s.end ? s.status : running ? 'running' : 'interrupted';
-    const stop = s.end || (running ? now : t.last);
-    const left = Math.min((s.start - t.start) / total * 100, 99.5), width = Math.max((stop - s.start) / total * 100, 0.6);
-    const chips = Object.entries(s.metrics || {}).map(([k, v]) => `<span class="chip-m">${esc(k)} <b>${esc(typeof v === 'number' ? num(v, 3) : v)}</b></span>`).join('');
-    const count = s.artifacts.length ? `<span class="chip-m">${s.artifacts.length} file${s.artifacts.length === 1 ? '' : 's'}</span>` : '';
-    let body = '';
-    if (isOpen) {
-      const parts = [
-        s.error ? `<h4>Error</h4><pre class="error">${esc(s.error)}</pre>` : '',
-        s.input !== undefined ? `<h4>Input</h4>${valueHTML(s.input)}` : '',
-        s.end && s.output !== undefined ? `<h4>Output</h4>${valueHTML(s.output)}` : '',
-        s.meta ? `<h4>Meta</h4>${valueHTML(s.meta)}` : '',
-        logsHTML(s.logs, s.start),
-        artifactsHTML(s.artifacts, base),
-      ].join('');
-      body = `<div class="step-body" style="margin-left:${depth * 20 + 30}px">${parts || '<span class="muted">Nothing recorded for this step.</span>'}</div>`;
+    if (!entry || !entry.loaded) note = entry && entry.failed ? `<p class="note bad">Could not load the trace: ${esc(entry.failed)}</p>` : '<p class="note pulse">Loading the trace…</p>';
+    else if (!entry.events.length) note = '<p class="note">Not part of this run.</p>';
+    else {
+      const t = buildTrace(entry.events), base = `/files/runs/${run.id}/${c.name}`;
+      running = run.status === 'running' && t.status === 'running';
+      const now = Date.now() / 1000;
+      const state = running ? 'running' : t.status === 'running' ? 'interrupted' : t.status;
+      status = `<span class="state ${state}">${state}</span> ${duration((t.end || (running ? now : t.last)) - t.start)}`;
+      if (t.error) note = `<pre class="bad">${esc(t.error)}</pre>`;
+      let model = null;
+      t.list.forEach((s, index) => {
+        const stage = s.artifacts.filter((a) => a.role === 'stage' && isStep(a.name)).pop();
+        if (stage) model = { url: `${base}/${stage.path}` };
+        const images = s.artifacts.filter((a) => isImage(a.name)), files = s.artifacts.filter((a) => !isImage(a.name));
+        const value = (m) => metricHTML(m).split(' <b>')[1].replace('</b>', '');
+        const text = [
+          s.logs.length ? `<h4>Log</h4>${raw(s.logs.map((l) => l.msg).join('\n'))}` : '',
+          s.input !== undefined ? `<h4>Input</h4>${raw(s.input)}` : '',
+          s.output != null ? `<h4>Output</h4>${raw(s.output)}` : '',
+          files.length ? `<p class="files">${files.map((a) => `<a href="${esc(`${base}/${a.path}`)}" target="_blank" rel="noopener">${esc(a.name)}</a>`).join('')}</p>` : '',
+        ].join('');
+        const more = [
+          s.error ? `<pre class="bad">${esc(s.error)}</pre>` : '',
+          `<div class="facts-row">${images.length ? `<div class="arts">${images.map((a) => `<button data-lightbox="${esc(`${base}/${a.path}`)}" title="${esc(a.name)}">
+            <img loading="lazy" alt="${esc(a.name)}" src="${esc(`${base}/${a.path}`)}"></button>`).join('')}</div>` : ''}
+          <dl class="kv">${Object.entries(s.metrics || {}).map((m) => `<dt>${metricHTML(m).split(' <b>')[0]}</dt><dd>${value(m)}</dd>`).join('')}
+            <dt>time</dt><dd>${duration((s.end || (running ? now : t.last)) - s.start)}</dd></dl></div>`,
+          text ? `<details class="fold"><summary>Log and data</summary>${text}</details>` : '',
+        ].join('');
+        rows.push({
+          id: s.id, model, depth: s.depth, more, label: `after ${index + 1} · ${words(s.name)}`,
+          state: s.end ? s.status : running ? 'running' : 'interrupted',
+          n: String(index + 1).padStart(2, '0'), name: words(s.name),
+          metric: Object.entries(s.metrics || {}).slice(0, 1).map(value).join(''),
+          time: duration((s.end || (running ? now : t.last)) - s.start),
+        });
+      });
+      if (!running) rows.forEach((r) => r.model && loadStep(r.model.url).catch(() => {}));  // warm up, so stepping is instant
     }
-    return `<div class="step">
-      <button class="step-row" data-step="${esc(s.id)}" aria-expanded="${isOpen}" style="padding-left:${depth * 20 + 8}px">
-        <span class="caret"></span><span class="kind kind-${esc(s.kind)}">${esc(s.kind)}</span>
-        <span class="step-name">${esc(s.name)}</span><span class="chips">${chips}${count}</span>
-        <span class="wf"><i class="wf-${status}" style="left:${left}%;width:${Math.min(width, 100 - left)}%"></i></span>
-        <span class="dur">${duration(stop - s.start)}</span><span class="st st-${status}">${status}</span>
-      </button>${body}${s.children.map((child) => stepHTML(child, depth + 1)).join('')}</div>`;
-  };
-
-  const failed = all.filter((s) => s.status === 'error').length;
-  setHTML(tab, `
-    <div class="steps-bar">
-      <span class="st st-${t.status}">${esc(t.status)}</span>
-      <span><b>${all.length}</b> step${all.length === 1 ? '' : 's'}</span>
-      ${failed ? `<span class="d-bad"><b>${failed}</b> failed</span>` : ''}
-      <span>total <b>${duration(end - t.start)}</b></span>
-      <span class="muted">started ${clock(t.start)}</span>
-      <span class="spacer"></span>
-      ${running ? `<label class="check"><input type="checkbox" id="follow" ${S.follow ? 'checked' : ''}> Follow live</label>` : ''}
-      <button class="link" data-steps="open">Expand all</button><button class="link" data-steps="close">Collapse all</button>
-    </div>
-    ${t.error ? `<pre class="error">${esc(t.error)}</pre>` : ''}
-    <div class="steps">${t.roots.map((s) => stepHTML(s, 0)).join('') || '<p class="empty">No steps recorded yet.</p>'}</div>
-    ${t.logs.length || t.artifacts.length ? `<div class="case-level"><h3>Outside any step</h3>
-      ${logsHTML(t.logs, t.start)}${artifactsHTML(t.artifacts, base)}</div>` : ''}`);
-}
-
-// -- brief --------------------------------------------------------------------------------------
-
-function markdown(text) {
-  const inline = (line) => esc(line).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/`([^`]+)`/g, '<code>$1</code>');
-  let html = '', list = false;
-  for (const line of text.split('\n')) {
-    const item = line.match(/^\s*[-*]\s+(.*)/), heading = line.match(/^(#{1,4})\s+(.*)/);
-    if (list && !item) { html += '</ul>'; list = false; }
-    if (item) { html += `${list ? '' : '<ul>'}<li>${inline(item[1])}</li>`; list = true; }
-    else if (heading) html += `<h${heading[1].length + 1}>${inline(heading[2])}</h${heading[1].length + 1}>`;
-    else if (line.trim()) html += `<p>${inline(line)}</p>`;
+  } else if (!output) note = '<p class="note">No output yet. Run this case to see its steps.</p>';
+  if (output) {
+    rows.push({ id: 'output', model: output, depth: 0, label: 'final output', state: 'ok', n: '', name: 'Final', metric: '', time: '',
+      more: `<p class="files"><a href="${esc(output.url)}" target="_blank" rel="noopener">Open .stp</a></p>` });
   }
-  return html + (list ? '</ul>' : '');
+  if (running && !rows.length) note = '<p class="note pulse">Running…</p>';
+
+  // Which solid is on screen: the chosen step, else the newest one
+  const chosen = rows.find((r) => r.id === S.sel) || [...rows].reverse().find((r) => r.model) || rows[rows.length - 1];
+  live.rows = rows.map((r) => r.id);
+  setHTML($('#steps-status'), status);
+  setHTML($('#stage-label'), chosen && chosen.model ? esc(chosen.label) : '');
+  setHTML($('#steps-note'), note);
+  const strip = $('#steps'), cards = new Map($$('li', strip).map((li) => [li.dataset.id, li]));
+  rows.forEach((r, i) => {
+    let li = cards.get(r.id);
+    cards.delete(r.id);
+    if (!li) {
+      li = document.createElement('li');
+      li.dataset.id = r.id;
+      li.innerHTML = '<button class="card"><span class="stage"></span><span class="cap"></span></button>';
+    }
+    if (strip.children[i] !== li) strip.insertBefore(li, strip.children[i] || null);
+    const on = Boolean(chosen && r.id === chosen.id), button = li.firstElementChild;
+    button.dataset.sel = r.id;
+    button.setAttribute('aria-current', on);
+    button.title = r.label;
+    setHTML($('.cap', li), `<span class="n">${r.n}</span><span class="name">${esc(r.name)}</span>
+      <span class="v ${r.state === 'ok' ? '' : `state ${r.state}`}">${r.state === 'ok' ? r.metric : r.state}</span>`);
+    showModel(li, r.model && r.model.url, r.model && r.model.key, COLORS.ours, '', { interactive: false });
+  });
+  cards.forEach((li) => { const stage = $('.stage', li); if (stage.viewer) stage.viewer.dispose(); li.remove(); });
+  setHTML($('#step-detail'), chosen && chosen.more ? `<h3>${esc(chosen.name)}</h3>${chosen.more}` : '');
+  showModel($('#ours'), chosen && chosen.model && chosen.model.url, chosen && chosen.model && chosen.model.key, COLORS.ours,
+    `<p class="note">${running ? 'Waiting for the first solid…' : 'No solid to show yet.'}</p>`);
 }
 
-// -- overlay (image lightbox, 3D preview, test results) -------------------------------------------
-
-let overlayViewer = null;
-function closeOverlay() {
-  if (overlayViewer) overlayViewer.dispose();
-  overlayViewer = null;
-  $('#overlay').className = '';
-  $('#overlay').innerHTML = '';
+function moveStep(offset) {
+  const current = $('#steps [aria-current="true"]');
+  const index = live.rows.indexOf(current ? current.dataset.sel : null);
+  const next = live.rows[Math.max(0, Math.min(live.rows.length - 1, index + offset))];
+  if (next == null) return;
+  S.sel = next;
+  renderSteps(currentCase());
+  const card = $('#steps [aria-current="true"]');
+  if (card) card.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
-function openOverlay(html) {
-  closeOverlay();
+
+// -- overlay ------------------------------------------------------------------------------------
+
+function closeOverlay() { $('#overlay').className = ''; $('#overlay').innerHTML = ''; }
+function openOverlay(src) {
   $('#overlay').className = 'open';
-  $('#overlay').innerHTML = `<div class="dialog" role="dialog" aria-modal="true"><button class="close" data-close aria-label="Close">×</button>${html}</div>`;
-}
-
-async function openStep3D(url, name) {
-  openOverlay(`<h2>${esc(name)}</h2><div class="stage big" id="stage-dialog"><div class="stage-msg"><span class="spin"></span><span>Loading STEP…</span></div></div><p id="dialog-info" class="muted"></p>`);
-  try {
-    const { meshes, measured } = await loadStep(url);
-    const stage = $('#stage-dialog');
-    if (!stage) return;
-    const viewer = await createViewer(stage, [{ meshes, color: COLORS.ours }]);
-    if (!stage.isConnected) return viewer.dispose();
-    overlayViewer = viewer;
-    $('#dialog-info').textContent = `${[...measured.bbox].map((v) => num(v)).join(' × ')} mm · volume ${num(measured.volume / 1000)} cm³ · area ${num(measured.area / 100)} cm² · ${num(measured.triangles, 0)} triangles`;
-  } catch (error) { stageMessage($('#stage-dialog'), 'Not a readable STEP solid', error.message, true); }
+  $('#overlay').innerHTML = `<img src="${esc(src)}" alt="">`;
 }
 
 // -- events -------------------------------------------------------------------------------------
@@ -564,15 +617,14 @@ async function openStep3D(url, name) {
 function render() {
   normalise();
   writeHash();
-  renderTop();
+  renderBar();
   renderMain();
 }
 
 function selectCase(name, datasetId = S.dataset) {
   if (datasetId !== S.dataset) Object.assign(S, { dataset: datasetId, runId: null });
-  S.caseName = name;
+  Object.assign(S, { caseName: name, sel: null, runId: null });  // normalise() picks this case's newest run
   render();
-  if (S.runId) fetchTrace(S.runId, name);
 }
 
 function moveCase(offset) {
@@ -581,92 +633,85 @@ function moveCase(offset) {
 }
 
 document.addEventListener('click', async (event) => {
-  const target = event.target.closest('button, [data-close], a');
-  if (event.target.id === 'overlay' || (target && target.dataset.close !== undefined)) return closeOverlay();
-  if (!target || target.tagName === 'A') return;
+  if (event.target.closest('#overlay')) return closeOverlay();
+  const target = event.target.closest('button');
+  if (!target) return;
   const d = target.dataset;
   if (d.move) return moveCase(Number(d.move));
-  if (d.view) { S.view = d.view; return applyView(); }
-  if (d.image) return openOverlay(`<img class="lightbox" src="${esc(d.image)}" alt="">`);
-  if (d.step3d) return openStep3D(d.step3d, d.name || 'STEP');
-  if (d.step) {
-    const key = `${S.runId}/${S.caseName}/${d.step}`;
-    if (open.has(key)) { open.delete(key); S.follow = false; } else open.add(key);
-    return renderSteps(currentCase());
-  }
-  if (d.steps) {
-    const entry = traces.get(`${S.runId}/${S.caseName}`);
-    const prefix = `${S.runId}/${S.caseName}/`;
-    [...open].filter((k) => k.startsWith(prefix)).forEach((k) => open.delete(k));
-    if (d.steps === 'open' && entry) entry.events.filter((e) => e.t === 'step_start').forEach((e) => open.add(prefix + e.id));
-    else S.follow = false;
-    return renderSteps(currentCase());
-  }
-  if (d.text) {
-    if (openText.has(d.text)) openText.delete(d.text);
-    else {
-      openText.add(d.text);
-      if (!textCache.has(d.text)) {
-        fetch(d.text).then((r) => r.text()).then((text) => {
-          textCache.set(d.text, text.length > 300000 ? `${text.slice(0, 300000)}\n… clipped` : text);
-          renderSteps(currentCase());
-        });
-      }
-    }
-    return renderSteps(currentCase());
-  }
+  if (d.image) return showImage(d.image);
+  if (d.zoom) return zoomBy(Number(d.zoom));
+  if (d.fit !== undefined) return fit();
+  if (d.lightbox) return openOverlay(d.lightbox);
+  if (d.sel) { S.sel = d.sel; return renderSteps(currentCase()); }
+  if (d.expand) { const closed = $(`#${d.expand}`).classList.toggle('clamp'); target.textContent = closed ? 'Show all' : 'Show less'; return; }
   if (d.action === 'run') {
     try {
       const { id } = await api('/api/run', { dataset: S.dataset, only: [S.caseName], target: 'run' });
-      S.runId = id;
-      toast(`Started run ${id}`);
+      started = id;
+      Object.assign(S, { runId: id, sel: null });
       await poll();
-    } catch (error) { toast(error.message, true); }
+    } catch (error) { toast(`Could not start the run: ${error.message}`); }
     return;
   }
-  if (d.action === 'stop') return api('/api/stop', { run: S.runId }).then(poll, (e) => toast(e.message, true));
+  if (d.action === 'stop') return api('/api/stop', { run: S.runId }).then(poll, (e) => toast(`Could not stop the run: ${e.message}`));
+});
+
+document.addEventListener('dblclick', (event) => {
+  if (event.target.id === 'big') openOverlay(event.target.src);
 });
 
 document.addEventListener('change', (event) => {
   const el = event.target;
   if (el.id === 'case-select') { const [ds, name] = el.value.split('/'); selectCase(name, ds); }
-  else if (el.id === 'run-select') { S.runId = el.value; render(); if (S.runId) fetchTrace(S.runId, S.caseName); }
-  else if (el.id === 'follow') S.follow = el.checked;
+  else if (el.id === 'run-select') {
+    Object.assign(S, { runId: el.value, sel: null });
+    const run = currentRun();  // a run of other cases: go to its first case
+    if (run && run.cases.length && !runCase(run, S.caseName)) S.caseName = run.cases[0].name;
+    render();
+  }
 });
 
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') return closeOverlay();
   if (event.target.matches('input, select, textarea') || event.metaKey || event.ctrlKey || event.altKey) return;
-  if (event.key === 'j' || event.key === 'ArrowRight') moveCase(1);
-  else if (event.key === 'k' || event.key === 'ArrowLeft') moveCase(-1);
-  else if (/^[1-8]$/.test(event.key)) { S.view = VIEW_NAMES[Number(event.key) - 1]; applyView(); }
+  const act = {
+    ArrowRight: () => moveCase(1), ArrowLeft: () => moveCase(-1),
+    ArrowDown: () => moveStep(1), ArrowUp: () => moveStep(-1), ']': () => moveStep(1), '[': () => moveStep(-1),
+    '+': () => zoomBy(1.25), '=': () => zoomBy(1.25), '-': () => zoomBy(0.8), f: fit, 0: fit,
+  }[event.key] || (/^[1-8]$/.test(event.key) && (() => showImage(VIEW_NAMES[Number(event.key) - 1])));
+  if (!act) return;
+  event.preventDefault();
+  act();
 });
 
 window.addEventListener('hashchange', async () => { readHash(); await ensureCases(); render(); });
 
 // -- polling ------------------------------------------------------------------------------------
 
-let polling = false;
+let polling = false, again = false;
 async function poll() {
-  if (polling) return;
+  if (polling) { again = true; return; }  // the answer on its way may be older than what was just done
   polling = true;
   try {
     const state = await api('/api/state');
-    const finished = S.runs.filter((r) => r.status === 'running').map((r) => r.id);
+    const wasRunning = S.runs.filter((r) => r.status === 'running').map((r) => r.id);
     Object.assign(S, { datasets: state.datasets, runs: state.runs, now: state.now });
     normalise();
-    await ensureCases(finished.some((id) => (S.runs.find((r) => r.id === id) || {}).status !== 'running'));
+    await ensureCases(wasRunning.some((id) => (S.runs.find((r) => r.id === id) || {}).status !== 'running'));
     render();
     const run = currentRun();
     if (run && S.caseName) {
       const entry = traces.get(`${run.id}/${S.caseName}`);
-      const rc = runCase(run, S.caseName);
-      if (!entry || run.status === 'running' || (rc && entry.loaded && !entry.events.length)) fetchTrace(run.id, S.caseName);
+      const pending = entry && entry.loaded && !entry.events.length && runCase(run, S.caseName);
+      if (entry && (run.status === 'running' || pending || wasRunning.includes(run.id))) fetchTrace(run.id, S.caseName);
     }
     document.body.classList.remove('offline');
   } catch (error) {
     document.body.classList.add('offline');
-  } finally { polling = false; }
+  } finally {
+    polling = false;
+    if (again) { again = false; poll(); }
+  }
 }
 
 readHash();

@@ -40,21 +40,29 @@ account).
 
 Step 1 is deterministic, with no model involved ([src/agentic_cad/visual_hull.py](src/agentic_cad/visual_hull.py)):
 a box with the bounding-box dimensions from `facts.json` is cut through, view by view, wherever a
-view is white. Front/back, right/left and top/bottom each give one cutting direction; the two
-isometric views together give a fourth. The result is the largest solid that matches every silhouette.
+view is white. Front/back, right/left and top/bottom each give one cutting direction. The result is
+the largest solid that matches those silhouettes. Each outline is rebuilt from straight lines and
+circular arcs before cutting ([src/agentic_cad/outline_fit.py](src/agentic_cad/outline_fit.py)), so the
+faces come out flat and cylindrical instead of following the pixel grid. (Cutting along the isometric views as well is
+implemented but off: it gains under one point of overlap, is the slowest cut, and leaves slanted
+faces that are not features of the part.)
 
-Step 2 cuts what no silhouette shows ([src/agentic_cad/features.py](src/agentic_cad/features.py)):
-every hole and bore that `facts.json` lists with its centres, angled ones included, as an exact
-cylinder; then, when `OPENAI_MODEL` is set, the pockets, recesses and slanted faces a model reads
-from the brief ([src/agentic_cad/llm_cuts.py](src/agentic_cad/llm_cuts.py)). A model answers with
-numbers only: boxes, cylinders and prisms whose outline is a list of 3D points (a slanted edge is
-its two end points). No cut is trusted: one is kept only if the solid stays above the part's true
-volume and no view ([src/agentic_cad/views.py](src/agentic_cad/views.py)) starts showing
-background where its render shows the part. All of step 2 has a time budget per case
-(`FEATURE_BUDGET`, 60 s). `LLM_VISION=1` also sends the iso renders with the coordinate system drawn on.
+Step 2 is deterministic too ([src/agentic_cad/holes.py](src/agentic_cad/holes.py)): every cylindrical
+hole that `facts.json` lists (diameter, axis, length, centre) is cut out, which adds the blind and
+hidden holes no silhouette shows.
 
-To see how a solid fits the iso renders, on the part's coordinate system (axes ticked in mm, red
-where there is still material to cut, blue where too much was cut):
+Every cut runs with a time limit and is undone if it would leave less than the part's true volume.
+
+To score the pipeline on the local eval set, step by step:
+
+```sh
+uv run python tools/eval_hull.py          # 24 fixed cases; about a second when nothing changed
+uv run python tools/eval_hull.py --iou    # also the real overlap with the ground truth (minutes)
+```
+
+To see how a solid fits the renders ([src/agentic_cad/views.py](src/agentic_cad/views.py)): silhouette
+IoU in all eight views, and the iso renders with the part's coordinate system drawn on (axes ticked in
+mm, red where there is still material to cut, blue where too much was cut):
 
 ```sh
 uv run python tools/iso_check.py                 # artifacts/outputs -> runs/iso_check/*.png
