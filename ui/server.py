@@ -208,9 +208,26 @@ def case_summary(case_dir: Path) -> dict:
 
 def pid_alive(pid) -> bool:
     try:
-        os.kill(int(pid), 0)
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if os.name == "nt":
+        # On Windows os.kill(pid, 0) is not a probe: it calls TerminateProcess with exit code 0,
+        # which silently killed every run the dashboard had not started itself
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            return False
+        try:
+            code = ctypes.c_ulong()
+            return bool(kernel32.GetExitCodeProcess(handle, ctypes.byref(code))) and code.value == 259  # STILL_ACTIVE
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
         return True
-    except (OSError, TypeError, ValueError):
+    except OSError:
         return False
 
 

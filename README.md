@@ -43,6 +43,23 @@ a box with the bounding-box dimensions from `facts.json` is cut through, view by
 view is white. Front/back, right/left and top/bottom each give one cutting direction; the two
 isometric views together give a fourth. The result is the largest solid that matches every silhouette.
 
+Step 2 cuts what no silhouette shows ([src/agentic_cad/features.py](src/agentic_cad/features.py)):
+every hole and bore that `facts.json` lists with its centres, angled ones included, as an exact
+cylinder; then, when `OPENAI_MODEL` is set, the pockets, recesses and slanted faces a model reads
+from the brief ([src/agentic_cad/llm_cuts.py](src/agentic_cad/llm_cuts.py)). A model answers with
+numbers only: boxes, cylinders and prisms whose outline is a list of 3D points (a slanted edge is
+its two end points). No cut is trusted: one is kept only if the solid stays above the part's true
+volume and no view ([src/agentic_cad/views.py](src/agentic_cad/views.py)) starts showing
+background where its render shows the part. All of step 2 has a time budget per case
+(`FEATURE_BUDGET`, 60 s). `LLM_VISION=1` also sends the iso renders with the coordinate system drawn on.
+
+To see how a solid fits the iso renders, on the part's coordinate system (axes ticked in mm, red
+where there is still material to cut, blue where too much was cut):
+
+```sh
+uv run python tools/iso_check.py                 # artifacts/outputs -> runs/iso_check/*.png
+```
+
 When tracing is on (it is by default outside the Docker image), the solid after every step is saved
 as `runs/<run>/<test_case>/files/NNN_stage_<n>_<step>.stp`, next to the silhouette each cut used.
 

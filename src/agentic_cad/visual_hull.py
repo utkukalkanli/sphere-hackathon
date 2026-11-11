@@ -28,7 +28,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 from OCP.BRep import BRep_Builder, BRep_Tool
-from OCP.BRepAlgoAPI import BRepAlgoAPI_Common, BRepAlgoAPI_Fuse
+from OCP.BRepAlgoAPI import BRepAlgoAPI_Common, BRepAlgoAPI_Cut, BRepAlgoAPI_Fuse
 from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace, BRepBuilderAPI_MakePolygon
 from OCP.BRepCheck import BRepCheck_Analyzer
 from OCP.BRepGProp import BRepGProp
@@ -356,10 +356,33 @@ def cut(shape: TopoDS_Shape, silhouette: Silhouette) -> TopoDS_Shape | None:
     return solid
 
 
-def _cut_in_child(shape_path: str, silhouette: Silhouette, result_path: str) -> bool:
+def subtract(shape: TopoDS_Shape, tool: TopoDS_Shape) -> TopoDS_Shape | None:
+    """Remove `tool` from `shape`. Returns one valid solid, or None when the boolean operation fails."""
+    difference = BRepAlgoAPI_Cut(shape, tool)
+    if not difference.IsDone():
+        return None
+    solid = largest_solid(difference.Shape())
+    if solid is None or volume(solid) <= 0 or not BRepCheck_Analyzer(solid).IsValid():
+        return None
+    return solid
+
+
+def _read_brep(path: str) -> TopoDS_Shape:
     shape = TopoDS_Shape()
-    BRepTools.Read_s(shape, shape_path, BRep_Builder())
-    result = cut(shape, silhouette)
+    BRepTools.Read_s(shape, path, BRep_Builder())
+    return shape
+
+
+def _cut_in_child(shape_path: str, silhouette: Silhouette, result_path: str) -> bool:
+    result = cut(_read_brep(shape_path), silhouette)
+    if result is None:
+        return False
+    BRepTools.Write_s(result, result_path)
+    return True
+
+
+def _subtract_in_child(shape_path: str, tool_path: str, result_path: str) -> bool:
+    result = subtract(_read_brep(shape_path), _read_brep(tool_path))
     if result is None:
         return False
     BRepTools.Write_s(result, result_path)
@@ -378,12 +401,23 @@ class Cutter:
 
     def cut(self, shape: TopoDS_Shape, silhouette: Silhouette, timeout: float) -> TopoDS_Shape | None:
         """Like `cut`, but raises TimeoutError when it takes longer than `timeout` seconds."""
+        return self._run(shape, timeout, lambda tmp: (_cut_in_child, silhouette))
+
+    def subtract(self, shape: TopoDS_Shape, tool: TopoDS_Shape, timeout: float) -> TopoDS_Shape | None:
+        """Like `subtract`, but raises TimeoutError when it takes longer than `timeout` seconds."""
+        def prepare(tmp: str):
+            BRepTools.Write_s(tool, f"{tmp}/tool.brep")
+            return _subtract_in_child, f"{tmp}/tool.brep"
+        return self._run(shape, timeout, prepare)
+
+    def _run(self, shape: TopoDS_Shape, timeout: float, prepare) -> TopoDS_Shape | None:
         if self._pool is None:
             self._pool = multiprocessing.get_context("spawn").Pool(1)
         with tempfile.TemporaryDirectory() as tmp:
             shape_path, result_path = f"{tmp}/in.brep", f"{tmp}/out.brep"
             BRepTools.Write_s(shape, shape_path)
-            job = self._pool.apply_async(_cut_in_child, (shape_path, silhouette, result_path))
+            function, argument = prepare(tmp)
+            job = self._pool.apply_async(function, (shape_path, argument, result_path))
             try:
                 done = job.get(timeout)
             except multiprocessing.TimeoutError:
@@ -391,9 +425,7 @@ class Cutter:
                 raise TimeoutError(f"cut took longer than {timeout:.0f} s") from None
             if not done:
                 return None
-            result = TopoDS_Shape()
-            BRepTools.Read_s(result, result_path, BRep_Builder())
-            return largest_solid(result)
+            return largest_solid(_read_brep(result_path))
 
     def close(self) -> None:
         if self._pool is not None:
