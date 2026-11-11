@@ -20,6 +20,9 @@ the entry and say what changed.
 - **Never cut below the true volume** (2026-11-11). `facts.json` gives the part's volume; a cut that
   leaves less than 97 % of it is undone. Every step so far only removes material, so the solid
   should always contain the part.
+- **A case that fails gets the bounding box as its output, and the run goes on** (2026-11-11,
+  user). A missing file scores 0 and used to take every later part down with it; a box of the right
+  size still overlaps the part.
 - **Every cut runs in a child process with a timeout** (2026-11-11). OpenCascade booleans can hang
   for minutes and cannot be interrupted in-process; the run has 20 minutes for all parts.
 - **Postponed: true arcs and circles instead of polygons** (2026-11-11). It would shrink the files

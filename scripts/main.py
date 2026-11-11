@@ -1,7 +1,10 @@
 import argparse
+import traceback
 from dataclasses import dataclass
 from pathlib import Path
 
+from agentic_cad import trace
+from agentic_cad import visual_hull
 from agentic_cad.hull_agent import VisualHullAgent
 from agentic_cad.trace import Tracer
 
@@ -43,6 +46,42 @@ def load_test_cases(input_dir: Path) -> list[TestCase]:
     return sorted(test_cases, key=lambda tc: int(tc.name.removeprefix("test_case_")))
 
 
+def write_fallback(test_case: TestCase, output_path: Path) -> bool:
+    """The plain bounding box: a valid solid of the right size scores something, a missing file 0."""
+    try:
+        case_dir = test_case.views[0].parent.parent if test_case.views else None
+        x, y, z = visual_hull.read_dimensions(case_dir, test_case.description)
+        visual_hull.write_step(visual_hull.box({"x": x, "y": y, "z": z}), output_path)
+        return True
+    except Exception:
+        traceback.print_exc()
+        return False
+
+
+def process(agent: VisualHullAgent, test_case: TestCase, output_path: Path) -> str:
+    """Write the output of one test case. Never raises: one bad case must not stop the others.
+    Returns "ok", "fallback" (the bounding box was written instead) or "failed" (no file)."""
+    output_path.unlink(missing_ok=True)  # a stale file from an earlier run is not this run's answer
+    try:
+        agent.generate_cad(
+            prompt=test_case.description,
+            views=test_case.views,
+            context=test_case.context,
+            output_path=output_path,
+        )
+        if output_path.is_file() and output_path.stat().st_size > 0:
+            return "ok"
+        error = "the agent returned without writing the output"
+    except Exception:
+        error = traceback.format_exc()
+    print(f"{test_case.name} FAILED, writing the bounding box instead:\n{error}")
+    trace.log(error, level="error")
+    if write_fallback(test_case, output_path):
+        return "fallback"
+    output_path.unlink(missing_ok=True)
+    return "failed"
+
+
 def main(args):
     print("Initialising agentic workflow")
 
@@ -52,22 +91,22 @@ def main(args):
     if args.only:
         test_cases = [tc for tc in test_cases if tc.name in args.only]
 
+    results: dict[str, str] = {}
     # Records every step under runs/ for the dashboard (ui/); a no-op where it can't write
     with Tracer(meta={"input_dir": args.input_dir, "output_dir": args.output_dir}) as tracer:
         for test_case in test_cases:
             print(f"processing {test_case.name}")
             output_path = args.output_dir / f"{test_case.name}.stp"
             with tracer.case(test_case.name) as case:
-                agent.generate_cad(
-                    prompt=test_case.description,
-                    views=test_case.views,
-                    context=test_case.context,
-                    output_path=output_path,
-                )
+                results[test_case.name] = process(agent, test_case, output_path)
                 case.output(output_path)
 
     agent.close()
-    print("Pipeline generated all CAD designs")
+    problems = {name: result for name, result in results.items() if result != "ok"}
+    if problems:
+        print(f"Pipeline finished; {len(problems)} of {len(results)} cases did not go through: {problems}")
+    else:
+        print("Pipeline generated all CAD designs")
 
 
 if __name__ == "__main__":

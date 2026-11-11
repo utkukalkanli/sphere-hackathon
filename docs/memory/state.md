@@ -23,6 +23,9 @@ Guards around every cut (`hull_agent.py`):
   timeout or a failed boolean the previous solid is kept.
 - A cut that leaves less than 97 % of the true volume from `facts.json` is undone.
 - If cutting all holes at once is refused, they are retried one `facts.json` entry at a time.
+- An exception in one view direction or in the hole step keeps the solid carved so far; an
+  exception anywhere else in a case makes `scripts/main.py` write the bounding box for that case
+  and go on (uncommitted).
 
 ## Git
 
@@ -71,7 +74,6 @@ from 1.259 to 1.228.
   complex parts.
 - Round outlines come out as polygons traced from pixels, so output files are 1 to 7 MB with
   hundreds of planar faces.
-- One failing case stops the whole run, and there is no fallback output (see `knowledge.md`).
 - The timeouts make the output depend on how fast the machine is: a cut that finishes here may time
   out on the organisers' machine and give a different solid.
 - The Docker image has never been built or run. The Dockerfile has the libraries OpenCascade needs,

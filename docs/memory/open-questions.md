@@ -11,9 +11,6 @@ Remove a question when it is answered, and record the answer in `decisions.md` o
   Timings so far were taken with other jobs on the same cores. Worst case by the timeouts is about
   9 x (3 x 30 + 40 + 40) s, which is over the limit, so either measure it or add a budget for the
   whole run.
-- **What should happen when a case fails?** Today an exception in one case ends the run and every
-  later part scores 0. The obvious fix is to catch it per case and write the bounding box, or the last
-  good solid, instead.
 - **Will our outputs reproduce on the organisers' machine?** They compare a re-run on the practice
   inputs with the committed files. Cuts that sit near a timeout can go either way on a different
   machine.

@@ -83,9 +83,11 @@ organisers' format:
   The operation must be a module-level function and the argument picklable. Use it for every new
   geometric step.
 - **Export**: coplanar faces are merged, then the largest solid is written in millimetres.
-- **One failing case stops the whole run.** `scripts/main.py` has no error handling around a case,
-  and there is no fallback output. A failed or timed-out cut is handled, but an exception anywhere
-  else (no bounding box, a write error) leaves every later part without a file.
+- **A failing case does not stop the run.** `scripts/main.py` catches any exception of a case and
+  writes the plain bounding box as its output instead. Inside the agent, a view direction or the
+  hole step that raises is skipped and the solid carved so far is kept. Only a case whose bounding
+  box cannot be read (no `facts.json` and no Envelope line) ends without a file. A hard crash of the
+  main process (a segfault inside OpenCascade outside a child cut) is still not survived.
 - **Tracing** (`trace.py`) never raises. It writes to `runs/` in the repo, to `/tmp` otherwise, and
   is off with `TRACE=0`. `role="stage"` on an attached `.stp` puts it in the dashboard's step strip.
 - **The dashboard** can start runs itself; those write to `runs/<run>/outputs`, not to
