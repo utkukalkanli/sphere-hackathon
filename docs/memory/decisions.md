@@ -5,6 +5,11 @@ the entry and say what changed.
 
 ## Pipeline
 
+- **Step 3 reads pockets from the lines inside the views, checked against all eight line drawings**
+  (2026-11-11, user asked for the lines and the iso views). A pocket may not take the solid below the
+  true volume (holes may go to 97 %), and it must improve the line agreement of the two iso views,
+  not just the total: a too-deep pocket on practice 5 passed the 97 % floor. The step ends after a
+  fixed number of tries, not on time, so its result does not depend on the machine's speed.
 - **Model-planned cuts are step 3, after the holes, and off without `OPENAI_MODEL`** (2026-11-11,
   user asked to bring back the useful parts of 9364253). The model only gives numbers; every cut is
   checked against the true volume and all eight views, so a wrong answer is rejected, not submitted.

@@ -1,22 +1,23 @@
 # Project state
 
-Last updated: 2026-11-11, about 22:45 CET (step 3 measured with the real model).
+Last updated: 2026-11-11, late evening (step 3: pockets from the lines in the views).
 
 ## Pipeline
 
-Steps 1 and 2 are deterministic. Step 3 (on `ananas` only) calls a model and runs only when
-`OPENAI_MODEL` is set; without it the 9 practice outputs equal the committed ones (volumes within
-4e-8, checked 2026-11-11). A separate model-based agent exists on `feat/llm-cad-agent` (see Git).
+Steps 1 to 3 are deterministic. Step 4 (on `ananas` only) calls a model and runs only when
+`OPENAI_MODEL` is set. The committed practice outputs are from steps 1 + 2 and are now out of date:
+regenerate them in the amd64 image before a submission. A separate model-based agent exists on `feat/llm-cad-agent` (see Git).
 
 | step | file | status |
 | --- | --- | --- |
 | 1. Visual hull: a box with the `facts.json` dimensions, cut through wherever a view is white (front/back, right/left, top/bottom). Before cutting, each traced outline is rebuilt from straight lines and circular arcs (`outline_fit.py`). A fourth cut along the isometric views is implemented but off since 2026-11-11 | `src/agentic_cad/visual_hull.py`, `src/agentic_cad/outline_fit.py` | committed on `feat/visual-hull` |
 | 2. Holes: every cylindrical hole listed in `facts.json` is cut as a cylinder; a thinner coaxial boss inside a bore is kept | `src/agentic_cad/holes.py` | committed on `feat/visual-hull`, measured (below) |
-| 3. Model-planned cuts: the brief, `facts.json` and the drilled holes go to an OpenAI-compatible model, which answers with box, cylinder and prism cuts as numbers. All are tried at once, then one by one; a cut is kept only if the solid stays at 97 % of the true volume or more and no view (6 straight + 2 iso, `views.py`) shows more than a few pixels of new background where the render shows the part. 75 s per case in all (`PLANNED_BUDGET`), 20 s per boolean, 60 s per request | `src/agentic_cad/features.py`, `src/agentic_cad/llm_cuts.py`, `hull_agent.cut_planned` | on `ananas`, measured with Qwen3-30B (below) |
+| 3. Line cuts: in each straight view, regions enclosed by the render's dark lines whose boundary our solid does not draw are tried as pockets from the viewer's side, to each depth at which the side views draw a line across (up to 8 per region). A try is kept only if the volume stays at or above the true volume, no view opens background, the line mismatch of all 8 views drops by 1 % and that of the two iso views drops too. Our lines: OpenCascade hidden-line removal. 30 tries per case (`LINE_MAX_TRIES`), 90 s hard stop | `src/agentic_cad/edges.py`, `src/agentic_cad/line_cuts.py`, `hull_agent.cut_lines` | on `ananas`, measured on the practice set (below) |
+| 4. Model-planned cuts: the brief, `facts.json` and the drilled holes go to an OpenAI-compatible model, which answers with box, cylinder and prism cuts as numbers. All are tried at once, then one by one; a cut is kept only if the solid stays at 97 % of the true volume or more and no view (6 straight + 2 iso, `views.py`) shows more than a few pixels of new background where the render shows the part. 75 s per case in all (`PLANNED_BUDGET`), 20 s per boolean, 60 s per request | `src/agentic_cad/features.py`, `src/agentic_cad/llm_cuts.py`, `hull_agent.cut_planned` | on `ananas`, measured with Qwen3-30B (below) |
 
 Unused inputs without a model: the text of `description.md` (only its Envelope line is read, as a fallback),
-`context.png`, the shading and edge lines inside the views, and every `facts.json` field except the
-bounding box, the volume and the two cylinder lists.
+`context.png`, the shading inside the views, and every `facts.json` field except the bounding box,
+the volume and the two cylinder lists.
 
 Guards around every cut (`hull_agent.py`):
 
@@ -102,6 +103,25 @@ sample, 2026-11-11. Score after each step, sampled IoU against the ground truth,
   without. Holes were cut on 14 of the 24 parts; none got worse, the best gained 17 points (part 171).
 - Lowest: parts 51 (0.14) and 99 (0.26), thin-walled parts whose true volume is 2 to 4 % of the box.
 
+Step 3 (line cuts) on the practice set, our volume / true volume after steps 1 + 2 -> after step 3,
+Windows PC, 2026-11-11 (the eval set is no longer used, see decisions.md):
+
+| part | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| before | 1.066 | 1.232 | 1.085 | 1.242 | 1.230 | 3.807 | 2.201 | 1.008 | 1.891 |
+| after | 1.002 | 1.118 | 1.001 | 1.163 | 1.013 | 3.318 | 2.195 | 1.008 | 1.891 |
+| seconds | 7 | 15 | 8 | 97 | 66 | 24 | 50 | 62 | 62 |
+
+- Parts 1 and 3 land on the true volume: on part 1 the rib's two concave arcs (seen in the back
+  view) were cut 5 mm deep; on part 3 the flange step 19 mm deep from the left.
+- Part 5 gets 64 mm deep pockets from the back inside the large circles; the brief says the circles
+  go through the back wall into the hollow body, so this is probably right, but unverified.
+- With no cap on tries, part 6 went to 2.86 and 7 to 2.16: more tries would help on complex parts.
+- Parts 8 and 9: nothing kept. 9 had a 1.65 result before the iso check and the true-volume floor;
+  whether those cuts were right is unknown.
+- Before the floor was raised to the true volume, part 5 went to 0.978: a too-deep pocket. Depths
+  that no side view shows as a line (here a 2.54 mm recess inside the outline) are not offered.
+
 Step 3 with the real model (Qwen3-30B-A3B-FP8 on the Brev box, thinking off), 2026-11-11, at 47dd503:
 
 - Eval sample, 24 parts, on the Windows PC: score 0.8287 -> 0.8293, sampled IoU 0.8246 -> 0.8252.
@@ -140,8 +160,9 @@ are the files the image produced**.
 
 ## Known weaknesses
 
-- Inner cavities and pockets are not found by either step. This is the largest loss, mostly on
-  complex parts.
+- Pockets are found only where a straight view shows their outline as lines and a side view shows
+  their depth as a line; enclosed cavities and depths hidden in every side view are not found.
+  Parts 6, 7 and 9 are still 1.9 to 3.3 times the true volume.
 - Outlines that are neither straight nor circular (splines, ellipses of slanted cylinders) stay
   polylines. Practice outputs are now 0.05 to 1.3 MB (4.4 MB in total, was 44 MB).
 - The timeouts make the output depend on how fast the machine is: a cut that finishes here may time

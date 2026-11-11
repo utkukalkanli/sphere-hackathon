@@ -91,6 +91,16 @@ organisers' format:
 
 ## How the code behaves
 
+- **The render lines** are 1 to 2 px, drawn on every face boundary including tangent ones (fillet
+  edges). Between dark faces they are only about 12 grey levels darker (48 vs 36), so a fixed
+  threshold misses them; `edges.render_lines` takes a pixel at most 0.85 times the brightness of
+  its 5 px closing. Coplanar faces have no line between them.
+- **OpenCascade's hidden-line removal draws our solid like the renders** (`HLRBRep_PolyAlgo`, sharp
+  plus tangent edges, plus the silhouette outline): on practice 1 after steps 1 + 2 the only
+  disagreements were the features still missing. A painter's-order face-id image did not work
+  (large triangles drew hidden lines). `HLRBRep_PolyAlgo.Update` sometimes raises
+  `Standard_OutOfRange` on a candidate solid; a finer mesh sometimes helps, else the candidate is skipped.
+
 - **Straight cuts**: the two opposite views are mirrored onto each other and joined; a pixel is cut
   only if both views show background there. A pixel is background when its darkest channel is above
   215.

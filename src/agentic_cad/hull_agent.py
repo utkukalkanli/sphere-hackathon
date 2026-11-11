@@ -2,9 +2,11 @@
 
 Step 1 (visual_hull): the bounding box carved by the silhouettes of the views.
 Step 2 (holes): the cylindrical holes listed in facts.json cut out of it.
-Step 3 (llm_cuts, only with OPENAI_MODEL set): cuts a model reads from the brief, each kept only if
+Step 3 (line_cuts): pockets read from the lines inside the views, their depth from the side views,
+checked against the line drawings of all eight views (the isometric ones included).
+Step 4 (llm_cuts, only with OPENAI_MODEL set): cuts a model reads from the brief, each kept only if
 the solid stays above the true volume and no view opens up where the render shows the part.
-Steps 1 and 2 are deterministic; without a model the output does not depend on step 3 at all.
+Steps 1 to 3 are deterministic; without a model the output does not depend on step 4 at all.
 """
 
 import json
@@ -13,7 +15,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from agentic_cad import features, llm_cuts, trace
+from agentic_cad import features, line_cuts, llm_cuts, trace
 from agentic_cad import holes as hl
 from agentic_cad import outline_fit as of
 from agentic_cad import visual_hull as vh
@@ -31,15 +33,20 @@ RETRY_BUDGET = float(os.environ.get("HULL_RETRY_BUDGET", 20))
 # cases share 20 minutes, so this stays well under a ninth of it.
 PLANNED_CUT_TIMEOUT = float(os.environ.get("PLANNED_CUT_TIMEOUT", 20))
 PLANNED_BUDGET = float(os.environ.get("PLANNED_BUDGET", 75))
+# Step 3: seconds for all line cuts of one case, and for one boolean of it
+LINE_BUDGET = float(os.environ.get("LINE_BUDGET", 90))
+LINE_CUT_TIMEOUT = float(os.environ.get("LINE_CUT_TIMEOUT", 15))
 
 
 class VisualHullAgent:
     # The isometric cut is off: measured on the eval set it adds under one point of overlap, is by far
     # the slowest cut, and leaves slanted faces that are not features of the part. Its views are better
     # used to check a candidate solid than to carve one (vh.iso_silhouette has the scale worked out).
-    def __init__(self, use_iso: bool = False, use_holes: bool = True, use_planned: bool = True):
+    def __init__(self, use_iso: bool = False, use_holes: bool = True, use_lines: bool = True,
+                 use_planned: bool = True):
         self.use_iso = use_iso
         self.use_holes = use_holes
+        self.use_lines = use_lines
         self.use_planned = use_planned
         self.cutter = vh.Cutter()
         self.volumes: dict[str, float] = {}  # volume in mm3 after each step of the last case
@@ -56,6 +63,11 @@ class VisualHullAgent:
                 solid = self.cut_holes(solid, case_dir)
             except Exception as error:  # the hull is still a valid answer
                 trace.log(f"cut_holes raised {error!r}; keeping the hull", level="error")
+        if self.use_lines:
+            try:
+                solid = self.cut_lines(prompt, views, solid, case_dir)
+            except Exception as error:  # the solid so far is still a valid answer
+                trace.log(f"cut_lines raised {error!r}; keeping the solid so far", level="error")
         if self.use_planned and llm_cuts.configured():
             try:
                 solid = self.cut_planned(prompt, views, solid, case_dir)
@@ -259,6 +271,25 @@ class VisualHullAgent:
             return carved
 
     # -- step 3 --------------------------------------------------------------------------------
+
+    def cut_lines(self, prompt: str, views: list[Path], solid, case_dir: Path | None):
+        """Pockets read from the lines inside the views (see `line_cuts`)."""
+        from agentic_cad.views import ViewSet
+
+        with trace.step("cut_lines", kind="code") as step:
+            dims = vh.read_dimensions(case_dir, prompt)
+            view_set = ViewSet(views, dims, solid)
+
+            def known_for(u: int, v: int) -> dict:
+                return hl.outline_hints(case_dir, "xyz"[u], "xyz"[v], "xyz"[3 - u - v])
+
+            carved, kept = line_cuts.carve(solid, views, dims, vh.read_volume(case_dir), self.cutter, view_set,
+                                           known_for, step, LINE_BUDGET, LINE_CUT_TIMEOUT)
+            if kept:
+                self._record(step, carved, "lines")
+            return carved
+
+    # -- step 4 --------------------------------------------------------------------------------
 
     def cut_planned(self, prompt: str, views: list[Path], solid, case_dir: Path | None):
         """Ask the model for the cuts the brief describes and keep those that pass the checks."""
