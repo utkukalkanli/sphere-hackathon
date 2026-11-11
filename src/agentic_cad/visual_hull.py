@@ -356,10 +356,14 @@ def cut(shape: TopoDS_Shape, silhouette: Silhouette) -> TopoDS_Shape | None:
     return solid
 
 
-def _cut_in_child(shape_path: str, silhouette: Silhouette, result_path: str) -> bool:
+def read_brep(path: str) -> TopoDS_Shape:
     shape = TopoDS_Shape()
-    BRepTools.Read_s(shape, shape_path, BRep_Builder())
-    result = cut(shape, silhouette)
+    BRepTools.Read_s(shape, path, BRep_Builder())
+    return shape
+
+
+def _run_in_child(operation, shape_path: str, argument, result_path: str) -> bool:
+    result = operation(read_brep(shape_path), argument)
     if result is None:
         return False
     BRepTools.Write_s(result, result_path)
@@ -376,24 +380,25 @@ class Cutter:
     def __init__(self):
         self._pool = None
 
-    def cut(self, shape: TopoDS_Shape, silhouette: Silhouette, timeout: float) -> TopoDS_Shape | None:
-        """Like `cut`, but raises TimeoutError when it takes longer than `timeout` seconds."""
+    def run(self, operation, shape: TopoDS_Shape, argument, timeout: float) -> TopoDS_Shape | None:
+        """operation(shape, argument) -> solid or None, run in the child. `operation` must be a
+        module-level function and `argument` picklable. Raises TimeoutError after `timeout` seconds."""
         if self._pool is None:
             self._pool = multiprocessing.get_context("spawn").Pool(1)
         with tempfile.TemporaryDirectory() as tmp:
             shape_path, result_path = f"{tmp}/in.brep", f"{tmp}/out.brep"
             BRepTools.Write_s(shape, shape_path)
-            job = self._pool.apply_async(_cut_in_child, (shape_path, silhouette, result_path))
+            job = self._pool.apply_async(_run_in_child, (operation, shape_path, argument, result_path))
             try:
                 done = job.get(timeout)
             except multiprocessing.TimeoutError:
                 self.close()
-                raise TimeoutError(f"cut took longer than {timeout:.0f} s") from None
-            if not done:
-                return None
-            result = TopoDS_Shape()
-            BRepTools.Read_s(result, result_path, BRep_Builder())
-            return largest_solid(result)
+                raise TimeoutError(f"took longer than {timeout:.0f} s") from None
+            return largest_solid(read_brep(result_path)) if done else None
+
+    def cut(self, shape: TopoDS_Shape, silhouette: Silhouette, timeout: float) -> TopoDS_Shape | None:
+        """Like `cut`, but raises TimeoutError when it takes longer than `timeout` seconds."""
+        return self.run(cut, shape, silhouette, timeout)
 
     def close(self) -> None:
         if self._pool is not None:

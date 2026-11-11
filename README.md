@@ -43,6 +43,19 @@ a box with the bounding-box dimensions from `facts.json` is cut through, view by
 view is white. Front/back, right/left and top/bottom each give one cutting direction; the two
 isometric views together give a fourth. The result is the largest solid that matches every silhouette.
 
+Step 2 is deterministic too ([src/agentic_cad/holes.py](src/agentic_cad/holes.py)): every cylindrical
+hole that `facts.json` lists (diameter, axis, length, centre) is cut out, which adds the blind and
+hidden holes no silhouette shows.
+
+Every cut runs with a time limit and is undone if it would leave less than the part's true volume.
+
+To score the pipeline on the local eval set, step by step:
+
+```sh
+uv run python tools/eval_hull.py          # 24 fixed cases; about a second when nothing changed
+uv run python tools/eval_hull.py --iou    # also the real overlap with the ground truth (minutes)
+```
+
 When tracing is on (it is by default outside the Docker image), the solid after every step is saved
 as `runs/<run>/<test_case>/files/NNN_stage_<n>_<step>.stp`, next to the silhouette each cut used.
 
