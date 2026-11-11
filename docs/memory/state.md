@@ -1,6 +1,6 @@
 # Project state
 
-Last updated: 2026-11-11, late evening (step 3: pockets from the lines in the views).
+Last updated: 2026-11-12, about 00:30 CET (step 3: region depths, circles, shading).
 
 ## Pipeline
 
@@ -12,7 +12,7 @@ regenerate them in the amd64 image before a submission. A separate model-based a
 | --- | --- | --- |
 | 1. Visual hull: a box with the `facts.json` dimensions, cut through wherever a view is white (front/back, right/left, top/bottom). Before cutting, each traced outline is rebuilt from straight lines and circular arcs (`outline_fit.py`). A fourth cut along the isometric views is implemented but off since 2026-11-11 | `src/agentic_cad/visual_hull.py`, `src/agentic_cad/outline_fit.py` | committed on `feat/visual-hull` |
 | 2. Holes: every cylindrical hole listed in `facts.json` is cut as a cylinder; a thinner coaxial boss inside a bore is kept | `src/agentic_cad/holes.py` | committed on `feat/visual-hull`, measured (below) |
-| 3. Line cuts: in each straight view, regions enclosed by the render's dark lines whose boundary our solid does not draw are tried as pockets from the viewer's side, to each depth at which the side views draw a line across (up to 8 per region). A try is kept only if the volume stays at or above the true volume, no view opens background, the line mismatch of all 8 views drops by 1 % and that of the two iso views drops too. Our lines: OpenCascade hidden-line removal. 30 tries per case (`LINE_MAX_TRIES`), 90 s hard stop | `src/agentic_cad/edges.py`, `src/agentic_cad/line_cuts.py`, `hull_agent.cut_lines` | on `ananas`, measured on the practice set (below) |
+| 3. Line cuts: in each straight view, regions enclosed by the render's dark lines are tried when their boundary has lines our solid lacks or their shading shows a cylinder. Depths come from the side-view lines that run across the region's own extent (falling back to any line across). A filled circle is tried as a cylinder standing towards the viewer: the square block around it is rounded down to a base depth. A region shaded like a cylinder (tone constant along one image axis) is also tried as a concave or convex cylinder, with diameters from `facts.json`. Kept only if the volume stays at or above the true volume, no view opens background, the line mismatch of all 8 views drops by 1 % and that of the two iso views drops too. 40 tries per case, at most 10 per region (`LINE_MAX_TRIES`), 90 s hard stop | `src/agentic_cad/edges.py`, `src/agentic_cad/line_cuts.py`, `hull_agent.cut_lines` | on `ananas`, measured on the practice set (below) |
 | 4. Model-planned cuts: the brief, `facts.json` and the drilled holes go to an OpenAI-compatible model, which answers with box, cylinder and prism cuts as numbers. All are tried at once, then one by one; a cut is kept only if the solid stays at 97 % of the true volume or more and no view (6 straight + 2 iso, `views.py`) shows more than a few pixels of new background where the render shows the part. 75 s per case in all (`PLANNED_BUDGET`), 20 s per boolean, 60 s per request | `src/agentic_cad/features.py`, `src/agentic_cad/llm_cuts.py`, `hull_agent.cut_planned` | on `ananas`, measured with Qwen3-30B (below) |
 
 Unused inputs without a model: the text of `description.md` (only its Envelope line is read, as a fallback),
@@ -103,24 +103,29 @@ sample, 2026-11-11. Score after each step, sampled IoU against the ground truth,
   without. Holes were cut on 14 of the 24 parts; none got worse, the best gained 17 points (part 171).
 - Lowest: parts 51 (0.14) and 99 (0.26), thin-walled parts whose true volume is 2 to 4 % of the box.
 
-Step 3 (line cuts) on the practice set, our volume / true volume after steps 1 + 2 -> after step 3,
-Windows PC, 2026-11-11 (the eval set is no longer used, see decisions.md):
+Step 3 (line cuts) on the practice set, our volume / true volume, Windows PC, 2026-11-12 (the eval
+set is no longer used, see decisions.md). Score = mean of min/max over the 9 parts:
 
-| part | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| before | 1.066 | 1.232 | 1.085 | 1.242 | 1.230 | 3.807 | 2.201 | 1.008 | 1.891 |
-| after | 1.002 | 1.118 | 1.001 | 1.163 | 1.013 | 3.318 | 2.195 | 1.008 | 1.891 |
-| seconds | 7 | 15 | 8 | 97 | 66 | 24 | 50 | 62 | 62 |
+| version | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | score |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| steps 1 + 2 | 1.066 | 1.232 | 1.085 | 1.242 | 1.230 | 3.807 | 2.201 | 1.008 | 1.891 | 0.725 |
+| lines only (733b9f6) | 1.002 | 1.118 | 1.001 | 1.163 | 1.013 | 3.318 | 2.195 | 1.008 | 1.891 | 0.780 |
+| + 10 tries per region | 1.002 | 1.120 | 1.001 | 1.163 | 1.013 | 3.318 | 2.195 | 1.008 | 1.724 | 0.785 |
+| + region depths, circles (current) | 1.002 | 1.120 | 1.001 | 1.130 | 1.009 | 3.318 | 2.142 | 1.008 | 1.403 | 0.804 |
 
-- Parts 1 and 3 land on the true volume: on part 1 the rib's two concave arcs (seen in the back
-  view) were cut 5 mm deep; on part 3 the flange step 19 mm deep from the left.
-- Part 5 gets 64 mm deep pockets from the back inside the large circles; the brief says the circles
-  go through the back wall into the hollow body, so this is probably right, but unverified.
-- With no cap on tries, part 6 went to 2.86 and 7 to 2.16: more tries would help on complex parts.
-- Parts 8 and 9: nothing kept. 9 had a 1.65 result before the iso check and the true-volume floor;
-  whether those cuts were right is unknown.
-- Before the floor was raised to the true volume, part 5 went to 0.978: a too-deep pocket. Depths
-  that no side view shows as a line (here a 2.54 mm recess inside the outline) are not offered.
+- Run time of the current version: 10 to 73 s per part, about 5.5 minutes for all 9.
+- Circles: kept on parts 5 (two of the six d 51 bores' bosses, base 12.8 mm deep) and 7.
+- Shading: no cylinder cut was ever kept. Putting shaded regions first used up the tries and made
+  parts 2 to 5 worse (score below 0.78); now they are tried in the normal order, cylinders before
+  flat pockets. Flat faces with a light gradient are taken for cylinders too (practice 3's flange).
+- Part 1 lands on the true volume (the rib's arcs cut 5 mm deep from the back), part 3 too (the
+  flange step, 19 mm from the left).
+- Part 5 gets 63 mm pockets from the back inside the large circles; the brief says they open into
+  the hollow body, so probably right, unverified. Before the floor was raised to the true volume a
+  too-deep pocket took part 5 to 0.978.
+- Part 9 drops most with a 150 mm pocket from the front; without ground truth it is unknown whether
+  all of it was excess.
+- `HLRBRep_PolyAlgo` fails on many candidates of parts 5 and 9; those candidates are skipped.
 
 Step 3 with the real model (Qwen3-30B-A3B-FP8 on the Brev box, thinking off), 2026-11-11, at 47dd503:
 

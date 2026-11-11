@@ -10,6 +10,11 @@ the entry and say what changed.
   true volume (holes may go to 97 %), and it must improve the line agreement of the two iso views,
   not just the total: a too-deep pocket on practice 5 passed the 97 % floor. The step ends after a
   fixed number of tries, not on time, so its result does not depend on the machine's speed.
+- **A region's depth is read from the side-view lines across that region's own extent; circles in a
+  view are tried as standing cylinders; shading only adds cylinder tries** (2026-11-12, user
+  suggested coordinates across views, circles and shading). Measured on the practice set: region
+  depths and circles 0.785 -> 0.804; shaded regions put first made it worse, so they keep the normal
+  order and flat pockets stay allowed for them.
 - **Model-planned cuts are step 4, after the holes and the line cuts, and off without `OPENAI_MODEL`** (2026-11-11,
   user asked to bring back the useful parts of 9364253). The model only gives numbers; every cut is
   checked against the true volume and all eight views, so a wrong answer is rejected, not submitted.

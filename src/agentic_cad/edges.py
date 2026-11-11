@@ -46,6 +46,21 @@ def ortho_basis(name: str) -> tuple[np.ndarray, np.ndarray]:
     return right, up
 
 
+def render_shading(image_path: Path, crop: bool) -> np.ndarray | None:
+    """The render's brightness (mean of the channels), cropped like `render_lines`."""
+    image = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
+    if image is None:
+        return None
+    part = image.min(axis=2) <= vh.BACKGROUND_MIN
+    if not part.any():
+        return None
+    grey = image.mean(axis=2)
+    if crop:
+        rows, cols = np.where(part.any(axis=1))[0], np.where(part.any(axis=0))[0]
+        grey = grey[rows[0]:rows[-1] + 1, cols[0]:cols[-1] + 1]
+    return grey
+
+
 def render_lines(image_path: Path, crop: bool) -> np.ndarray | None:
     """Line pixels of a render: thin dark strokes, and the outline of the part. Ortho views are cropped
     to the part's rectangle, like `vh.part_mask`."""
@@ -117,6 +132,7 @@ class LineView:
     camera: object
     right: np.ndarray
     up: np.ndarray
+    shading: np.ndarray | None = None  # the render's brightness, same crop as `lines`
 
 
 class LineViews:
@@ -137,7 +153,9 @@ class LineViews:
             else:
                 right, up = camera.right, camera.up
             near = cv2.dilate(lines.astype(np.uint8), grow).astype(bool)
-            self.views.append(LineView(name, lines, near, camera, right, up))
+            shading = render_shading(path, crop=name in ORTHO_VIEWS)
+            self.views.append(LineView(name, lines, near, camera, right, up,
+                                       shading if shading is not None and shading.shape == lines.shape else None))
 
     def drawn(self, shape: TopoDS_Shape) -> dict[str, np.ndarray]:
         """Our solid's lines in every view: visible edges and the outline of its silhouette."""

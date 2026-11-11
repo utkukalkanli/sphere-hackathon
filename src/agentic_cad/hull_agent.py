@@ -38,6 +38,21 @@ LINE_BUDGET = float(os.environ.get("LINE_BUDGET", 90))
 LINE_CUT_TIMEOUT = float(os.environ.get("LINE_CUT_TIMEOUT", 15))
 
 
+def cylinder_diameters(case_dir: Path | None) -> dict[str, list[float]]:
+    """Diameters of the part's concave and convex cylinders, from facts.json (full and partial ones)."""
+    result = {"concave": [], "convex": []}
+    try:
+        facts = json.loads((case_dir / "facts.json").read_text())
+    except Exception:
+        return result
+    for key, kind in (("cylindrical_holes_and_bores", "concave"), ("cylindrical_shafts_and_bosses", "convex")):
+        result[kind] += [float(e["diameter"]) for e in facts.get(key) or [] if e.get("diameter")]
+    for arc in facts.get("partial_cylinders_arcs") or []:
+        if arc.get("diameter") and arc.get("type") in result:
+            result[arc["type"]].append(float(arc["diameter"]))
+    return {kind: sorted(set(values)) for kind, values in result.items()}
+
+
 class VisualHullAgent:
     # The isometric cut is off: measured on the eval set it adds under one point of overlap, is by far
     # the slowest cut, and leaves slanted faces that are not features of the part. Its views are better
@@ -284,7 +299,8 @@ class VisualHullAgent:
                 return hl.outline_hints(case_dir, "xyz"[u], "xyz"[v], "xyz"[3 - u - v])
 
             carved, kept = line_cuts.carve(solid, views, dims, vh.read_volume(case_dir), self.cutter, view_set,
-                                           known_for, step, LINE_BUDGET, LINE_CUT_TIMEOUT)
+                                           known_for, step, LINE_BUDGET, LINE_CUT_TIMEOUT,
+                                           diameters=cylinder_diameters(case_dir))
             if kept:
                 self._record(step, carved, "lines")
             return carved
