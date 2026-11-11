@@ -2,7 +2,8 @@ import argparse
 from dataclasses import dataclass
 from pathlib import Path
 
-from agentic_cad.example import MockAgent
+from agentic_cad.hull_agent import VisualHullAgent
+from agentic_cad.trace import Tracer
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_INPUTS = REPO_ROOT / "artifacts/inputs"
@@ -21,6 +22,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input_dir", type=Path, default=DEFAULT_INPUTS)
     parser.add_argument("--output_dir", type=Path, default=DEFAULT_OUTPUTS)
+    parser.add_argument("--only", nargs="*", default=None, metavar="test_case_<n>",
+                        help="development only: process just these test cases")
 
     return parser.parse_args()
 
@@ -44,17 +47,26 @@ def main(args):
     print("Initialising agentic workflow")
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    agent = MockAgent()
-    for test_case in load_test_cases(args.input_dir):
-        print(f"processing {test_case.name}")
-        output_path = args.output_dir / f"{test_case.name}.stp"
-        agent.generate_cad(
-            prompt=test_case.description,
-            views=test_case.views,
-            context=test_case.context,
-            output_path=output_path,
-        )
+    agent = VisualHullAgent()
+    test_cases = load_test_cases(args.input_dir)
+    if args.only:
+        test_cases = [tc for tc in test_cases if tc.name in args.only]
 
+    # Records every step under runs/ for the dashboard (ui/); a no-op where it can't write
+    with Tracer(meta={"input_dir": args.input_dir, "output_dir": args.output_dir}) as tracer:
+        for test_case in test_cases:
+            print(f"processing {test_case.name}")
+            output_path = args.output_dir / f"{test_case.name}.stp"
+            with tracer.case(test_case.name) as case:
+                agent.generate_cad(
+                    prompt=test_case.description,
+                    views=test_case.views,
+                    context=test_case.context,
+                    output_path=output_path,
+                )
+                case.output(output_path)
+
+    agent.close()
     print("Pipeline generated all CAD designs")
 
 

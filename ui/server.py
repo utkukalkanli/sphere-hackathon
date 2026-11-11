@@ -170,8 +170,10 @@ def case_summary(case_dir: Path) -> dict:
     if cached and cached[0] == key:
         return cached[1]
     summary = {"name": case_dir.name, "status": "running", "steps": 0, "errors": 0, "started_at": None,
-               "ended_at": None, "current": None, "output": None}
+               "ended_at": None, "current": None, "output": None, "stages": []}
     open_steps: dict[str, str] = {}
+    step_names: dict[str, str] = {}
+    stages: dict[str, dict] = {}  # step id -> the solid saved after that step
     for event in read_events(path):
         kind = event.get("t")
         if kind == "case_start":
@@ -182,15 +184,22 @@ def case_summary(case_dir: Path) -> dict:
         elif kind == "step_start":
             summary["steps"] += 1
             open_steps[event.get("id")] = event.get("name")
+            step_names[event.get("id")] = event.get("name")
         elif kind == "step_end":
             open_steps.pop(event.get("id"), None)
             if event.get("status") == "error":
                 summary["errors"] += 1
+            if event.get("id") in stages:
+                stages[event.get("id")]["volume_cm3"] = (event.get("metrics") or {}).get("volume_cm3")
         elif kind == "artifact" and event.get("role") == "output":
             summary["output"] = event.get("path")
+        elif kind == "artifact" and event.get("role") == "stage":
+            stages[event.get("step")] = {"step": step_names.get(event.get("step"), event.get("name")),
+                                         "path": event.get("path")}
         if summary["started_at"] is None:
             summary["started_at"] = event.get("ts")
         summary["last_ts"] = event.get("ts")
+    summary["stages"] = list(stages.values())
     if open_steps and summary["status"] == "running":
         summary["current"] = list(open_steps.values())[-1]
     _summary_cache[str(path)] = (key, summary)

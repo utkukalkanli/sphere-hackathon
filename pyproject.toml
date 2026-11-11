@@ -5,6 +5,9 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "cadquery-ocp>=8.0.1.1.0",
+    "numpy>=2.4.6",
+    "opencv-python-headless>=5.0.0.93",
     "requests>=2.34.2",
 ]
 

@@ -36,6 +36,37 @@ account).
 
 # Repo overview
 
+# Pipeline
+
+Step 1 is deterministic, with no model involved ([src/agentic_cad/visual_hull.py](src/agentic_cad/visual_hull.py)):
+a box with the bounding-box dimensions from `facts.json` is cut through, view by view, wherever a
+view is white. Front/back, right/left and top/bottom each give one cutting direction; the two
+isometric views together give a fourth. The result is the largest solid that matches every silhouette.
+
+When tracing is on (it is by default outside the Docker image), the solid after every step is saved
+as `runs/<run>/<test_case>/files/NNN_stage_<n>_<step>.stp`, next to the silhouette each cut used.
+
+# Local dashboard
+
+A development-only visualizer (not part of the submitted image) for looking at inputs, comparing our
+output with what was expected, and following the agent step by step:
+
+```sh
+uv run python ui/server.py        # http://localhost:8765
+```
+
+- Pick a test case from the dropdown (top left): practice set (`artifacts/inputs`) or the 266-part
+  local eval set (`datasets/eval`).
+- Left: all input images. Middle: our `.stp`. Right: the ground truth `.stp` (local eval set only).
+  Clicking an image turns both 3D views to that camera; below them, a bounding box / volume / area check.
+- The buttons above our output step through the solid as it was after each pipeline step (`[` and `]`).
+- **Steps**: every `trace.step(...)` of the selected run with its input, output, logs, metrics and
+  attached files, live while the pipeline runs. New steps need no UI change, only a
+  `with trace.step(...)` in the agent (see [src/agentic_cad/trace.py](src/agentic_cad/trace.py)).
+  Runs started from a terminal show up too; traces go to `runs/` (git-ignored).
+
+The 3D view loads three.js and occt-import-js from a CDN, so it needs an internet connection.
+
 # Submission format
 
 Your submission comprises of two parts: i) docker image containing your agent workflow, and ii) your output CAD .stp files. The docker image should be built from the root of the repo, and should contain all dependencies required to run your agent workflow. The output .stp files should be placed in the `artifacts/outputs` directory.
