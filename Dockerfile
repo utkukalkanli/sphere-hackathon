@@ -33,5 +33,8 @@ ENV TRACE=0
 # ENV OPENAI_BASE_URL=http://<your Brev instance>:8000/v1 \
 #     OPENAI_API_KEY=<your vLLM --api-key> \
 #     OPENAI_MODEL=<model>
+# Step 3 (model-planned cuts) runs only when OPENAI_MODEL is set. Optional: LLM_VISION=1 (also send the
+# iso renders), LLM_TIMEOUT (s per request, 60), LLM_TEMPERATURE (0), PLANNED_BUDGET (s per case for
+# all of step 3, 75), PLANNED_CUT_TIMEOUT (s per boolean, 20).
 
 CMD ["python", "scripts/main.py"]

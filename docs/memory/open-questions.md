@@ -44,11 +44,10 @@ Remove a question when it is answered, and record the answer in `decisions.md` o
   CadQuery loop (`feat/llm-cad-agent`) both replace what `scripts/main.py` does. Options: pick one;
   give the loop the hull solid as a start or a fallback; or score both per case against `facts.json`
   and keep the better. Neither has been measured against the other.
-- **Which parts of 9364253 go back into the pipeline?** The merge a8d1c91 dropped them because of
-  conflicts (user, 2026-11-11), meaning to combine the useful parts later; as of 2026-11-11 nothing
-  has been carried over. Candidates: the model-planned cuts (`llm_cuts.py`), cuts as numbers
-  (`features.py`), and checking cuts against all eight views. Note the knowledge entry on practice
-  8: a "the render shows part here" veto wrongly blocks through holes.
+- **Does step 3 help with a real model?** It has only seen a scripted answer. It needs the Brev
+  endpoint; it can only be judged on the 9 practice parts (volume ratio), since the eval briefs hold
+  nothing beyond `facts.json`. Also open: whether `LLM_VISION=1` helps, and whether 75 s per case is
+  enough for a 30B model to answer.
 - **`context.png` is not used.** Is there anything in it worth using? It is absent for some parts.
 ## Housekeeping
 

@@ -5,6 +5,10 @@ the entry and say what changed.
 
 ## Pipeline
 
+- **Model-planned cuts are step 3, after the holes, and off without `OPENAI_MODEL`** (2026-11-11,
+  user asked to bring back the useful parts of 9364253). The model only gives numbers; every cut is
+  checked against the true volume and all eight views, so a wrong answer is rejected, not submitted.
+  The holes stay with `holes.py`, and holes get no view check (practice 8).
 - **A model will be used** (2026-11-11, user). A teammate has rented a GPU on Brev and is setting
   up a VLM and an LLM there. Until it is reachable, work goes into the deterministic steps and into
   what the model step will need from them.

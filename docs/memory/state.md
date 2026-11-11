@@ -1,19 +1,20 @@
 # Project state
 
-Last updated: 2026-11-11, about 21:00 CET (`ananas` brought level with `feat/visual-hull`).
+Last updated: 2026-11-11, about 21:30 CET (step 3 added on `ananas`).
 
 ## Pipeline
 
-The pipeline on `feat/visual-hull` and `ananas` is deterministic; no model is called. A separate
-model-based agent exists on `feat/llm-cad-agent` (see Git).
+Steps 1 and 2 are deterministic. Step 3 (on `ananas` only) calls a model and runs only when
+`OPENAI_MODEL` is set; without it the 9 practice outputs equal the committed ones (volumes within
+4e-8, checked 2026-11-11). A separate model-based agent exists on `feat/llm-cad-agent` (see Git).
 
 | step | file | status |
 | --- | --- | --- |
 | 1. Visual hull: a box with the `facts.json` dimensions, cut through wherever a view is white (front/back, right/left, top/bottom). Before cutting, each traced outline is rebuilt from straight lines and circular arcs (`outline_fit.py`). A fourth cut along the isometric views is implemented but off since 2026-11-11 | `src/agentic_cad/visual_hull.py`, `src/agentic_cad/outline_fit.py` | committed on `feat/visual-hull` |
 | 2. Holes: every cylindrical hole listed in `facts.json` is cut as a cylinder; a thinner coaxial boss inside a bore is kept | `src/agentic_cad/holes.py` | committed on `feat/visual-hull`, measured (below) |
-| 3. Anything that finds pockets and other inner cavities | none | not started |
+| 3. Model-planned cuts: the brief, `facts.json` and the drilled holes go to an OpenAI-compatible model, which answers with box, cylinder and prism cuts as numbers. All are tried at once, then one by one; a cut is kept only if the solid stays at 97 % of the true volume or more and no view (6 straight + 2 iso, `views.py`) shows more than a few pixels of new background where the render shows the part. 75 s per case in all (`PLANNED_BUDGET`), 20 s per boolean, 60 s per request | `src/agentic_cad/features.py`, `src/agentic_cad/llm_cuts.py`, `hull_agent.cut_planned` | on `ananas`; tested with a scripted answer only (practice 1: a wrong notch rejected by the views, an oversized cut by the volume, a valid one kept). Never run against a real model, not measured |
 
-Unused inputs so far: the text of `description.md` (only its Envelope line is read, as a fallback),
+Unused inputs without a model: the text of `description.md` (only its Envelope line is read, as a fallback),
 `context.png`, the shading and edge lines inside the views, and every `facts.json` field except the
 bounding box, the volume and the two cylinder lists.
 
@@ -41,12 +42,10 @@ Guards around every cut (`hull_agent.py`):
   the isometric cut switched off, and the practice outputs of steps 1 + 2 made by the amd64 image.
 - `ananas` (the working branch since 2026-11-11 evening): all of `feat/visual-hull` (merged up to
   2bc65c8 in 679fbb3, not pushed yet), plus `views.py`, `tests/test_views.py`, `tools/iso_check.py`
-  and the Windows dashboard fix. Commit 9364253 had a second step 2: cuts given as numbers
-  (`features.py`), cuts planned by an OpenAI-compatible model from the brief (`llm_cuts.py`), and
-  every cut checked against all eight views (`views.py` inside `hull_agent.py`). The merge a8d1c91
-  dropped it because of conflicts, and as of 2026-11-11 none of it has been carried over:
-  `views.py` is imported only by `tools/iso_check.py` and the test. The code is still in git at
-  9364253.
+  and the Windows dashboard fix, plus step 3. Step 3 is the useful part of 9364253, which the merge
+  a8d1c91 had dropped because of conflicts: `features.py` and `llm_cuts.py` are back, as a step after
+  the holes. Not taken over from 9364253: its own hole cutting (`holes.py` is measured and keeps
+  bosses) and the view check on holes (it blocked practice 8's real through holes).
 - `feat/llm-cad-agent` (pushed, a teammate's, not merged anywhere): a different approach that
   replaces `scripts/main.py`. A model writes a CadQuery script per case, it is run, checked against
   `facts.json` (box, volume, area, cylinder diameters) and the view silhouettes (IoU), and the

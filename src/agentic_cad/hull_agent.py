@@ -1,17 +1,21 @@
-"""The deterministic part of the pipeline. No model is called.
+"""The pipeline.
 
 Step 1 (visual_hull): the bounding box carved by the silhouettes of the views.
 Step 2 (holes): the cylindrical holes listed in facts.json cut out of it.
+Step 3 (llm_cuts, only with OPENAI_MODEL set): cuts a model reads from the brief, each kept only if
+the solid stays above the true volume and no view opens up where the render shows the part.
+Steps 1 and 2 are deterministic; without a model the output does not depend on step 3 at all.
 """
 
+import json
 import os
 import tempfile
 import time
 from pathlib import Path
 
+from agentic_cad import features, llm_cuts, trace
 from agentic_cad import holes as hl
 from agentic_cad import outline_fit as of
-from agentic_cad import trace
 from agentic_cad import visual_hull as vh
 
 # A cut that leaves less than this share of the part's true volume removed real material: undo it
@@ -23,15 +27,20 @@ ISO_CUT_TIMEOUT = float(os.environ.get("HULL_ISO_CUT_TIMEOUT", 40))
 HOLES_TIMEOUT = float(os.environ.get("HULL_HOLES_TIMEOUT", 40))
 # Cutting again in another order is only tried while a case has used less than this many seconds
 RETRY_BUDGET = float(os.environ.get("HULL_RETRY_BUDGET", 20))
+# Step 3: seconds one boolean may take, and all of step 3 of one case (the model call included). Nine
+# cases share 20 minutes, so this stays well under a ninth of it.
+PLANNED_CUT_TIMEOUT = float(os.environ.get("PLANNED_CUT_TIMEOUT", 20))
+PLANNED_BUDGET = float(os.environ.get("PLANNED_BUDGET", 75))
 
 
 class VisualHullAgent:
     # The isometric cut is off: measured on the eval set it adds under one point of overlap, is by far
     # the slowest cut, and leaves slanted faces that are not features of the part. Its views are better
     # used to check a candidate solid than to carve one (vh.iso_silhouette has the scale worked out).
-    def __init__(self, use_iso: bool = False, use_holes: bool = True):
+    def __init__(self, use_iso: bool = False, use_holes: bool = True, use_planned: bool = True):
         self.use_iso = use_iso
         self.use_holes = use_holes
+        self.use_planned = use_planned
         self.cutter = vh.Cutter()
         self.volumes: dict[str, float] = {}  # volume in mm3 after each step of the last case
         self._stage = 0
@@ -47,6 +56,11 @@ class VisualHullAgent:
                 solid = self.cut_holes(solid, case_dir)
             except Exception as error:  # the hull is still a valid answer
                 trace.log(f"cut_holes raised {error!r}; keeping the hull", level="error")
+        if self.use_planned and llm_cuts.configured():
+            try:
+                solid = self.cut_planned(prompt, views, solid, case_dir)
+            except Exception as error:  # the solid of steps 1 + 2 is still a valid answer
+                trace.log(f"cut_planned raised {error!r}; keeping the solid of steps 1 + 2", level="error")
         with trace.step("export_step", kind="tool", input={"output_path": str(output_path)}) as step:
             solid = vh.tidy(solid)
             vh.write_step(solid, output_path)
@@ -243,6 +257,90 @@ class VisualHullAgent:
                 step._status = None  # some groups went through: not a failed step
             self._record(step, carved, "holes")
             return carved
+
+    # -- step 3 --------------------------------------------------------------------------------
+
+    def cut_planned(self, prompt: str, views: list[Path], solid, case_dir: Path | None):
+        """Ask the model for the cuts the brief describes and keep those that pass the checks."""
+        from agentic_cad.views import ViewSet  # meshing and cameras: only needed when a model is set
+
+        deadline = time.monotonic() + PLANNED_BUDGET
+        target = vh.read_volume(case_dir)
+        with trace.step("view_cameras", kind="check") as step:
+            view_set = ViewSet(views, vh.read_dimensions(case_dir, prompt), solid)
+            step.set_output({"views": [v.name for v in view_set.views]})
+
+        cuts: list[features.Cut] = []
+        with trace.step("plan_cuts", kind="llm") as step:
+            try:
+                facts = json.loads((case_dir / "facts.json").read_text()) if case_dir else {}
+            except Exception:
+                facts = {}
+            drilled = [{"diameter": 2 * h.radius, "length": h.length, "centre": h.centre, "axis": h.axis}
+                       for h in hl.read_holes(case_dir)]
+            overlays = view_set.iso_overlay(solid) if os.environ.get("LLM_VISION") == "1" else {}
+            messages = llm_cuts.build_messages(prompt, facts, drilled, overlays)
+            step.attach("request.json", json.dumps(messages, indent=1)[:200_000])
+            try:
+                answer, usage = llm_cuts.call(messages, min(llm_cuts.TIMEOUT_S, deadline - time.monotonic()))
+            except Exception as error:
+                step.fail(f"no answer: {error!r}")
+                return solid
+            step.attach("answer.txt", answer)
+            step.metric(**{k: v for k, v in usage.items() if isinstance(v, int)})
+            try:
+                cuts = llm_cuts.parse(answer)
+            except Exception as error:
+                step.fail(f"could not read the answer: {error!r}")
+                return solid
+            for cut in list(cuts):  # drop what makes no solid here, before any child process
+                try:
+                    features.tool(cut)
+                except Exception as error:
+                    step.log(f"{cut.name}: not built ({error})", level="warning")
+                    cuts.remove(cut)
+            step.set_output([c.describe() for c in cuts])
+        if not cuts:
+            return solid
+
+        with trace.step("cut_planned", kind="code", input=[c.describe() for c in cuts]) as step:
+            missing = view_set.missing(solid)
+
+            def attempt(batch: list) -> str | None:
+                """Cut `batch` from the current solid and keep the result if it passes; else say why not."""
+                nonlocal solid, missing
+                if time.monotonic() > deadline:
+                    return "out of time"
+                carved = self._guarded(step, solid, target, lambda: self.cutter.run(
+                    features.subtract, solid, batch, PLANNED_CUT_TIMEOUT), quiet=True)
+                if carved is None:
+                    return "no valid solid, or below the true volume"
+                now = view_set.missing(carved)
+                worse = {v: now[v] - missing[v] for v in now if now[v] - missing[v] > view_set.tolerance(v)}
+                if worse:
+                    return "opens background where the render shows the part: " + ", ".join(
+                        f"{v} +{n} px" for v, n in worse.items())
+                solid, missing = carved, now
+                return None
+
+            kept = []
+            if (reason := attempt(cuts)) is None:
+                kept = cuts
+            else:
+                step.log(f"all {len(cuts)} together: {reason}; trying them one by one")
+                for cut in cuts:
+                    if (reason := attempt([cut])) is None:
+                        kept.append(cut)
+                    else:
+                        step.log(f"{cut.name}: rejected, {reason}", level="warning")
+            step.log(f"kept {len(kept)} of {len(cuts)} cuts")
+            step.metric(kept=f"{len(kept)}/{len(cuts)}")
+            step.set_output({"kept": [c.name for c in kept]})
+            if not kept:
+                step.fail("no planned cut passed the checks; keeping the solid of steps 1 + 2")
+                return solid
+            self._record(step, solid, "planned")
+            return solid
 
     # -- shared --------------------------------------------------------------------------------
 
