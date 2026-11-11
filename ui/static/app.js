@@ -425,6 +425,7 @@ function showImage(name, turn = true) {
   $$('.thumbs button').forEach((b) => b.setAttribute('aria-pressed', b.dataset.image === name));
   $('#big').dataset.cut = imageSrc(c, name);
   $('#big-label').textContent = viewLabel(name);
+  renderResult(c);
   hydrateImages();
   if (turn && VIEWS[name]) setView(name);
 }
@@ -438,12 +439,18 @@ function startMeasuring(c) {
   }
 }
 
-// The ground truth; a case without one (the practice set) shows our output instead
+// The ground truth. The practice set has no ground-truth solid: there the window shows the
+// organisers' render of the real part, in the view chosen on the left. Never our own output.
 function renderResult(c) {
-  setHTML($('#result-head'), `<h2><i class="sw ${c.truth ? 'truth' : 'ours'}"></i>${c.truth ? 'Ground truth' : 'Output'}</h2>`);
-  const output = outputOf(c);
-  if (c.truth) showModel($('#out'), c.truth.url, `${c.truth.url}?${c.truth.mtime}`, COLORS.truth);
-  else showModel($('#out'), output && output.url, output && output.key, COLORS.ours, '<p class="note">No output yet</p>');
+  setHTML($('#result-head'), `<h2><i class="sw truth"></i>Ground truth</h2>${c.truth ? '' : '<span id="truth-label"></span>'}`);
+  if (c.truth) return showModel($('#out'), c.truth.url, `${c.truth.url}?${c.truth.mtime}`, COLORS.truth);
+  const stage = $('#out .stage');
+  if (!$('img.ref', stage)) {
+    stage.innerHTML = c.views.length ? '<img class="ref" alt="Render of the real part">' : '<p class="note">No ground truth</p>';
+  }
+  const img = $('img.ref', stage);
+  if (img && img.dataset.cut !== imageSrc(c, S.image)) { img.dataset.cut = imageSrc(c, S.image); hydrateImages(stage); }
+  if ($('#truth-label')) $('#truth-label').textContent = `render, ${viewLabel(S.image)}`;
 }
 
 // -- side panels: drag the edge to resize ----------------------------------------------------------
