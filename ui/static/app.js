@@ -2,7 +2,7 @@
 // step removed drawn over it; a slider of the steps underneath; everything about the input on the
 // left; the ground truth, as large as its panel, on the right, with two
 // panels under it: how the chosen step's solid differs from the truth, and what the step extracted. Both side panels can be dragged wider. No build step, no framework.
-import { createViewer, setView, fit, zoomBy, trackball, setTrackball, ghost, setGhost, VIEWS, COLORS } from '/static/viewer.js';
+import { createViewer, setView, fit, zoomBy, trackball, setTrackball, ghost, setGhost, faces, setFaces, VIEWS, COLORS } from '/static/viewer.js';
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -22,6 +22,7 @@ const ICON = {
   fit: icon('<path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10"/>'),
   orbit: icon('<circle cx="8" cy="8" r="5.5"/><ellipse cx="8" cy="8" rx="5.5" ry="2.2"/><ellipse cx="8" cy="8" rx="2.2" ry="5.5"/>'),
   diff: icon('<rect x="2.5" y="2.5" width="8" height="8" rx="1"/><rect x="5.5" y="5.5" width="8" height="8" rx="1" stroke-dasharray="2 1.7"/>'),
+  faces: icon('<path d="M8 2.5 13 5v6l-5 2.5L3 11V5z"/><path d="M3 5l5 2.5L13 5M8 7.5v6"/>'),
   ghost: icon('<path d="M3 5.5 8 3l5 2.5v5L8 13l-5-2.5z" stroke-dasharray="2 1.7"/>'),
   play: icon('<path d="M5 3.5v9l7-4.5z" fill="currentColor"/>'),
   stop: icon('<rect x="4" y="4" width="8" height="8" rx="1" fill="currentColor"/>'),
@@ -219,6 +220,7 @@ const viewportHTML = (id, label, tools = true) => `<div class="viewport" id="${i
   ${tools ? `<div class="tools">
     <button data-diff aria-pressed="${S.diff}" title="Show what is too much and what is missing against the ground truth (D)" aria-label="Show the difference to the ground truth">${ICON.diff}</button>
     <button data-ghost aria-pressed="${ghost()}" title="Show what the step removed (G)" aria-label="Show what the step removed">${ICON.ghost}</button>
+    <button data-faces aria-pressed="${faces()}" title="Every face in its own colour (C)" aria-label="Every face in its own colour">${ICON.faces}</button>
     <button data-orbit aria-pressed="${trackball()}" title="Free rotation (T)" aria-label="Free rotation">${ICON.orbit}</button>
     <button data-zoom="0.8" title="Zoom out (−)" aria-label="Zoom out">${ICON.minus}</button>
     <button data-zoom="1.25" title="Zoom in (+)" aria-label="Zoom in">${ICON.plus}</button>
@@ -250,6 +252,10 @@ function toggleDiff() {
 }
 try { S.diff = localStorage.getItem('diff') === 'on'; } catch { /* private mode */ }
 
+function toggleFaces() {
+  setFaces(!faces());
+  $$('[data-faces]').forEach((button) => button.setAttribute('aria-pressed', faces()));
+}
 function toggleGhost() {
   setGhost(!ghost());
   $$('[data-ghost]').forEach((button) => button.setAttribute('aria-pressed', ghost()));
@@ -842,6 +848,7 @@ document.addEventListener('click', async (event) => {
   if (d.fit !== undefined) return fit();
   if (d.orbit !== undefined) return toggleOrbit();
   if (d.ghost !== undefined) return toggleGhost();
+  if (d.faces !== undefined) return toggleFaces();
   if (d.diff !== undefined) return toggleDiff();
   if (d.lightbox) return openOverlay(d.lightbox);
   if (d.sel) return selectStep(d.sel);
@@ -883,7 +890,7 @@ document.addEventListener('keydown', (event) => {
   const act = {
     ArrowRight: () => moveStep(1), ArrowLeft: () => moveStep(-1), ']': () => moveStep(1), '[': () => moveStep(-1),
     ArrowDown: () => moveCase(1), ArrowUp: () => moveCase(-1),
-    '+': () => zoomBy(1.25), '=': () => zoomBy(1.25), '-': () => zoomBy(0.8), f: fit, 0: fit, t: toggleOrbit, g: toggleGhost, d: toggleDiff,
+    '+': () => zoomBy(1.25), '=': () => zoomBy(1.25), '-': () => zoomBy(0.8), f: fit, 0: fit, t: toggleOrbit, g: toggleGhost, d: toggleDiff, c: toggleFaces,
   }[event.key] || (/^[1-8]$/.test(event.key) && (() => showImage(VIEW_NAMES[Number(event.key) - 1])));
   if (!act) return;
   event.preventDefault();

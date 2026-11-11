@@ -155,7 +155,7 @@ table.grid :is(th, td):last-child { padding-right: 0; }
 .tools button:hover { background: var(--hover); color: var(--ink); }
 .tools button:active { background: var(--line); }
 .tools button[aria-pressed="true"] { color: var(--accent); background: var(--select); }
-.tools button:nth-child(3) { margin-right: 5px; }
+.tools [data-orbit] { margin-right: 5px; }
 .no-truth [data-diff] { display: none; }
 
 /* what is on screen, written over the big view */

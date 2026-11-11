@@ -126,6 +126,27 @@ export function setGhost(on) {
   invalidate();
 }
 
+// Every face of the solid in its own colour (C), to see where one face ends and the next begins
+let facets = false;
+try { facets = localStorage.getItem('faces') === 'on'; } catch { /* private mode */ }
+export const faces = () => facets;
+export function setFaces(on) {
+  facets = Boolean(on);
+  try { localStorage.setItem('faces', facets ? 'on' : 'off'); } catch { /* private mode */ }
+  invalidate();
+}
+// Neighbouring numbers get hues far apart (golden-ratio steps round the colour wheel)
+function faceColours(THREE, m) {
+  const colours = new Float32Array(m.position.length).fill(0.7), colour = new THREE.Color();
+  for (let f = 0; f < m.faces.length / 2; f++) {
+    colour.setHSL((f * 0.618034) % 1, 0.5 + 0.12 * (f % 3), 0.52 + 0.07 * (f % 4));
+    for (let t = m.faces[2 * f]; t <= m.faces[2 * f + 1]; t++) {
+      for (let k = 0; k < 3; k++) colours.set([colour.r, colour.g, colour.b], m.index[3 * t + k] * 3);
+    }
+  }
+  return new THREE.BufferAttribute(colours, 3);
+}
+
 // Geometry is built once per loaded mesh and shared by every viewer that shows it, so scrubbing
 // through the steps does not rebuild it. It is freed a while after the last viewer let go.
 const built = new Map();
@@ -137,6 +158,7 @@ function acquire(THREE, m) {
     if (m.normal) geometry.setAttribute('normal', new THREE.BufferAttribute(m.normal, 3));
     geometry.setIndex(new THREE.BufferAttribute(m.index, 1));
     if (!m.normal) geometry.computeVertexNormals();
+    if (m.faces && m.faces.length) geometry.setAttribute('color', faceColours(THREE, m));
     entry = { geometry, edges: null, uses: 0, timer: 0 };
     built.set(m, entry);
   }
@@ -293,6 +315,12 @@ export async function createViewer(container, meshes, color = COLORS.ours, { int
   function render() {
     v.dirty = false;
     shade.visible = ghosts;
+    const coloured = facets && !diff;  // the diff paints the surfaces itself
+    if (material.vertexColors !== coloured) {
+      material.vertexColors = coloured;
+      material.color.set(coloured ? 0xffffff : color);
+      material.needsUpdate = true;
+    }
     const dpr = Math.min(devicePixelRatio || 1, 2);
     const w = Math.round(container.clientWidth * dpr), h = Math.round(container.clientHeight * dpr);
     if (w < 2 || h < 2) return;

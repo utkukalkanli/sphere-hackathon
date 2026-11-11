@@ -124,9 +124,11 @@ onmessage = async ({ data: { id, buffer, compare } }) => {
       position: new Float32Array(m.attributes.position.array),
       normal: m.attributes.normal ? new Float32Array(m.attributes.normal.array) : null,
       index: new Uint32Array(m.index.array),
+      // the triangles of each face of the solid, as pairs (first, last)
+      faces: new Uint32Array((m.brep_faces || []).flatMap((f) => [f.first, f.last])),
     }));
     const faces = result.meshes.reduce((sum, m) => sum + (m.brep_faces ? m.brep_faces.length : 0), 0);
-    const transfer = meshes.flatMap((m) => [m.position.buffer, m.index.buffer, ...(m.normal ? [m.normal.buffer] : [])]);
+    const transfer = meshes.flatMap((m) => [m.position.buffer, m.index.buffer, m.faces.buffer, ...(m.normal ? [m.normal.buffer] : [])]);
     const measured = { ...measure(meshes), faces: faces || null };
     postMessage({ id, ok: true, meshes, measured }, transfer);
   } catch (error) {
