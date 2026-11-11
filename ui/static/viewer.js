@@ -116,12 +116,52 @@ export function zoomBy(factor) {
   invalidate();
 }
 
+// The material a step removed is drawn as a translucent shell over the solid; G switches it off
+let ghosts = true;
+try { ghosts = localStorage.getItem('ghost') !== 'off'; } catch { /* private mode */ }
+export const ghost = () => ghosts;
+export function setGhost(on) {
+  ghosts = Boolean(on);
+  try { localStorage.setItem('ghost', ghosts ? 'on' : 'off'); } catch { /* private mode */ }
+  invalidate();
+}
+
+// Geometry is built once per loaded mesh and shared by every viewer that shows it, so scrubbing
+// through the steps does not rebuild it. It is freed a while after the last viewer let go.
+const built = new Map();
+function acquire(THREE, m) {
+  let entry = built.get(m);
+  if (!entry) {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(m.position, 3));
+    if (m.normal) geometry.setAttribute('normal', new THREE.BufferAttribute(m.normal, 3));
+    geometry.setIndex(new THREE.BufferAttribute(m.index, 1));
+    if (!m.normal) geometry.computeVertexNormals();
+    entry = { geometry, edges: null, uses: 0, timer: 0 };
+    built.set(m, entry);
+  }
+  clearTimeout(entry.timer);
+  entry.uses++;
+  return entry;
+}
+function release(m) {
+  const entry = built.get(m);
+  if (!entry || --entry.uses > 0) return;
+  entry.timer = setTimeout(() => {
+    entry.geometry.dispose();
+    if (entry.edges) entry.edges.dispose();
+    built.delete(m);
+  }, 30000);
+}
+
 const AXES = [['x', [1, 0, 0], '#ff7a6b'], ['y', [0, 1, 0], '#6fcf97'], ['z', [0, 0, 1], '#6aa5ff']];
-export const COLORS = { ours: 0xb3bcc6, truth: 0xcfa462 };  // steel = ours, brass = the reference renders
+export const COLORS = { ours: 0xb3bcc6, truth: 0xcfa462, ghost: 0x5b9bff };  // steel = ours, brass = truth, blue = removed
 
 // Builds the viewer for `container` but leaves mounting `viewer.canvas` to the caller.
 // `interactive: false` makes a thumbnail: it follows the shared camera but takes no input.
-export async function createViewer(container, meshes, color = COLORS.ours, { interactive = true } = {}) {
+// `ghost`: the meshes of the solid before this step; what is no longer there shows as a shell.
+// `frame`: { min, max } to frame instead of the solid itself, so every step sits in the same place.
+export async function createViewer(container, meshes, color = COLORS.ours, { interactive = true, ghost: before = null, frame = null } = {}) {
   const { THREE, renderer } = await load();
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
@@ -141,27 +181,49 @@ export async function createViewer(container, meshes, color = COLORS.ours, { int
     polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
   });
   const lines = new THREE.LineBasicMaterial({ color: 0x0b0d10 });
-  const root = new THREE.Group();
+  const root = new THREE.Group(), shade = new THREE.Group(), used = [];
   let triangles = 0;
-  for (const m of meshes) {
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(m.position, 3));
-    if (m.normal) geometry.setAttribute('normal', new THREE.BufferAttribute(m.normal, 3));
-    geometry.setIndex(new THREE.BufferAttribute(m.index, 1));
-    if (!m.normal) geometry.computeVertexNormals();
-    root.add(new THREE.Mesh(geometry, material));
-    triangles += m.index.length / 3;
-    if (triangles < 400000) root.add(new THREE.LineSegments(new THREE.EdgesGeometry(geometry, 28), lines));
+  const add = (group, list, fill, stroke, order) => {
+    for (const m of list) {
+      const entry = acquire(THREE, m);
+      used.push(m);
+      const mesh = new THREE.Mesh(entry.geometry, fill);
+      mesh.renderOrder = order;
+      group.add(mesh);
+      triangles += m.index.length / 3;
+      if (triangles >= 400000) continue;
+      entry.edges = entry.edges || new THREE.EdgesGeometry(entry.geometry, 28);
+      const edges = new THREE.LineSegments(entry.edges, stroke);
+      edges.renderOrder = order;
+      group.add(edges);
+    }
+  };
+  add(root, meshes, material, lines, 1);
+  // Pushed far back in depth, so where the old solid and the new one share a face the new one wins
+  // and only what was removed shows.
+  const haze = new THREE.MeshBasicMaterial({
+    color: COLORS.ghost, transparent: true, opacity: 0.13, depthWrite: false, side: THREE.DoubleSide,
+    polygonOffset: true, polygonOffsetFactor: 4, polygonOffsetUnits: 3000,
+  });
+  const hazeLines = new THREE.LineBasicMaterial({ color: 0x3f73c4 });
+  if (before) add(shade, before, haze, hazeLines, 0);
+  scene.add(shade, root);
+  let centre, radius;
+  if (frame) {
+    centre = new THREE.Vector3(...frame.min.map((v, i) => (v + frame.max[i]) / 2));
+    radius = Math.hypot(...frame.min.map((v, i) => frame.max[i] - v)) / 2 || 1;
+  } else {
+    const sphere = new THREE.Box3().setFromObject(root).getBoundingSphere(new THREE.Sphere());
+    centre = sphere.center;
+    radius = sphere.radius || 1;
   }
-  scene.add(root);
-  const sphere = new THREE.Box3().setFromObject(root).getBoundingSphere(new THREE.Sphere());
-  const centre = sphere.center, radius = sphere.radius || 1;
   const target = new THREE.Vector3(), bufferSize = new THREE.Vector2();
 
   const v = { canvas, dirty: true, visible: false, render, dispose };
 
   function render() {
     v.dirty = false;
+    shade.visible = ghosts;
     const dpr = Math.min(devicePixelRatio || 1, 2);
     const w = Math.round(container.clientWidth * dpr), h = Math.round(container.clientHeight * dpr);
     if (w < 2 || h < 2) return;
@@ -278,9 +340,8 @@ export async function createViewer(container, meshes, color = COLORS.ours, { int
     if (!viewers.delete(v)) return;
     resizes.disconnect();
     sight.disconnect();
-    root.traverse((o) => o.geometry && o.geometry.dispose());
-    material.dispose();
-    lines.dispose();
+    used.forEach(release);
+    for (const m of [material, lines, haze, hazeLines]) m.dispose();
   }
 
   viewers.add(v);

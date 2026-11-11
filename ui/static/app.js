@@ -1,6 +1,7 @@
-// Dashboard front end. Three columns: the input (reference renders, description, facts), our solid
-// with the pipeline steps that built it, and the ground truth. No build step, no framework.
-import { createViewer, setView, fit, zoomBy, trackball, setTrackball, VIEWS, COLORS } from '/static/viewer.js';
+// Dashboard front end. One large 3D view of the solid after the chosen pipeline step, with what that
+// step removed drawn over it; a slider of the steps underneath; the input (and what the step took
+// from it) on the left, the output on the right. No build step, no framework.
+import { createViewer, setView, fit, zoomBy, trackball, setTrackball, ghost, setGhost, VIEWS, COLORS } from '/static/viewer.js';
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -19,6 +20,7 @@ const ICON = {
   plus: icon('<path d="M3.5 8h9M8 3.5v9"/>'),
   fit: icon('<path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10"/>'),
   orbit: icon('<circle cx="8" cy="8" r="5.5"/><ellipse cx="8" cy="8" rx="5.5" ry="2.2"/><ellipse cx="8" cy="8" rx="2.2" ry="5.5"/>'),
+  ghost: icon('<path d="M3 5.5 8 3l5 2.5v5L8 13l-5-2.5z" stroke-dasharray="2 1.7"/>'),
   play: icon('<path d="M5 3.5v9l7-4.5z" fill="currentColor"/>'),
   stop: icon('<rect x="4" y="4" width="8" height="8" rx="1" fill="currentColor"/>'),
 };
@@ -28,9 +30,10 @@ const S = {
   dataset: null, caseName: null, runId: null,  // runId '' = committed outputs / no run
   image: DEFAULT_VIEW,
   sel: null,  // the step whose solid is shown; null = follow the latest
+  right: 'output',  // what the right window shows: our output or the ground truth
 };
 const traces = new Map();  // "<run>/<case>" -> { events, loading, loaded, failed }
-let live = { id: 0, rows: [] };  // bumped whenever another case or run comes on screen
+let live = { id: 0, rows: [] };  // rows: the steps on the slider  // bumped whenever another case or run comes on screen
 let started = null;  // a run just launched here that /api/state may not list yet
 
 // -- helpers ------------------------------------------------------------------------------------
@@ -175,11 +178,14 @@ function loadStep(url, key = url) {
 
 // Show a .stp in a viewport. The previous solid stays up until the next one is ready, so stepping
 // through the pipeline swaps the part in place without a flash.
-async function showModel(viewport, url, key, color, empty = '', options = {}) {
+// options.before: the solid of the step before, drawn as what was removed. options.frame: a solid
+// whose bounding box is framed instead (the first stage), so the part does not jump between steps.
+async function showModel(viewport, url, key, color, empty = '', { before = null, frame = null, ...options } = {}) {
   const stage = $('.stage', viewport);
-  if (stage.dataset.url === (url || '')) return;
-  stage.dataset.url = url || '';
-  const fresh = () => stage.isConnected && stage.dataset.url === (url || '');
+  const id = url ? `${key || url}|${before ? before.url : ''}` : '';
+  if (stage.dataset.url === id) return;
+  stage.dataset.url = id;
+  const fresh = () => stage.isConnected && stage.dataset.url === id;
   const clear = (html) => {
     if (stage.viewer) stage.viewer.dispose();
     stage.viewer = null;
@@ -189,9 +195,11 @@ async function showModel(viewport, url, key, color, empty = '', options = {}) {
   if (!url) return clear(empty);
   if (!stage.viewer) stage.innerHTML = '<p class="note pulse">Loading…</p>';
   try {
-    const { meshes } = await loadStep(url, key);
+    const optional = (model) => (model ? loadStep(model.url, model.key).catch(() => null) : null);
+    const [solid, old, box] = await Promise.all([loadStep(url, key), optional(before), optional(frame)]);
     if (!fresh()) return;
-    const viewer = await createViewer(stage, meshes, color, options);
+    const viewer = await createViewer(stage, solid.meshes, color, {
+      ...options, ghost: old && old.meshes, frame: box && box.measured });
     if (!fresh()) return viewer.dispose();
     if (stage.viewer) stage.viewer.dispose();
     stage.viewer = viewer;
@@ -202,18 +210,23 @@ async function showModel(viewport, url, key, color, empty = '', options = {}) {
   }
 }
 
-const viewportHTML = (id, label) => `<div class="viewport" id="${id}">
+const viewportHTML = (id, label, tools = true) => `<div class="viewport" id="${id}">
   <div class="stage" role="img" aria-label="${label}"></div>
-  <div class="tools">
+  ${tools ? `<div class="tools">
+    <button data-ghost aria-pressed="${ghost()}" title="Show what the step removed (G)" aria-label="Show what the step removed">${ICON.ghost}</button>
+    <button data-orbit aria-pressed="${trackball()}" title="Free rotation (T)" aria-label="Free rotation">${ICON.orbit}</button>
     <button data-zoom="0.8" title="Zoom out (−)" aria-label="Zoom out">${ICON.minus}</button>
     <button data-zoom="1.25" title="Zoom in (+)" aria-label="Zoom in">${ICON.plus}</button>
     <button data-fit title="Fit the part (F, or double-click)" aria-label="Fit the part">${ICON.fit}</button>
-    <button data-orbit aria-pressed="${trackball()}" title="Free rotation (T)" aria-label="Free rotation">${ICON.orbit}</button>
-  </div></div>`;
+  </div>` : ''}</div>`;
 
 function toggleOrbit() {
   setTrackball(!trackball());
   $$('[data-orbit]').forEach((button) => button.setAttribute('aria-pressed', trackball()));
+}
+function toggleGhost() {
+  setGhost(!ghost());
+  $$('[data-ghost]').forEach((button) => button.setAttribute('aria-pressed', ghost()));
 }
 
 // -- routing ------------------------------------------------------------------------------------
@@ -268,13 +281,13 @@ function renderBar() {
   const running = run && run.status === 'running';
   setHTML($('#bar'), `
     <div class="group">
-      <button class="icon" data-move="-1" title="Previous case (←)" aria-label="Previous case">${ICON.prev}</button>
+      <button class="icon" data-move="-1" title="Previous case (↑)" aria-label="Previous case">${ICON.prev}</button>
       <select id="case-select" aria-label="Test case">
         ${S.datasets.map((d) => `<optgroup label="${esc(d.label)} (${d.count})">
           ${(S.cases[d.id] || []).map((c) => `<option value="${d.id}/${c.name}" ${d.id === S.dataset && c.name === S.caseName ? 'selected' : ''}>
             ${esc(`${c.number} · ${generic(c) ? envelope(c) || c.name : c.title}${c.tier ? ` · ${c.tier}` : ''}`)}${d.id === S.dataset && inRun.has(c.name) ? ' •' : ''}</option>`).join('')}</optgroup>`).join('')}
       </select>
-      <button class="icon" data-move="1" title="Next case (→)" aria-label="Next case">${ICON.next}</button>
+      <button class="icon" data-move="1" title="Next case (↓)" aria-label="Next case">${ICON.next}</button>
     </div>
     <label class="field"><span>Run</span>
       <select id="run-select">
@@ -301,20 +314,22 @@ function renderMain() {
     live = { id: live.id + 1, rows: [] };
     htmlCache.delete(main);
     main.innerHTML = `
-      <section class="col" id="input" aria-label="Input"></section>
-      <section class="col bench" aria-label="Our solid">
-        <header class="pane-head"><i class="sw ours"></i><h2>Ours</h2><span id="stage-label"></span><span class="spacer"></span><span id="steps-status"></span></header>
-        ${viewportHTML('ours', 'Our solid. Drag to rotate, shift-drag to pan, scroll to zoom.')}
-        <div class="scroll"><div id="steps-note"></div><ol id="steps"></ol><div id="step-detail"></div></div>
+      <aside class="side" id="input" aria-label="Input"></aside>
+      <section id="centre" aria-label="The solid after the chosen step">
+        ${viewportHTML('ours', 'Our solid after the chosen step. Drag to rotate, shift-drag to pan, scroll to zoom.')}
+        <div class="hud"><div id="stage-label"></div><div id="steps-note"></div></div>
+        <div class="hud end" id="steps-status"></div>
       </section>
-      <section class="col bench" aria-label="Ground truth">
-        <header class="pane-head"><i class="sw truth"></i><h2>${c.truth ? 'Ground truth' : 'Reference render'}</h2><span id="truth-label"></span></header>
-        ${viewportHTML('truth', 'Ground truth solid')}
-        <div class="scroll" id="metrics"></div>
-      </section>`;
+      <aside class="side" id="result" aria-label="Output">
+        <div id="result-head"></div>
+        ${viewportHTML('out', 'Our output or the ground truth', false)}
+        <div id="metrics"></div>
+      </aside>
+      <footer id="timeline"></footer>`;
     renderInput(c);
-    renderTruth(c);
+    startMeasuring(c);
   }
+  renderResult(c);
   renderSteps(c);
   measureOurs(c);
 }
@@ -329,6 +344,14 @@ function fmt(value) {
     return value.map((v) => (Array.isArray(v) ? `(${v.map(fmt).join(', ')})` : fmt(v))).join(Array.isArray(value[0]) ? '<br>' : ', ') || '–';
   }
   return Object.entries(value).map(([k, v]) => `${fmt(v)} ${esc(words(k).toLowerCase())}`).join(' · ') || '–';
+}
+
+// A list of records as a table; anything else on one line
+function tableHTML(value) {
+  if (!Array.isArray(value) || typeof value[0] !== 'object' || value[0] == null) return `<p class="mono">${fmt(value)}</p>`;
+  const columns = [...new Set(value.flatMap((item) => Object.keys(item)))];
+  return `<div class="wide"><table class="grid"><thead><tr>${columns.map((k) => `<th>${esc(words(k))}</th>`).join('')}</tr></thead>
+    <tbody>${value.map((item) => `<tr>${columns.map((k) => `<td>${fmt(item[k])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
 }
 
 function factsHTML(facts) {
@@ -346,13 +369,7 @@ function factsHTML(facts) {
   const shown = new Set(['bounding_box_mm', 'volume_mm3', 'surface_area_mm2', 'solids', 'through_holes_genus', 'faces', 'edges', 'face_types']);
   const rest = Object.entries(facts).filter(([k, v]) => !shown.has(k) && !k.startsWith('_')
     && v != null && (typeof v !== 'object' || Object.keys(v).length));
-  const feature = ([key, value]) => {
-    const title = `<h3>${esc(words(key))}</h3>`;
-    if (!Array.isArray(value) || typeof value[0] !== 'object') return `${title}<p class="mono">${fmt(value)}</p>`;
-    const columns = [...new Set(value.flatMap((item) => Object.keys(item)))];
-    return `${title}<table class="grid"><thead><tr>${columns.map((k) => `<th>${esc(words(k))}</th>`).join('')}</tr></thead>
-      <tbody>${value.map((item) => `<tr>${columns.map((k) => `<td>${fmt(item[k])}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
-  };
+  const feature = ([key, value]) => `<h3>${esc(words(key))}</h3>${tableHTML(value)}`;
   return `<dl class="spec">${spec.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>
     ${rest.length ? `<details class="fold"><summary>Features (${rest.length})</summary>${rest.map(feature).join('')}</details>` : ''}`;
 }
@@ -390,8 +407,9 @@ function renderInput(c) {
     <div class="thumbs">${images.map((name, i) => `<button data-image="${name}" aria-pressed="${name === S.image}"
       title="${viewLabel(name)}${VIEWS[name] ? ` — turns the 3D views to this side (${i + 1})` : ''}">
       <img alt="${viewLabel(name)}" src="${imageSrc(c, name)}" data-cut="${imageSrc(c, name)}"></button>`).join('')}</div>` : '<p class="note">This case has no reference renders.</p>'}
-    <h2>Description</h2><article class="prose clamp" id="brief"></article><button class="toggle" data-expand="brief">Show all</button>
-    <h2>Facts</h2>${factsHTML(c.facts)}`;
+    <section id="step-detail"></section>
+    <details class="fold top"><summary>Brief</summary><article class="prose" id="brief"></article></details>
+    <details class="fold top"><summary>Facts</summary>${factsHTML(c.facts)}</details>`;
   hydrateImages($('#input'));
   const id = live.id;
   fetch(`/api/description?dataset=${S.dataset}&case=${c.name}`).then((r) => r.text()).then((text) => {
@@ -404,27 +422,29 @@ function showImage(name, turn = true) {
   if (!c || !$('#big')) return;
   S.image = name;
   $$('.thumbs button').forEach((b) => b.setAttribute('aria-pressed', b.dataset.image === name));
-  $$('#big, #truth img.ref').forEach((img) => { img.dataset.cut = imageSrc(c, name); });
+  $('#big').dataset.cut = imageSrc(c, name);
   $('#big-label').textContent = viewLabel(name);
-  if ($('#truth-label') && !c.truth) $('#truth-label').textContent = viewLabel(name);
   hydrateImages();
   if (turn && VIEWS[name]) setView(name);
 }
 
-// -- right: ground truth ------------------------------------------------------------------------
+// -- right: output ------------------------------------------------------------------------------
 
-function renderTruth(c) {
-  const id = live.id, state = live.state = { truth: undefined, ours: null };
+function startMeasuring(c) {
+  const id = live.id, state = live.state = { truth: c.truth ? undefined : null, ours: null };
   if (c.truth) {
-    const key = `${c.truth.url}?${c.truth.mtime}`;
-    showModel($('#truth'), c.truth.url, key, COLORS.truth);
-    settle(loadStep(c.truth.url, key)).then((m) => { state.truth = m; if (id === live.id) renderMetrics(c, state); });
-  } else {
-    state.truth = null;
-    $('#truth .stage').innerHTML = `<img class="ref" alt="Reference render" src="${imageSrc(c, S.image)}" data-cut="${imageSrc(c, S.image)}">`;
-    $('#truth-label').textContent = viewLabel(S.image);
-    hydrateImages($('#truth'));
+    settle(loadStep(c.truth.url, `${c.truth.url}?${c.truth.mtime}`)).then((m) => { state.truth = m; if (id === live.id) renderMetrics(c, state); });
   }
+}
+
+function renderResult(c) {
+  const side = c.truth && S.right === 'truth' ? 'truth' : 'output';
+  const tab = (id, label) => `<button data-right="${id}" aria-pressed="${side === id}"><i class="sw ${id === 'truth' ? 'truth' : 'ours'}"></i>${label}</button>`;
+  setHTML($('#result-head'), c.truth ? `<div class="tabs">${tab('output', 'Output')}${tab('truth', 'Truth')}</div>`
+    : '<h2><i class="sw ours"></i>Output</h2>');
+  const output = outputOf(c);
+  if (side === 'truth') showModel($('#out'), c.truth.url, `${c.truth.url}?${c.truth.mtime}`, COLORS.truth);
+  else showModel($('#out'), output && output.url, output && output.key, COLORS.ours, '<p class="note">No output yet</p>');
 }
 
 const settle = (promise) => promise.then((data) => data.measured, () => null);
@@ -464,12 +484,11 @@ function renderMetrics(c, state) {
     ['Volume', 'cm³', (facts.volume_mm3 ?? (state.truth && state.truth.volume)) / 1000, state.ours && state.ours.volume / 1000],
     ['Surface', 'cm²', (facts.surface_area_mm2 ?? (state.truth && state.truth.area)) / 100, state.ours && state.ours.area / 100],
   ];
-  const cell = (value, unit) => (value == null || !isFinite(value) ? '<td class="none">–</td>' : `<td>${num(value)} <small>${unit}</small></td>`);
-  const note = state.ours === undefined ? '<p class="note pulse">Measuring our output…</p>'
-    : state.ours === null ? '<p class="note">No output of ours yet.</p>' : '';
+  const cell = (value) => (value == null || !isFinite(value) ? '<td class="none">–</td>' : `<td>${num(value)}</td>`);
+  const note = state.ours === undefined ? '<p class="note pulse">Measuring…</p>' : '';
   setHTML($('#metrics'), `<table class="metrics">
     <thead><tr><th></th><th><i class="sw truth"></i>Truth</th><th><i class="sw ours"></i>Ours</th><th>Diff</th></tr></thead>
-    <tbody>${rows.map(([label, unit, expected, actual]) => `<tr><th>${label}</th>${cell(expected, unit)}${cell(actual, unit)}${delta(expected, actual)}</tr>`).join('')}</tbody>
+    <tbody>${rows.map(([label, unit, expected, actual]) => `<tr><th>${label} <small>${unit}</small></th>${cell(expected)}${cell(actual)}${delta(expected, actual)}</tr>`).join('')}</tbody>
   </table>${note}`);
 }
 
@@ -510,15 +529,54 @@ async function fetchTrace(run, name) {
   if (S.runId === run && S.caseName === name) renderSteps(currentCase());
 }
 
-const metricHTML = ([k, v]) => {
-  const unit = (k.match(/_(cm3|mm3|mm2|mm)$/) || [])[1];
-  return `${esc(words(unit ? k.slice(0, -unit.length - 1) : k))} <b>${esc(typeof v === 'number' ? num(v, 3) : v)}${unit ? ` ${unit.replace('3', '³').replace('2', '²')}` : ''}</b>`;
-};
 const raw = (value) => `<pre>${esc(typeof value === 'string' ? value : JSON.stringify(value, null, 2))}</pre>`;
+const unitOf = (key) => (key.match(/_(cm3|mm3|mm2|mm|deg|px)$/) || [])[1];
+const pretty = (unit) => ({ cm3: 'cm³', mm3: 'mm³', mm2: 'mm²', deg: '°' }[unit] || unit);
+function pairHTML([key, value]) {
+  const unit = unitOf(key);
+  return `<dt>${esc(words(unit ? key.slice(0, -unit.length - 1) : key))}</dt>
+    <dd>${typeof value === 'number' ? num(value, 3) : fmt(value)}${unit ? ` <small>${pretty(unit)}</small>` : ''}</dd>`;
+}
+
+// The .json files a step attached (holes, rounds, pockets): fetched once, drawn as tables
+const attached = new Map();
+function attachedJSON(url) {
+  if (!attached.has(url)) {
+    attached.set(url, undefined);
+    fetch(url).then((r) => r.json()).then((data) => attached.set(url, data), () => attached.set(url, null))
+      .then(() => renderSteps(currentCase()));
+  }
+  return attached.get(url);
+}
+
+// What the chosen step took from the inputs: its pictures, its lists, its numbers and what it said
+function detailHTML(s, base, time) {
+  const images = s.artifacts.filter((a) => isImage(a.name));
+  const lists = s.artifacts.filter((a) => /\.json$/i.test(a.name));
+  // the same number is often both in the output (mm3) and in the metrics (cm3): keep the metric
+  const stem = (key) => (unitOf(key) ? key.slice(0, -unitOf(key).length - 1) : key);
+  const named = new Set(Object.keys(s.metrics || {}).map(stem));
+  const pairs = [...Object.entries(s.output && typeof s.output === 'object' ? s.output : {}).filter(([key]) => !named.has(stem(key))),
+    ...Object.entries(s.metrics || {})];
+  const data = [s.input !== undefined ? `<h4>Input</h4>${raw(s.input)}` : '', s.output != null ? `<h4>Output</h4>${raw(s.output)}` : ''].join('');
+  return [
+    s.error ? `<pre class="bad">${esc(s.error)}</pre>` : '',
+    ...images.map((a) => `<button class="art" data-lightbox="${esc(`${base}/${a.path}`)}" title="${esc(a.name)}">
+      <img alt="${esc(a.name)}" src="${esc(`${base}/${a.path}`)}"></button>`),
+    ...lists.map((a) => {
+      const value = attachedJSON(`${base}/${a.path}`);
+      return value == null ? '' : `<h3>${esc(words(a.name.replace(/\.json$/i, '')))}${Array.isArray(value) ? ` <small>${value.length}</small>` : ''}</h3>${tableHTML(value)}`;
+    }),
+    s.logs.length ? `<ul class="said">${s.logs.map((l) => `<li class="${l.level === 'info' ? '' : 'warn'}">${esc(l.msg)}</li>`).join('')}</ul>` : '',
+    `<dl class="kv">${pairs.map(pairHTML).join('')}<dt>Time</dt><dd>${time}</dd></dl>`,
+    data ? `<details class="fold"><summary>Raw</summary>${data}</details>` : '',
+  ].join('');
+}
 
 function renderSteps(c) {
-  if (!$('#steps') || !c) return;
+  if (!$('#timeline') || !c) return;
   const run = currentRun(), output = outputOf(c);
+  const truth = c.facts && c.facts.volume_mm3;
   const rows = [];
   let note = '', status = '', running = false;
   if (run) {
@@ -536,79 +594,89 @@ function renderSteps(c) {
       let model = null;
       t.list.forEach((s, index) => {
         const stage = s.artifacts.filter((a) => a.role === 'stage' && isStep(a.name)).pop();
+        const before = stage ? model : null;  // only a step that left a new solid removed something
         if (stage) model = { url: `${base}/${stage.path}` };
-        const images = s.artifacts.filter((a) => isImage(a.name)), files = s.artifacts.filter((a) => !isImage(a.name));
-        const value = (m) => metricHTML(m).split(' <b>')[1].replace('</b>', '');
-        const text = [
-          s.logs.length ? `<h4>Log</h4>${raw(s.logs.map((l) => l.msg).join('\n'))}` : '',
-          s.input !== undefined ? `<h4>Input</h4>${raw(s.input)}` : '',
-          s.output != null ? `<h4>Output</h4>${raw(s.output)}` : '',
-          files.length ? `<p class="files">${files.map((a) => `<a href="${esc(`${base}/${a.path}`)}" target="_blank" rel="noopener">${esc(a.name)}</a>`).join('')}</p>` : '',
-        ].join('');
-        const more = [
-          s.error ? `<pre class="bad">${esc(s.error)}</pre>` : '',
-          `<div class="facts-row">${images.length ? `<div class="arts">${images.map((a) => `<button data-lightbox="${esc(`${base}/${a.path}`)}" title="${esc(a.name)}">
-            <img loading="lazy" alt="${esc(a.name)}" src="${esc(`${base}/${a.path}`)}"></button>`).join('')}</div>` : ''}
-          <dl class="kv">${Object.entries(s.metrics || {}).map((m) => `<dt>${metricHTML(m).split(' <b>')[0]}</dt><dd>${value(m)}</dd>`).join('')}
-            <dt>time</dt><dd>${duration((s.end || (running ? now : t.last)) - s.start)}</dd></dl></div>`,
-          text ? `<details class="fold"><summary>Log and data</summary>${text}</details>` : '',
-        ].join('');
+        const m = s.metrics || {}, time = duration((s.end || (running ? now : t.last)) - s.start);
+        const ratio = truth && m.volume_cm3 != null ? m.volume_cm3 * 1000 / truth : null;
         rows.push({
-          id: s.id, model, depth: s.depth, more, label: `after ${index + 1} · ${words(s.name)}`,
+          id: s.id, raw: s.name, model, before, changed: Boolean(stage),
           state: s.end ? s.status : running ? 'running' : 'interrupted',
-          n: String(index + 1).padStart(2, '0'), name: words(s.name),
-          metric: Object.entries(s.metrics || {}).slice(0, 1).map(value).join(''),
-          time: duration((s.end || (running ? now : t.last)) - s.start),
+          n: String(index + 1).padStart(2, '0'), name: words(s.name.replace(/^cut_/, '')),
+          ratio: ratio == null ? '' : `×${ratio.toFixed(ratio < 10 ? 2 : 1)}`,
+          chips: [
+            m.removed_cm3 ? `<i class="sw ghost"></i>removed ${num(m.removed_cm3)} cm³` : '',
+            ratio != null ? `${num(ratio)} × true volume` : '',
+          ].filter(Boolean).join(' · '),
+          detail: () => detailHTML(s, base, time),
         });
       });
-      if (!running) rows.forEach((r) => r.model && loadStep(r.model.url).catch(() => {}));  // warm up, so stepping is instant
+      const last = rows[rows.length - 1];  // the exported file is the last step's solid, tidied
+      if (last && output && !running && t.status === 'ok') Object.assign(last, { model: output, before: null });
+      if (!running) rows.forEach((r) => r.model && loadStep(r.model.url, r.model.key).catch(() => {}));  // warm up, so scrubbing is instant
     }
   } else if (!output) note = '<p class="note">No output yet. Run this case to see its steps.</p>';
-  if (output) {
-    rows.push({ id: 'output', model: output, depth: 0, label: 'final output', state: 'ok', n: '', name: 'Final', metric: '', time: '',
-      more: `<p class="files"><a href="${esc(output.url)}" target="_blank" rel="noopener">Open .stp</a></p>` });
+  if (!rows.length && output) {
+    rows.push({ id: 'output', raw: '', model: output, before: null, changed: true, state: 'ok', n: '', name: 'Output', ratio: '', chips: '',
+      detail: () => (run ? '' : '<p class="note">Run this case to see its steps.</p>') });
   }
   if (running && !rows.length) note = '<p class="note pulse">Running…</p>';
 
   // Which solid is on screen: the chosen step, else the newest one
-  const chosen = rows.find((r) => r.id === S.sel) || [...rows].reverse().find((r) => r.model) || rows[rows.length - 1];
-  live.rows = rows.map((r) => r.id);
+  const chosen = rows.find((r) => r.id === S.sel) || [...rows].reverse().find((r) => r.changed) || rows[rows.length - 1];
+  live.rows = rows;
+  live.chosen = chosen ? chosen.id : null;
   setHTML($('#steps-status'), status);
-  setHTML($('#stage-label'), chosen && chosen.model ? esc(chosen.label) : '');
+  setHTML($('#stage-label'), chosen ? `<span class="n">${chosen.n}</span><b>${esc(chosen.name)}</b><span class="chips">${chosen.chips}</span>` : '');
   setHTML($('#steps-note'), note);
-  const strip = $('#steps'), cards = new Map($$('li', strip).map((li) => [li.dataset.id, li]));
-  rows.forEach((r, i) => {
-    let li = cards.get(r.id);
-    cards.delete(r.id);
-    if (!li) {
-      li = document.createElement('li');
-      li.dataset.id = r.id;
-      li.innerHTML = '<button class="card"><span class="stage"></span><span class="cap"></span></button>';
-    }
-    if (strip.children[i] !== li) strip.insertBefore(li, strip.children[i] || null);
-    const on = Boolean(chosen && r.id === chosen.id), button = li.firstElementChild;
-    button.dataset.sel = r.id;
-    button.setAttribute('aria-current', on);
-    button.title = r.label;
-    setHTML($('.cap', li), `<span class="n">${r.n}</span><span class="name">${esc(r.name)}</span>
-      <span class="v ${r.state === 'ok' ? '' : `state ${r.state}`}">${r.state === 'ok' ? r.metric : r.state}</span>`);
-    showModel(li, r.model && r.model.url, r.model && r.model.key, COLORS.ours, '', { interactive: false });
-  });
-  cards.forEach((li) => { const stage = $('.stage', li); if (stage.viewer) stage.viewer.dispose(); li.remove(); });
-  setHTML($('#step-detail'), chosen && chosen.more ? `<h3>${esc(chosen.name)}</h3>${chosen.more}` : '');
+  renderTimeline(rows, chosen);
+  const detail = chosen ? chosen.detail() : '';
+  setHTML($('#step-detail'), detail ? `<h2>Extracted<span>${esc(chosen.name)}</span></h2>${detail}` : '');
+  const first = rows.find((r) => r.model);
   showModel($('#ours'), chosen && chosen.model && chosen.model.url, chosen && chosen.model && chosen.model.key, COLORS.ours,
-    `<p class="note">${running ? 'Waiting for the first solid…' : 'No solid to show yet.'}</p>`);
+    note ? '' : `<p class="note">${running ? 'Waiting for the first solid…' : 'No solid to show yet.'}</p>`,
+    { before: chosen && chosen.before, frame: run && first ? first.model : null });
+}
+
+// The steps as a slider. It is rebuilt only when the steps change, so a drag is never interrupted.
+function renderTimeline(rows, chosen) {
+  const timeline = $('#timeline');
+  const signature = JSON.stringify(rows.map((r) => [r.id, r.name, r.state, r.ratio, r.changed]));
+  if (timeline.dataset.rows !== signature) {
+    timeline.dataset.rows = signature;
+    timeline.innerHTML = rows.length < 2 ? '' : `<div class="track" style="--n:${rows.length}">
+      <div class="rail"><i></i></div>
+      <input type="range" id="scrub" min="0" max="${rows.length - 1}" step="1" aria-label="Pipeline step">
+      ${rows.map((r) => `<button class="stop ${r.changed ? 'cut' : ''}" data-sel="${r.id}" title="${esc(r.name)}${r.ratio ? ` — ${r.ratio} the true volume` : ''}">
+        <i class="dot"></i><span class="name">${esc(r.name)}</span>
+        <span class="v ${r.state === 'ok' ? '' : `state ${r.state}`}">${r.state === 'ok' ? r.ratio : r.state}</span></button>`).join('')}
+    </div>`;
+  }
+  const scrub = $('#scrub');
+  if (!scrub) return;
+  const at = Math.max(0, rows.indexOf(chosen));
+  if (Number(scrub.value) !== at) scrub.value = at;
+  scrub.setAttribute('aria-valuetext', chosen ? chosen.name : '');
+  $('.rail i', timeline).style.width = `${at / (rows.length - 1) * 100}%`;
+  $$('.stop', timeline).forEach((stop, i) => {
+    stop.setAttribute('aria-current', i === at);
+    stop.classList.toggle('done', i <= at);
+  });
+}
+
+// A step that cuts along one view pair shows that view in the input window
+const STEP_VIEW = [[/front|back/, 'view_0_front'], [/right|left/, 'view_3_right'], [/top|bottom/, 'view_4_top'], [/iso/, 'view_6_iso_front_right_top']];
+function selectStep(id) {
+  S.sel = id;
+  renderSteps(currentCase());
+  const row = live.rows.find((r) => r.id === id);
+  const view = row && /^cut_|^retry_/.test(row.raw) && (STEP_VIEW.find(([pattern]) => pattern.test(row.raw)) || [])[1];
+  if (view && $(`[data-image="${view}"]`)) showImage(view, false);
 }
 
 function moveStep(offset) {
-  const current = $('#steps [aria-current="true"]');
-  const index = live.rows.indexOf(current ? current.dataset.sel : null);
+  const index = live.rows.findIndex((r) => r.id === live.chosen);
   const next = live.rows[Math.max(0, Math.min(live.rows.length - 1, index + offset))];
-  if (next == null) return;
-  S.sel = next;
-  renderSteps(currentCase());
-  const card = $('#steps [aria-current="true"]');
-  if (card) card.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  if (next) selectStep(next.id);
 }
 
 // -- overlay ------------------------------------------------------------------------------------
@@ -649,9 +717,10 @@ document.addEventListener('click', async (event) => {
   if (d.zoom) return zoomBy(Number(d.zoom));
   if (d.fit !== undefined) return fit();
   if (d.orbit !== undefined) return toggleOrbit();
+  if (d.ghost !== undefined) return toggleGhost();
+  if (d.right) { S.right = d.right; return renderResult(currentCase()); }
   if (d.lightbox) return openOverlay(d.lightbox);
-  if (d.sel) { S.sel = d.sel; return renderSteps(currentCase()); }
-  if (d.expand) { const closed = $(`#${d.expand}`).classList.toggle('clamp'); target.textContent = closed ? 'Show all' : 'Show less'; return; }
+  if (d.sel) return selectStep(d.sel);
   if (d.action === 'run') {
     try {
       const { id } = await api('/api/run', { dataset: S.dataset, only: [S.caseName], target: 'run' });
@@ -668,6 +737,10 @@ document.addEventListener('dblclick', (event) => {
   if (event.target.id === 'big') openOverlay(event.target.src);
 });
 
+document.addEventListener('input', (event) => {
+  if (event.target.id === 'scrub' && live.rows[event.target.value]) selectStep(live.rows[event.target.value].id);
+});
+
 document.addEventListener('change', (event) => {
   const el = event.target;
   if (el.id === 'case-select') { const [ds, name] = el.value.split('/'); selectCase(name, ds); }
@@ -681,11 +754,12 @@ document.addEventListener('change', (event) => {
 
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') return closeOverlay();
-  if (event.target.matches('input, select, textarea') || event.metaKey || event.ctrlKey || event.altKey) return;
+  if (event.target.matches('select, textarea, input:not([type=range])') || event.metaKey || event.ctrlKey || event.altKey) return;
+  if (event.target.matches('input[type=range]') && event.key.startsWith('Arrow')) return;  // the slider moves itself
   const act = {
-    ArrowRight: () => moveCase(1), ArrowLeft: () => moveCase(-1),
-    ArrowDown: () => moveStep(1), ArrowUp: () => moveStep(-1), ']': () => moveStep(1), '[': () => moveStep(-1),
-    '+': () => zoomBy(1.25), '=': () => zoomBy(1.25), '-': () => zoomBy(0.8), f: fit, 0: fit, t: toggleOrbit,
+    ArrowRight: () => moveStep(1), ArrowLeft: () => moveStep(-1), ']': () => moveStep(1), '[': () => moveStep(-1),
+    ArrowDown: () => moveCase(1), ArrowUp: () => moveCase(-1),
+    '+': () => zoomBy(1.25), '=': () => zoomBy(1.25), '-': () => zoomBy(0.8), f: fit, 0: fit, t: toggleOrbit, g: toggleGhost,
   }[event.key] || (/^[1-8]$/.test(event.key) && (() => showImage(VIEW_NAMES[Number(event.key) - 1])));
   if (!act) return;
   event.preventDefault();
