@@ -27,6 +27,13 @@ herkes SSH / VS Code ile bağlanıp kendi klasöründe çalışıyor.
    ssh sphere-gpu  # bağlantı testi
    ```
 
+   > **Not:** Org'a katılmak tek başına yetmez. Makine onu oluşturan hesaba ait olduğu için,
+   > `brev refresh` başka üyelere kaydı eklemez ve `ssh` / `brev port-forward`
+   > "sphere-gpu not found" der. (`brev grant-ssh` işe yaramaz: o yalnızca `brev register` ile
+   > kaydedilmiş cihazlar için, `sphere-gpu` ise bir instance.) Çözüm: `brev ssh-key` çıktını
+   > (public key) makine sahibine gönder; o VM'deki `~/.ssh/authorized_keys`'e eklesin. Sonra
+   > Brev'i aradan çıkarıp doğrudan bağlan: `ssh ubuntu@<VM'in IP'si>`.
+
 4. Push için kendi GitHub SSH anahtarın VM'e iletilir (Brev'in SSH kaydında `ForwardAgent yes`
    zaten var; anahtar VM'e kopyalanmaz). Anahtarın ssh-agent'a yüklü olsun: `ssh-add -l` boşsa
    `ssh-add ~/.ssh/id_ed25519`. VM'de `ssh -T git@github.com` ile test et.
