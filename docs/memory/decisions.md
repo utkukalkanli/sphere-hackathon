@@ -8,9 +8,11 @@ the entry and say what changed.
 - **Start with a deterministic step, not a model** (2026-11-11, user). The first step builds the
   bounding box from `facts.json` and cuts away what the views show as white. It is fast, cannot
   hallucinate, and gives later steps a solid that already contains the part.
-- **Keep the isometric cut on** (2026-11-11). It raises the eval mean from 0.837 to 0.845, never cut
-  below the true volume, and the timeout bounds its cost. The gain is small, so do not spend time
-  making it faster.
+- **The isometric cut is off** (2026-11-11, user; replaces "keep it on"). It gained 0.6 to 0.8
+  points, was by far the slowest cut and the only one that hung, and it shaves slanted faces off
+  features it only half sees, which later steps would have to clean up. The code stays
+  (`VisualHullAgent(use_iso=True)`, `tools/eval_hull.py --iso`). The isometric views are meant for
+  checking candidate solids instead: `iso_silhouette` has their scale worked out.
 - **Use the `facts.json` hole list as step 2** (2026-11-11, user agreed). Silhouettes only find
   holes that go all the way through along a view direction; the list also has blind and hidden
   holes, with diameter, axis, length and centre. Still no model needed.

@@ -22,7 +22,10 @@ HOLES_TIMEOUT = float(os.environ.get("HULL_HOLES_TIMEOUT", 40))
 
 
 class VisualHullAgent:
-    def __init__(self, use_iso: bool = True, use_holes: bool = True):
+    # The isometric cut is off: measured on the eval set it adds under one point of overlap, is by far
+    # the slowest cut, and leaves slanted faces that are not features of the part. Its views are better
+    # used to check a candidate solid than to carve one (vh.iso_silhouette has the scale worked out).
+    def __init__(self, use_iso: bool = False, use_holes: bool = True):
         self.use_iso = use_iso
         self.use_holes = use_holes
         self.cutter = vh.Cutter()

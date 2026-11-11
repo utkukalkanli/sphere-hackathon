@@ -4,18 +4,12 @@ Remove a question when it is answered, and record the answer in `decisions.md` o
 
 ## Blocking a first submission
 
-- **Does the Docker image build and run?** It has never been built. Check it as the organisers run
-  it (README, "Code-freeze handover"): `linux/amd64`, non-root user, read-only inputs. A broken
-  image scores 0.
-- **How long does the full run take alone on one machine?** The 20 minute limit covers all 9 parts.
-  Timings so far were taken with other jobs on the same cores. Worst case by the timeouts is about
-  9 x (3 x 30 + 40 + 40) s, which is over the limit, so either measure it or add a budget for the
-  whole run.
-- **Will our outputs reproduce on the organisers' machine?** They compare a re-run on the practice
-  inputs with the committed files. Cuts that sit near a timeout can go either way on a different
-  machine.
-- **When do we make the first submission?** Nothing is on the leaderboard yet. Step 1 alone would
-  already score.
+- **Will the timeouts ever fire on the organisers' machine?** The practice run takes 19 s on the
+  laptop and no cut came near a timeout, and the amd64 container gave the same solids. But the worst
+  case by the timeouts is 9 x (3 x 30 + 40) s, about the whole 20 minutes, and a cut that times out
+  there but not here changes the output. A budget for the whole run would close this.
+- **When do we make the first submission?** Nothing is on the leaderboard yet. The image and the
+  outputs of steps 1 + 2 are ready on `feat/visual-hull`; it takes a merge to `main`, which the user decides.
 
 ## Scoring
 
@@ -26,13 +20,12 @@ Remove a question when it is answered, and record the answer in `decisions.md` o
 
 ## Pipeline
 
-- **How much does step 2 (holes) gain on the eval set?** Not measured yet. Run
-  `tools/eval_hull.py` and put the table in `state.md`.
-- **How much of the remaining loss is cylindrical holes, and how much is pockets and other
-  cavities?** This decides whether step 3 is worth building before anything else.
-- **How do we find inner cavities and pockets?** Neither silhouettes nor the hole list give them.
-  Candidates: the dimensions in `description.md`, the other `facts.json` fields (fillets, partial
-  cylinders, cones, face counts), the shading inside the views, or a vision model.
+- **How do we get depth?** 97 % of the material we still have too much of is visible from an axis
+  direction (open pockets, recesses, steps behind a wall), so a cut that knows how deep each visible
+  face lies would take the sampled IoU from 0.83 to about 0.97. Silhouettes have no depth. Candidates:
+  match the face-boundary lines between the orthographic views, as in reconstruction from
+  engineering drawings; the dimensions in `description.md`; a vision model proposing pockets, each
+  checked against the true volume and the isometric silhouettes.
 - **How do we measure a step that reads the brief?** The practice briefs carry feature positions and
   depths that `facts.json` lacks, but the eval briefs are templates with nothing extra. Options: write
   richer briefs for part of the eval set with a model, or judge on the 9 practice parts by volume and
@@ -47,9 +40,6 @@ Remove a question when it is answered, and record the answer in `decisions.md` o
   and `OPENAI_MODEL` are not set anywhere yet, and the endpoint must be public and stay up until
   judging ends.
 - **`context.png` is not used.** Is there anything in it worth using? It is absent for some parts.
-- **The isometric cut is skipped when its scale cannot be confirmed** (29 of 259 eval parts). Worth
-  fixing, or leave it?
-
 ## Housekeeping
 
 - README.md's dashboard section is out of date.

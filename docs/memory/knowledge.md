@@ -39,6 +39,12 @@ the two isometric views.
   bounding box or the part itself; `iso_silhouette` tries both and accepts one only if 99.8 % of the
   silhouette falls inside the projection of the solid carved so far.
 
+**What the silhouettes miss is open to a view, not enclosed.** After steps 1 + 2, 97 % of the excess
+material (24-part eval sample, 2026-11-11) has a free line of sight to the outside along an axis:
+pockets, recesses and steps that sit behind a wall in every silhouette but are open to one view. Truly
+enclosed cavities are 3 %. The information is in the views as shading and face-boundary lines; what is
+missing is depth.
+
 **`context.png`** shows the part in orange inside a translucent grey assembly, from an unstated
 angle. 6 of the 9 practice parts have one (not 7 and 8).
 

@@ -136,7 +136,7 @@ def main() -> None:
     parser.add_argument("--all", action="store_true", help="every case of the eval set")
     parser.add_argument("--cases", type=int, default=8, help="cases per tier in the fixed sample (default 8)")
     parser.add_argument("--only", nargs="*", metavar="test_case_<n>")
-    parser.add_argument("--no-iso", action="store_true", help="skip the isometric cut (the slow one)")
+    parser.add_argument("--iso", action="store_true", help="also make the isometric cut (off in the pipeline; slow)")
     parser.add_argument("--no-holes", action="store_true", help="skip step 2")
     parser.add_argument("--iou", action="store_true", help="measure the real overlap with the ground truth (slower)")
     parser.add_argument("--workers", type=int, default=4)
@@ -146,7 +146,7 @@ def main() -> None:
     with open(EVAL / "index.csv", newline="") as f:
         tiers = {f"test_case_{row['n']}": row["tier"] for row in csv.DictReader(f)}
     names = args.only or (list(tiers) if args.all else sample(tiers, args.cases))
-    options = {"iso": not args.no_iso, "holes": not args.no_holes, "iou": args.iou}
+    options = {"iso": args.iso, "holes": not args.no_holes, "iou": args.iou}
     hull_key = digest(SRC / "visual_hull.py", {"iso": options["iso"]})
     result_key = digest(SRC / "visual_hull.py", SRC / "holes.py", SRC / "hull_agent.py", Path(__file__), options)
     CACHE.mkdir(parents=True, exist_ok=True)
