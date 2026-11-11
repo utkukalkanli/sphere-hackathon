@@ -21,9 +21,15 @@ Remove a question when it is answered, and record the answer in `decisions.md` o
 
 - **How do we get the depth of blind pockets?** Step 4 only spreads a level our solid already has
   over the face it belongs to (0.847 to 0.854 on the 24-part sample). Most of the remaining excess is
-  recesses our solid reaches nowhere, so their depth must come from elsewhere: the isometric views
-  and the shading (`shading.py`, in progress in another session), the dimensions in
-  `description.md`, or a vision model proposing pockets, each checked by the verifier.
+  recesses our solid reaches nowhere. Step 5 (`shading.py`) takes the depth of flat floors from the
+  isometric views (0.854 to 0.856). Still open: floors the isometric camera does not certainly see
+  (deep or narrow pockets): a second, tone-only search now takes the large ones (0.856 to 0.861).
+  Still missed: floors not in sight of either isometric camera at all (eval 38: the inside of a
+  U-channel, tone share 0 at the true depth), which need another source, such as the lines of the
+  two perpendicular straight views; small floors; and floors only partly in sight (eval 236 and 171
+  back). Also open: slanted faces with no neighbour of known depth (practice 9), which
+  need the tone turned into a slope by a shading model fitted per case, since searching direction,
+  slope and depth freely gave false cuts (eval 74); curved faces; the dimensions in `description.md`.
 - **How do we measure a step that reads the brief?** The practice briefs carry feature positions and
   depths that `facts.json` lacks, but the eval briefs are templates with nothing extra. Options: write
   richer briefs for part of the eval set with a model, or judge on the 9 practice parts by volume and

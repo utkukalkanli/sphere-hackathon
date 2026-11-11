@@ -33,6 +33,47 @@ lines on the face boundaries. Pockets and cavities are visible as shading and ed
 the two isometric views.
 
 - The part is centred in the image. Half the image equals the framed extent times 1.04.
+- **A tone is a face direction, not a depth** (measured 2026-11-11). In a straight view every flat
+  face square to the camera has the same tone whatever its depth (practice: 182 +-5, with a slow
+  gradient across the image; eval renders: one exact value). Slanted faces are darker (practice 8
+  front: 154 and 130). An isometric view gives the three sides it sees three tones (practice:
+  194 / 102 / 82), so there a tone says which way a face looks. Depth comes from where a face of a
+  known direction appears in the isometric view. The real renderer and our eval renderer light
+  differently, so tones must be measured per view on the solid, never hard-coded.
+- **Measuring a tone on the solid's faces goes wrong in three ways** (all found 2026-11-11, each
+  made a false cut): (1) where the solid has far more material than the part, most of its faces of a
+  direction are not faces of the part, and the commonest tone under them belongs to another side
+  (eval 51: 117 instead of 192 for the top in the isometric view); (2) a region taken for a face
+  square to the view can be a gently sloping one, which the isometric view shows in another side's
+  tone (eval 171); (3) in one straight view the commonest tone can be that of a sloping face that
+  fills the view (eval 171 front: 180, the other five views 176 and 177). What `shading.py` does
+  now: the facing tone is the middle one of the six straight views; the isometric tone of a side is
+  measured two ways (all faces of the solid, and only faces whose outline lands on isometric lines)
+  and where they disagree the one equal to another side's settled tone is dropped, because the
+  three sides of one isometric view have three tones.
+- **The facing tone is nearly one value across the six straight views on the real renders too**
+  (measured 2026-11-12 on the 9 practice parts, on the solid's facing faces): 176 to 186 per view,
+  the middle of the six 182 to 185. Practice 9 has no 18-level gap there; that gap is between the
+  commonest colours of the views, two of which show mostly the slanted banks. Single views do sit
+  up to 6 levels off the middle (practice 7 right: 176 against 182 +-3), so `shading.facing_tone`
+  can miss the facing faces of such a view. That errs on the side of not cutting.
+- **A gently sloping face has almost the tone of a face square to the view** (Lambert: 15 degrees
+  is 3 % darker), so tone cannot tell them apart. What does: the solid usually has the slope right
+  already from the side silhouette, and then its outline lands on the isometric lines as it is.
+  Such a face is left alone (`shading.confirmed`).
+- **The outline of a region must be taken on the middle of the lines around it.** A region ends
+  where the line begins; that offset of 2 to 3 px misses the 2.5 px tolerance once projected.
+- **A floor seen past something nearer has that thing's outline, not its own**, so its outline lands
+  on no line at the right depth, while its tone fits (eval 74, 171, 236). Lines cannot find these.
+- **A slanted plane placed by its outline alone is not reliable** (2026-11-11). Trying every fall
+  direction, slope and depth and keeping the plane whose outline lands on isometric lines gave a
+  false cut on eval part 74: with three free numbers some plane always lands on lines. Hung on an
+  edge of known depth, with only the slope free, it gave none on the 8 parts checked exactly.
+- `tools/eval_hull.py --iou` samples 1500 points, so it cannot see a change under about 1 % of the
+  volume. A boolean intersection with the ground truth is exact but fails on some complex parts
+  (eval 3 and 171 gave nonsense).
+- The solid drawn with `verify.draw` lands within 1 px of the part in all 8 views, real and eval
+  renders alike (practice 1, 3, 8, eval 1), so matching across views pixel by pixel is sound.
 - In the six straight views the silhouette's own bounding rectangle is the box face, so the scale is
   known exactly.
 - In the isometric views the scale is not fixed by the box. The frame fits either the projected

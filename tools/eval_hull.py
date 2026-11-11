@@ -33,7 +33,7 @@ ROOT = Path(__file__).resolve().parents[1]
 EVAL = ROOT / "datasets" / "eval"
 SRC = ROOT / "src" / "agentic_cad"
 CACHE = ROOT / "runs" / "_eval_cache"
-STEPS = ["box", "front_back", "right_left", "top_bottom", "iso", "holes", "rounds", "depth"]
+STEPS = ["box", "front_back", "right_left", "top_bottom", "iso", "holes", "rounds", "depth", "shading"]
 IOU_POINTS = 1500
 
 
@@ -145,7 +145,7 @@ def main() -> None:
     parser.add_argument("--only", nargs="*", metavar="test_case_<n>")
     parser.add_argument("--iso", action="store_true", help="also make the isometric cut (off in the pipeline; slow)")
     parser.add_argument("--no-holes", action="store_true", help="skip step 2")
-    parser.add_argument("--skip", nargs="*", default=[], metavar="STEP", help="later steps to leave out: rounds, depth")
+    parser.add_argument("--skip", nargs="*", default=[], metavar="STEP", help="later steps to leave out: rounds, depth, shading")
     parser.add_argument("--iou", action="store_true", help="measure the real overlap with the ground truth (slower)")
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--no-cache", action="store_true")

@@ -5,9 +5,17 @@ the entry and say what changed.
 
 ## Pipeline
 
-- **A model will be used** (2026-11-11, user). A teammate has rented a GPU on Brev and is setting
-  up a VLM and an LLM there. Until it is reachable, work goes into the deterministic steps and into
-  what the model step will need from them.
+- **No model or agent in any step for now** (2026-11-11 evening, user; narrows "a model will be
+  used"). Every step, including the depth-from-shading step, stays deterministic. A teammate is
+  still setting up a VLM and an LLM on a rented Brev GPU; whether a later step calls them is open.
+- **Depth from shading is one step after the hull, not one per view and not inside step 1**
+  (2026-11-11). It needs the carved solid twice: to measure which tone each view gives each face
+  direction, and to know which points the isometric camera certainly sees. Inside the step the six
+  straight views are gone through one after the other, each matched against its isometric view,
+  and again after a cut, because a cut can uncover the face behind it.
+- **The isometric views are used for depth and for checking, not for carving** (2026-11-11). Step 5
+  finds depths in them; the verifier compares candidates with them; the isometric silhouette cut
+  stays off.
 - **Steps after the holes keep a cut only if the verifier does not rate the result lower**
   (2026-11-11). They can remove real material, and the volume guard only catches large mistakes.
   The verifier needs no ground truth, so the same test works on the hidden parts and for a model's

@@ -13,6 +13,7 @@ from agentic_cad import holes as hl
 from agentic_cad import outline_fit as of
 from agentic_cad import depth
 from agentic_cad import rounds
+from agentic_cad import shading
 from agentic_cad import trace
 from agentic_cad import visual_hull as vh
 
@@ -27,8 +28,8 @@ HOLES_TIMEOUT = float(os.environ.get("HULL_HOLES_TIMEOUT", 40))
 RETRY_BUDGET = float(os.environ.get("HULL_RETRY_BUDGET", 20))
 
 
-# Steps after the holes, in order; HULL_SKIP=rounds,depth switches some off
-LATER_STEPS = {"rounds": rounds, "depth": depth}
+# Steps after the holes, in order; HULL_SKIP=rounds,depth,shading switches some off
+LATER_STEPS = {"rounds": rounds, "depth": depth, "shading": shading}
 SKIP_STEPS = {name for name in os.environ.get("HULL_SKIP", "").split(",") if name}
 
 

@@ -1,6 +1,6 @@
 # Project state
 
-Last updated: 2026-11-11, about 22:00 CET.
+Last updated: 2026-11-12, about 01:00 CET.
 
 ## Pipeline
 
@@ -13,10 +13,10 @@ Everything so far is deterministic. No model is called anywhere yet.
 | 3. Rounds: along every boss or bore axis of `facts.json`, where both side views show one strip of the same width centred on the axis, the square the silhouettes left is cut to the circle (revolved fitted outline). Only where `facts.json` lists a boss of that radius there, or the part is a disc seen along the axis and has only lathe faces | `src/agentic_cad/rounds.py` | committed on `feat/visual-hull`, measured (below) |
 | 4. Level faces: in each straight view, an area between the dark lines with the flat tone of a face looking at the camera is one face at one depth. Where it covers several flat levels of our solid, the whole area is cut down to the lowest (if that level covers at least 5 % of the area) | `src/agentic_cad/depth.py` | committed on `feat/visual-hull`, measured (below) |
 | Verifier (not a step): draws a candidate solid from the 8 cameras and compares silhouettes, face-boundary lines, volume and area with the inputs. Steps 3 and 4 keep a cut only if its score does not drop | `src/agentic_cad/verify.py`, `tools/check_verify.py` | committed on `feat/visual-hull`, measured (below) |
-| Blind pockets, slanted and curved faces from the shading and the isometric views | `src/agentic_cad/shading.py` | another session is writing it |
+| 5. Depth from shading: in each straight view, an area with the tone of a face square to the camera, enclosed by lines, is slid down along the view direction and projected into the isometric view that sees that side. The depth is taken where the pixels it lands on show that side's tone and its outline lands on dark lines; the column above it is cut down to there. Only points certainly visible from the isometric camera count. Up to 3 passes over the six views. Slanted flat faces (one even tone that is not the facing tone) are handled too, but only where one straight edge borders a face square to the view whose depth the solid already has: the plane is hung on that edge and only its slope is searched (`HULL_SHADING_SLANTED=0` switches this off). A second search (`HULL_SHADING_DEEP=0` switches it off) takes floors the first cannot judge, by tone alone: regions of at least 10000 px, the depth where the largest share of the region lands on the right tone (the shallowest of equally good ones), all such floors lowered together and each kept only if what is then certainly visible shows the tone. A face whose present surface already agrees with the isometric view is never touched. Curved faces are not done | `src/agentic_cad/shading.py`, `tools/check_shading.py` | uncommitted, hooked into `LATER_STEPS`, measured (below) |
 
 Unused inputs so far: the text of `description.md` (only its Envelope line is read, as a fallback),
-`context.png`, the shading inside the views (the lines are used by step 4 and the verifier), and
+`context.png`, the shading of slanted and curved faces (step 5 uses the tone of flat faces only), and
 every `facts.json` field except the bounding box, the volume, the two cylinder lists and the face
 types.
 
@@ -132,14 +132,51 @@ Steps 3 and 4 on the fixed 24-part eval sample, sampled IoU against the ground t
 - Run time: the 9 practice parts take 87 s alone on the laptop (8 s with steps 1 + 2). Each verifier
   check costs 1 to 4 s; step 4 took up to 21 s on one eval part with 4 processes running.
 
+Step 5 (depth from shading) on the same 24 parts, `tools/eval_hull.py --iou`, 2026-11-11 late:
+sampled IoU 0.854 to 0.856 (simple 0.994, medium 0.861 to 0.868, complex 0.706 to 0.707); volume
+score 0.859 to 0.863. It cut on 6 of the 24 parts, none got worse; the best gained 5 points (part
+38, a U-channel, 0.58 to 0.63). The gain is small because most of the remaining excess is not a
+flat floor square to a view that the isometric camera certainly sees.
+
+- Practice set (real renders), our volume / true volume: part 7 goes from 2.14 to 2.09, part 4
+  from 1.072 to 1.071, the others do not change. Parts 5, 6 and 9 get no proposal at all.
+- Run time of the step alone, 4 processes at once: under 1 s when the solid is within 2 % of the
+  true volume (it is skipped), otherwise 3 to 40 s; 66 s on practice part 7 (budget 45 s per case,
+  `HULL_SHADING_BUDGET`, plus the run budget via `agent.out_of_time()`).
+- Slanted faces, added later the same evening: no change on the 24 eval parts (IoU 0.856, one small
+  cut on part 3). Practice part 7 goes on from 2.09 to 2.07 (one face at 46 degrees, 7.4 cm3).
+  Practice part 9, the V block, gets nothing: its slanted faces border no face of known depth.
+- Where the remaining excess sits, measured against the ground truth on the same 24 parts before
+  step 5 (excess under each kind of area of the six straight views, in units of the part's volume,
+  summed over parts and views): 11.4 under areas of the facing tone, 1.9 under slanted flat areas
+  (1.7 of it in part 99), 6.3 under curved areas, 8.1 under the lines themselves (7.3 in part 99).
+  So on this set the loss is flat floors that step 5 does not reach, not slanted faces.
+- Exact overlap by boolean with the ground truth (8 parts): step 5 removed no real material on
+  parts 38, 110, 236, 74, 109, 212, 182; on part 75 its cut took 0.65 % of the part with it.
+- Deep flat pockets, 2026-11-11 night (tone-only second search, border points on the middle of the
+  lines, tones measured as described in `knowledge.md`): `tools/eval_hull.py --iou` on the 24 parts
+  gives 0.861 sampled IoU (simple 0.994, medium 0.883, complex 0.707), volume score 0.867. Against
+  the state before this work: part 110 0.79 to 0.86, part 236 0.70 to 0.73, part 38 0.63 to 0.64, no
+  part lower. Whole pipeline, peer's baseline before step 5: 0.854.
+- Practice set with the step as it is now, our volume / true volume before and after it: part 4
+  1.072 to 1.027, part 5 1.228 to 1.224, part 6 3.78 to 3.73, part 7 2.14 to 2.08, part 9 1.89 to
+  1.82; parts 1, 2, 3, 8 unchanged. There is no ground truth for these, so the cuts are unchecked;
+  part 4 (the crankshaft) should be looked at in the dashboard.
+- Run time of the step, 4 processes at once: up to 44 s on the eval sample, 51 s on practice part 7.
+- The chosen depths are 3 to 5 px shallower than the true floor on most checked cuts (110, 236, 38),
+  which is the safe side; a few small regions are 2 to 12 px too deep (171 bottom, 3 front).
+- The image has not been built or run with step 5.
+
 Verifier on the same 24 parts, 2026-11-11: the ground truth scores 0.96 on average (0.91 to 0.99),
 our steps 1 + 2 solid 0.71, the bounding box 0.24; the ground truth scores at least as high as our
 solid on all 24.
 
 ## Known weaknesses
 
-- Blind pockets (recesses our solid does not reach anywhere) and inner cavities are not found by
-  steps 1 to 4. This is the largest loss, mostly on complex parts.
+- Blind pockets are found by step 5 only when their floor is flat, in sight of an isometric
+  camera, and either square to a view or slanted next to a face of known depth; floors smaller than
+  10000 px that no line confirms are skipped; the rest, and inner cavities, are not found. This is still the
+  largest loss, mostly on complex parts (eval 51, 99, 38, 236; practice 5, 6, 9).
 - The verifier cannot see a wrong cut that leaves silhouettes and lines alone and brings the volume
   closer (eval part 123: a face pushed back 5 mm passed it; the 5 % rule in step 4 stopped that one).
 - Outlines that are neither straight nor circular (splines, ellipses of slanted cylinders) stay
