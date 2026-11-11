@@ -28,7 +28,7 @@ MIN_SWEEP = math.radians(12)   # a flatter arc is left as lines
 MIN_SAGITTA_PX = 1.0   # an arc must bulge at least this much from its chord
 AXIS_DRIFT_PX = 1.0    # a line that drifts less than this (or 0.4 %) is exactly horizontal / vertical
 AXIS_DRIFT = 0.004
-SNAP_RADIUS = 0.015    # a fitted radius within 1.5 % (or 0.75 px) of a known one becomes that one
+SNAP_RADIUS = 0.02     # a fitted radius within 2 % (or 1 px) of a known one becomes that one
 SNAP_CENTRE_PX = 1.5   # a fitted centre this close to a known one becomes that one
 
 Point = tuple[float, float]
@@ -76,11 +76,11 @@ def _snap(points: np.ndarray, centre: np.ndarray, radius: float, px: float, know
         return centre, radius
     for known_centre, known_radius in known.get("circles", []):
         if (math.hypot(centre[0] - known_centre[0], centre[1] - known_centre[1]) <= SNAP_CENTRE_PX * px
-                and abs(radius - known_radius) <= max(SNAP_RADIUS * radius, 0.75 * px)
+                and abs(radius - known_radius) <= max(SNAP_RADIUS * radius, 1.0 * px)
                 and _residual(points, np.array(known_centre), known_radius) <= limit * 1.5):
             return np.array(known_centre, dtype=float), float(known_radius)
     best = min(known.get("radii", []), key=lambda r: abs(r - radius), default=None)
-    if best is not None and abs(best - radius) <= max(SNAP_RADIUS * radius, 0.75 * px):
+    if best is not None and abs(best - radius) <= max(SNAP_RADIUS * radius, 1.0 * px):
         moved = fit_centre(points, best, centre)
         if _residual(points, moved, best) <= limit * 1.25:
             return moved, float(best)
@@ -169,13 +169,48 @@ def fit_loop(contour: np.ndarray, to_mm, px: float, known: dict | None = None, a
                     vertex[key][axis] = value
                     fixed[key][axis] = True
 
-    # An arc's ends go onto its circle, so the face is exactly cylindrical. Where the neighbour is an
-    # axis-parallel line, the end is where that line meets the circle.
-    for kind, first, last, circle in pieces:
+    # An arc's ends go onto its circle, so the face is exactly cylindrical.
+    # - Next to an axis-parallel line the circle nearly touches (a fillet, the end of a slot), the
+    #   circle is moved so that it touches the line exactly, and the end is the touching point.
+    # - Next to an axis-parallel line it crosses, the end is where the two meet.
+    # - Otherwise the end is the nearest point of the circle.
+    for number, (kind, first, last, circle) in enumerate(pieces):
         if kind != "arc":
             continue
-        centre, radius, _ = circle
-        for key in (first % total, last % total):
+        centre, radius, points = circle
+        centre = centre.copy()
+        ends = (first % total, last % total)
+        touching = {0: [], 1: []}  # axis -> [(end, coordinate of the line, side of the centre it is on)]
+        for key in ends:
+            for axis in (0, 1):
+                if fixed[key][axis] and not fixed[key][1 - axis]:
+                    offset = vertex[key][axis] - centre[axis]
+                    if abs(abs(offset) - radius) <= 2 * px:
+                        touching[axis].append((key, float(vertex[key][axis]), math.copysign(1.0, offset)))
+        moved_centre, moved_radius = centre.copy(), radius
+        for axis, found in touching.items():
+            if len(found) == 1:
+                moved_centre[axis] = found[0][1] - found[0][2] * moved_radius
+            elif len(found) == 2 and found[0][2] != found[1][2]:  # between two parallel lines
+                half = abs(found[0][1] - found[1][1]) / 2
+                if abs(half - radius) <= 1.5 * px:
+                    moved_centre[axis], moved_radius = (found[0][1] + found[1][1]) / 2, half
+                else:
+                    touching[axis] = []
+            else:
+                touching[axis] = []
+        tangent_ends = {key for found in touching.values() for key, _, _ in found}
+        if tangent_ends and _residual(points, moved_centre, moved_radius) <= 2 * ARC_PX * px:
+            centre, radius = moved_centre, moved_radius
+            for axis, found in touching.items():
+                for key, value, _ in found:
+                    vertex[key][axis] = value
+                    vertex[key][1 - axis] = centre[1 - axis]
+        else:
+            tangent_ends = set()
+        for key in ends:
+            if key in tangent_ends:
+                continue
             point = vertex[key]
             placed = None
             for axis in (0, 1):
@@ -187,7 +222,7 @@ def fit_loop(contour: np.ndarray, to_mm, px: float, known: dict | None = None, a
                         candidate[1 - axis] = centre[1 - axis] + math.copysign(reach, point[1 - axis] - centre[1 - axis])
                         if np.hypot(*(candidate - point)) <= 2.5 * px:
                             placed = candidate
-            if placed is None and not (fixed[key][0] and fixed[key][1]):
+            if placed is None and not (fixed[key][0] or fixed[key][1]):
                 direction = point - centre
                 norm = float(np.hypot(*direction))
                 if norm > 1e-9:
@@ -196,6 +231,7 @@ def fit_loop(contour: np.ndarray, to_mm, px: float, known: dict | None = None, a
                         placed = None
             if placed is not None:
                 vertex[key] = placed
+        pieces[number] = (kind, first, last, (centre, radius, points))
 
     loop = []
     for kind, first, last, circle in pieces:
