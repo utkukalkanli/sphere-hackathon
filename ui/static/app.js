@@ -1,6 +1,7 @@
 // Dashboard front end. One large 3D view of the solid after the chosen pipeline step, with what that
 // step removed drawn over it; a slider of the steps underneath; everything about the input on the
-// left; the ground truth and what the chosen step extracted on the right. Both side panels can be dragged wider. No build step, no framework.
+// left; the ground truth, as large as its panel, on the right, with two
+// panels under it: how the chosen step's solid differs from the truth, and what the step extracted. Both side panels can be dragged wider. No build step, no framework.
 import { createViewer, setView, fit, zoomBy, trackball, setTrackball, ghost, setGhost, VIEWS, COLORS } from '/static/viewer.js';
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -219,6 +220,17 @@ const viewportHTML = (id, label, tools = true) => `<div class="viewport" id="${i
     <button data-fit title="Fit the part (F, or double-click)" aria-label="Fit the part">${ICON.fit}</button>
   </div>` : ''}</div>`;
 
+// A panel that folds away under its title. Whether it is open is remembered.
+function dropHTML(id, title, body) {
+  let open = true;
+  try { open = localStorage.getItem(`drop-${id}`) !== 'closed'; } catch { /* private mode */ }
+  return `<details class="drop" id="${id}" ${open ? 'open' : ''}><summary>${title}<span></span></summary>${body}</details>`;
+}
+document.addEventListener('toggle', (event) => {
+  if (!event.target.matches || !event.target.matches('details.drop')) return;
+  try { localStorage.setItem(`drop-${event.target.id}`, event.target.open ? 'open' : 'closed'); } catch { /* private mode */ }
+}, true);
+
 function toggleOrbit() {
   setTrackball(!trackball());
   $$('[data-orbit]').forEach((button) => button.setAttribute('aria-pressed', trackball()));
@@ -321,11 +333,12 @@ function renderMain() {
         <div class="grip" data-side="left" role="separator" aria-orientation="vertical" title="Drag to resize, double-click to reset"></div>
         <div class="grip" data-side="right" role="separator" aria-orientation="vertical" title="Drag to resize, double-click to reset"></div>
       </section>
-      <aside class="side" id="result" aria-label="Ground truth">
-        <div id="result-head"></div>
-        ${viewportHTML('out', 'Ground truth', false)}
-        <div id="metrics"></div>
-        <section id="step-detail"></section>
+      <aside id="result" aria-label="Ground truth">
+        <div class="view">${viewportHTML('out', 'Ground truth', false)}<div class="hud" id="result-head"></div></div>
+        <div id="info">
+          ${dropHTML('diff', 'Diff', '<div id="metrics"></div>')}
+          ${dropHTML('extracted', 'Extracted', '<div id="step-detail"></div>')}
+        </div>
       </aside>
       <footer id="timeline"></footer>`;
     renderInput(c);
@@ -333,7 +346,6 @@ function renderMain() {
   }
   renderResult(c);
   renderSteps(c);
-  measureOurs(c);
 }
 
 // -- left: input --------------------------------------------------------------------------------
@@ -430,7 +442,7 @@ function showImage(name, turn = true) {
   if (turn && VIEWS[name]) setView(name);
 }
 
-// -- right: output ------------------------------------------------------------------------------
+// -- right: ground truth and the diff ------------------------------------------------------------------------------
 
 function startMeasuring(c) {
   const id = live.id, state = live.state = { truth: c.truth ? undefined : null, ours: null };
@@ -486,20 +498,41 @@ document.addEventListener('dblclick', (event) => {
 
 const settle = (promise) => promise.then((data) => data.measured, () => null);
 
-// Called on every render: measures our output again whenever its file changes, so the table fills
-// in as soon as a run has written its .stp.
-function measureOurs(c) {
-  const shown = live, state = live.state, output = outputOf(c);
-  const key = output ? output.key || output.url : '';
+// Called on every render with the solid on screen: measures it again whenever it changes, so the
+// diff follows the slider. With a ground-truth solid the two are also laid on each other.
+function measureOurs(c, model, name = '') {
+  const shown = live, state = live.state;
+  const key = model ? model.key || model.url : '';
   if (!state || shown.out === key) return;
   shown.out = key;
-  state.ours = output ? undefined : null;
-  if (output) {
-    settle(loadStep(output.url, output.key)).then((m) => {
-      if (live === shown && shown.out === key) { state.ours = m; renderMetrics(c, state); }
-    });
+  Object.assign(state, { ours: model ? undefined : null, overlap: null, name });
+  if (model) {
+    const current = () => live === shown && shown.out === key;
+    loadStep(model.url, model.key).then(async (ours) => {
+      if (!current()) return;
+      state.ours = ours.measured;
+      renderMetrics(c, state);
+      if (!c.truth) return;
+      const truth = await loadStep(c.truth.url, `${c.truth.url}?${c.truth.mtime}`);
+      const result = await compare(key, ours, truth);
+      if (current()) { state.overlap = result; renderMetrics(c, state); }
+    }).catch(() => { if (current()) { state.ours = state.ours || null; renderMetrics(c, state); } });
   }
   renderMetrics(c, state);
+}
+
+const overlaps = new Map();
+function compare(key, ours, truth) {
+  if (!overlaps.has(key)) {
+    const solid = ({ meshes, measured }) => ({ meshes: meshes.map(({ position, index }) => ({ position, index })), min: measured.min, max: measured.max });
+    overlaps.set(key, new Promise((resolve, reject) => {
+      const id = ++jobId;
+      jobs.set(id, { resolve, reject });
+      worker.postMessage({ id, compare: { a: solid(ours), b: solid(truth) } });
+    }).then((data) => data.overlap));
+    if (overlaps.size > 64) overlaps.delete(overlaps.keys().next().value);
+  }
+  return overlaps.get(key);
 }
 
 function delta(expected, actual) {
@@ -510,20 +543,29 @@ function delta(expected, actual) {
 }
 
 function renderMetrics(c, state) {
-  const facts = c.facts || {}, box = facts.bounding_box_mm;
-  const sorted = (dims) => (dims ? [...dims].sort((a, b) => b - a) : [null, null, null]);
-  const expectedBox = sorted(box ? [box.x, box.y, box.z] : state.truth && state.truth.bbox);
-  const oursBox = sorted(state.ours && state.ours.bbox);
+  const facts = c.facts || {}, box = facts.bounding_box_mm, ours = state.ours, truth = state.truth;
+  const size = box ? [box.x, box.y, box.z] : (truth && truth.bbox) || [];
+  const volume = facts.volume_mm3 ?? (truth && truth.volume);
   const rows = [
-    ['Longest side', 'mm', expectedBox[0], oursBox[0]],
-    ['Middle side', 'mm', expectedBox[1], oursBox[1]],
-    ['Shortest side', 'mm', expectedBox[2], oursBox[2]],
-    ['Volume', 'cm³', (facts.volume_mm3 ?? (state.truth && state.truth.volume)) / 1000, state.ours && state.ours.volume / 1000],
-    ['Surface', 'cm²', (facts.surface_area_mm2 ?? (state.truth && state.truth.area)) / 100, state.ours && state.ours.area / 100],
+    ...['X', 'Y', 'Z'].map((axis, i) => [`Size ${axis}`, 'mm', size[i], ours && ours.bbox[i]]),
+    ['Volume', 'cm³', volume / 1000, ours && ours.volume / 1000],
+    ['Surface', 'cm²', (facts.surface_area_mm2 ?? (truth && truth.area)) / 100, ours && ours.area / 100],
+    ['Faces', '', facts.faces ?? (truth && truth.faces), ours && ours.faces],
   ];
+  // one number for how close the solid is: what the local score uses, and the real overlap
+  const share = (part) => (volume ? ` <small>· ${num(part / volume * 100, 1)} %</small>` : '');
+  const o = state.overlap;
+  const scores = [
+    ours && volume ? ['Volume score', num(Math.min(ours.volume, volume) / Math.max(ours.volume, volume), 3), 'min / max of the two volumes: what tools/eval_hull.py reports'] : null,
+    o ? ['Overlap (IoU)', num(o.iou, 3), `sampled with ${num(o.points)} points`] : null,
+    o ? ['Excess', `${num(o.onlyA / 1000)} <small>cm³</small>${share(o.onlyA)}`, 'in our solid, not in the part; the percentage is of the part\'s volume'] : null,
+    o ? ['Missing', `${num(o.onlyB / 1000)} <small>cm³</small>${share(o.onlyB)}`, 'in the part, not in our solid; the percentage is of the part\'s volume'] : null,
+  ].filter(Boolean);
   const cell = (value) => (value == null || !isFinite(value) ? '<td class="none">–</td>' : `<td>${num(value)}</td>`);
-  const note = state.ours === undefined ? '<p class="note pulse">Measuring…</p>' : '';
-  setHTML($('#metrics'), `<table class="metrics">
+  const note = ours === undefined || (ours && c.truth && !o) ? '<p class="note pulse">Measuring…</p>' : '';
+  setHTML($('#diff summary span'), state.name ? `after ${esc(state.name)}` : '');
+  setHTML($('#metrics'), `${scores.length ? `<dl class="kv scores">${scores.map(([label, value, hint]) => `<dt title="${esc(hint)}">${label}</dt><dd>${value}</dd>`).join('')}</dl>` : ''}
+  <table class="metrics">
     <thead><tr><th></th><th><i class="sw truth"></i>Truth</th><th><i class="sw ours"></i>Ours</th><th>Diff</th></tr></thead>
     <tbody>${rows.map(([label, unit, expected, actual]) => `<tr><th>${label} <small>${unit}</small></th>${cell(expected)}${cell(actual)}${delta(expected, actual)}</tr>`).join('')}</tbody>
   </table>${note}`);
@@ -658,8 +700,9 @@ function renderSteps(c) {
   }
   if (running && !rows.length) note = '<p class="note pulse">Running…</p>';
 
-  // Which solid is on screen: the chosen step, else the newest one
-  const chosen = rows.find((r) => r.id === S.sel) || [...rows].reverse().find((r) => r.changed) || rows[rows.length - 1];
+  // Which solid is on screen: the chosen step; else the final result, or while the run is still
+  // going the newest step that left a solid
+  const chosen = rows.find((r) => r.id === S.sel) || (running && [...rows].reverse().find((r) => r.changed)) || rows[rows.length - 1];
   live.rows = rows;
   live.chosen = chosen ? chosen.id : null;
   setHTML($('#steps-status'), status);
@@ -667,7 +710,9 @@ function renderSteps(c) {
   setHTML($('#steps-note'), note);
   renderTimeline(rows, chosen);
   const detail = chosen ? chosen.detail() : '';
-  setHTML($('#step-detail'), detail ? `<h2>Extracted<span>${esc(chosen.name)}</span></h2>${detail}` : '');
+  setHTML($('#step-detail'), detail);
+  setHTML($('#extracted summary span'), detail && chosen ? esc(chosen.name) : '');
+  measureOurs(c, chosen && chosen.model, chosen ? chosen.name : '');
   const first = rows.find((r) => r.model);
   showModel($('#ours'), chosen && chosen.model && chosen.model.url, chosen && chosen.model && chosen.model.key, COLORS.ours,
     note ? '' : `<p class="note">${running ? 'Waiting for the first solid…' : 'No solid to show yet.'}</p>`,
