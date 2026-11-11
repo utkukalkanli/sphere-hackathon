@@ -45,6 +45,8 @@ h1, h2, h3, h4, p, ol, ul, dl, figure { margin: 0; }
 i.sw { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 7px; }
 i.sw.ours { background: var(--steel); }
 i.sw.truth { background: var(--brass); }
+i.sw.excess { background: rgba(255, 90, 77, 0.45); border: 1px solid #ff5a4d; }
+i.sw.missing { background: #b98cff; }
 i.sw.ghost { background: rgba(91, 155, 255, 0.45); border: 1px solid var(--accent); }
 .spacer { flex: 1; }
 .mono { font-family: var(--mono); font-size: 12px; }
@@ -153,7 +155,8 @@ table.grid :is(th, td):last-child { padding-right: 0; }
 .tools button:hover { background: var(--hover); color: var(--ink); }
 .tools button:active { background: var(--line); }
 .tools button[aria-pressed="true"] { color: var(--accent); background: var(--select); }
-.tools button:nth-child(2) { margin-right: 5px; }
+.tools button:nth-child(3) { margin-right: 5px; }
+.no-truth [data-diff] { display: none; }
 
 /* what is on screen, written over the big view */
 .hud { position: absolute; left: 18px; top: 14px; display: grid; gap: 8px; justify-items: start; max-width: 70%; max-height: calc(100% - 28px); pointer-events: none; }

@@ -155,13 +155,17 @@ function release(m) {
 }
 
 const AXES = [['x', [1, 0, 0], '#ff7a6b'], ['y', [0, 1, 0], '#6fcf97'], ['z', [0, 0, 1], '#6aa5ff']];
-export const COLORS = { ours: 0xb3bcc6, truth: 0xcfa462, ghost: 0x5b9bff };  // steel = ours, brass = truth, blue = removed
+// steel = ours, brass = truth, blue = removed by the step, red = ours has it and the part does not,
+// violet = the part has it and ours does not
+export const COLORS = { ours: 0xb3bcc6, truth: 0xcfa462, ghost: 0x5b9bff, excess: 0xff5a4d, missing: 0xb98cff };
 
 // Builds the viewer for `container` but leaves mounting `viewer.canvas` to the caller.
 // `interactive: false` makes a thumbnail: it follows the shared camera but takes no input.
 // `ghost`: the meshes of the solid before this step; what is no longer there shows as a shell.
 // `frame`: { min, max } to frame instead of the solid itself, so every step sits in the same place.
-export async function createViewer(container, meshes, color = COLORS.ours, { interactive = true, ghost: before = null, frame = null } = {}) {
+// `diff`: { meshes, shift } of the ground truth (shift lays its min corner on the solid's). The view
+// then shows the truth, with what the solid has too much as a red shell and what it lacks in violet.
+export async function createViewer(container, meshes, color = COLORS.ours, { interactive = true, ghost: before = null, frame = null, diff = null } = {}) {
   const { THREE, renderer } = await load();
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
@@ -206,8 +210,41 @@ export async function createViewer(container, meshes, color = COLORS.ours, { int
     polygonOffset: true, polygonOffsetFactor: 4, polygonOffsetUnits: 3000,
   });
   const hazeLines = new THREE.LineBasicMaterial({ color: 0x3f73c4 });
-  if (before) add(shade, before, haze, hazeLines, 0);
+  if (before && !diff) add(shade, before, haze, hazeLines, 0);
   scene.add(shade, root);
+
+  // The difference to the ground truth, drawn in three passes over the same pixels:
+  //   1. the truth as it is;
+  //   2. the truth again in violet, but only in front of our solid's nearest surface: there the part
+  //      sticks out of our solid, so we lack it;
+  //   3. our solid as a red shell, hidden wherever the truth is nearer: what is left is too much.
+  // Surfaces the two share are pushed apart in depth, as for the removed material above.
+  const passes = [], extra = [];
+  if (diff) {
+    const far = { polygonOffset: true, polygonOffsetFactor: 4, polygonOffsetUnits: 3000 };
+    const make = (Material, options) => { const m = new Material(options); extra.push(m); return m; };
+    const brass = make(THREE.MeshStandardMaterial, { color: COLORS.truth, roughness: 0.62, metalness: 0.12, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+    const hidden = make(THREE.MeshBasicMaterial, { colorWrite: false, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+    const lacking = make(THREE.MeshStandardMaterial, { color: COLORS.missing, roughness: 0.7, metalness: 0, side: THREE.DoubleSide, depthFunc: THREE.LessDepth, ...far });
+    const surplus = make(THREE.MeshBasicMaterial, { color: COLORS.excess, transparent: true, opacity: 0.24, depthWrite: false, side: THREE.DoubleSide, ...far });
+    const surplusLines = make(THREE.LineBasicMaterial, { color: 0xa13a33 });
+    const none = make(THREE.LineBasicMaterial, { visible: false });
+    const group = (...parts) => {
+      const g = new THREE.Group();
+      for (const [list, fill, stroke, order, shifted] of parts) {
+        const part = new THREE.Group();
+        if (shifted) part.position.set(...diff.shift);
+        add(part, list, fill, stroke, order);
+        g.add(part);
+      }
+      scene.add(g);
+      passes.push(g);
+    };
+    group([diff.meshes, brass, lines, 1, true]);
+    group([meshes, hidden, none, 0, false], [diff.meshes, lacking, none, 1, true]);
+    group([diff.meshes, hidden, lines, 2, true], [meshes, surplus, surplusLines, 0, false]);
+    root.visible = false;
+  }
   let centre, radius;
   if (frame) {
     centre = new THREE.Vector3(...frame.min.map((v, i) => (v + frame.max[i]) / 2));
@@ -247,7 +284,17 @@ export async function createViewer(container, meshes, color = COLORS.ours, { int
     if (bufferSize.x < w || bufferSize.y < h) renderer.setSize(Math.max(bufferSize.x, w), Math.max(bufferSize.y, h), false);
     renderer.setViewport(0, 0, w, h);
     renderer.setScissor(0, 0, w, h);
-    renderer.render(scene, camera);
+    if (!passes.length) renderer.render(scene, camera);
+    else {
+      renderer.autoClear = false;
+      renderer.clear();
+      for (const pass of passes) {
+        for (const other of passes) other.visible = other === pass;
+        renderer.clearDepth();
+        renderer.render(scene, camera);
+      }
+      renderer.autoClear = true;
+    }
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, w, h);
     ctx.drawImage(renderer.domElement, 0, renderer.domElement.height - h, w, h, 0, 0, w, h);
@@ -338,7 +385,7 @@ export async function createViewer(container, meshes, color = COLORS.ours, { int
     resizes.disconnect();
     sight.disconnect();
     used.forEach(release);
-    for (const m of [material, lines, haze, hazeLines]) m.dispose();
+    for (const m of [material, lines, haze, hazeLines, ...extra]) m.dispose();
   }
 
   viewers.add(v);

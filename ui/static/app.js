@@ -21,6 +21,7 @@ const ICON = {
   plus: icon('<path d="M3.5 8h9M8 3.5v9"/>'),
   fit: icon('<path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10"/>'),
   orbit: icon('<circle cx="8" cy="8" r="5.5"/><ellipse cx="8" cy="8" rx="5.5" ry="2.2"/><ellipse cx="8" cy="8" rx="2.2" ry="5.5"/>'),
+  diff: icon('<rect x="2.5" y="2.5" width="8" height="8" rx="1"/><rect x="5.5" y="5.5" width="8" height="8" rx="1" stroke-dasharray="2 1.7"/>'),
   ghost: icon('<path d="M3 5.5 8 3l5 2.5v5L8 13l-5-2.5z" stroke-dasharray="2 1.7"/>'),
   play: icon('<path d="M5 3.5v9l7-4.5z" fill="currentColor"/>'),
   stop: icon('<rect x="4" y="4" width="8" height="8" rx="1" fill="currentColor"/>'),
@@ -31,6 +32,7 @@ const S = {
   dataset: null, caseName: null, runId: null,  // runId '' = committed outputs / no run
   image: DEFAULT_VIEW,
   sel: null,  // the step whose solid is shown; null = follow the latest
+  diff: false,  // the big view shows the difference to the ground truth instead of the solid
 };
 const traces = new Map();  // "<run>/<case>" -> { events, loading, loaded, failed }
 let live = { id: 0, rows: [] };  // rows: the steps on the slider  // bumped whenever another case or run comes on screen
@@ -180,9 +182,10 @@ function loadStep(url, key = url) {
 // through the pipeline swaps the part in place without a flash.
 // options.before: the solid of the step before, drawn as what was removed. options.frame: a solid
 // whose bounding box is framed instead (the first stage), so the part does not jump between steps.
-async function showModel(viewport, url, key, color, empty = '', { before = null, frame = null, ...options } = {}) {
+// options.truth: the ground truth; the view then shows what the solid has too much and what it lacks.
+async function showModel(viewport, url, key, color, empty = '', { before = null, frame = null, truth = null, ...options } = {}) {
   const stage = $('.stage', viewport);
-  const id = url ? `${key || url}|${before ? before.url : ''}` : '';
+  const id = url ? `${key || url}|${before ? before.url : ''}|${truth ? 'diff' : ''}` : '';
   if (stage.dataset.url === id) return;
   stage.dataset.url = id;
   const fresh = () => stage.isConnected && stage.dataset.url === id;
@@ -196,10 +199,11 @@ async function showModel(viewport, url, key, color, empty = '', { before = null,
   if (!stage.viewer) stage.innerHTML = '<p class="note pulse">Loading…</p>';
   try {
     const optional = (model) => (model ? loadStep(model.url, model.key).catch(() => null) : null);
-    const [solid, old, box] = await Promise.all([loadStep(url, key), optional(before), optional(frame)]);
+    const [solid, old, box, real] = await Promise.all([loadStep(url, key), optional(before), optional(frame), optional(truth)]);
     if (!fresh()) return;
     const viewer = await createViewer(stage, solid.meshes, color, {
-      ...options, ghost: old && old.meshes, frame: box && box.measured });
+      ...options, ghost: old && old.meshes, frame: box && box.measured,
+      diff: real && { meshes: real.meshes, shift: solid.measured.min.map((v, i) => v - real.measured.min[i]) } });
     if (!fresh()) return viewer.dispose();
     if (stage.viewer) stage.viewer.dispose();
     stage.viewer = viewer;
@@ -213,6 +217,7 @@ async function showModel(viewport, url, key, color, empty = '', { before = null,
 const viewportHTML = (id, label, tools = true) => `<div class="viewport" id="${id}">
   <div class="stage" role="img" aria-label="${label}"></div>
   ${tools ? `<div class="tools">
+    <button data-diff aria-pressed="${S.diff}" title="Show what is too much and what is missing against the ground truth (D)" aria-label="Show the difference to the ground truth">${ICON.diff}</button>
     <button data-ghost aria-pressed="${ghost()}" title="Show what the step removed (G)" aria-label="Show what the step removed">${ICON.ghost}</button>
     <button data-orbit aria-pressed="${trackball()}" title="Free rotation (T)" aria-label="Free rotation">${ICON.orbit}</button>
     <button data-zoom="0.8" title="Zoom out (−)" aria-label="Zoom out">${ICON.minus}</button>
@@ -235,6 +240,16 @@ function toggleOrbit() {
   setTrackball(!trackball());
   $$('[data-orbit]').forEach((button) => button.setAttribute('aria-pressed', trackball()));
 }
+function toggleDiff() {
+  const c = currentCase();
+  if (!c || !c.truth) return;
+  S.diff = !S.diff;
+  try { localStorage.setItem('diff', S.diff ? 'on' : 'off'); } catch { /* private mode */ }
+  $$('[data-diff]').forEach((button) => button.setAttribute('aria-pressed', S.diff));
+  renderSteps(c);
+}
+try { S.diff = localStorage.getItem('diff') === 'on'; } catch { /* private mode */ }
+
 function toggleGhost() {
   setGhost(!ghost());
   $$('[data-ghost]').forEach((button) => button.setAttribute('aria-pressed', ghost()));
@@ -326,7 +341,7 @@ function renderMain() {
     htmlCache.delete(main);
     main.innerHTML = `
       <aside class="side" id="input" aria-label="Input"></aside>
-      <section id="centre" aria-label="The solid after the chosen step">
+      <section id="centre" class="${c.truth ? '' : 'no-truth'}" aria-label="The solid after the chosen step">
         ${viewportHTML('ours', 'Our solid after the chosen step. Drag to rotate, shift-drag to pan, scroll to zoom.')}
         <div class="hud"><div id="stage-label"></div><div id="steps-note"></div></div>
         <div class="hud end" id="steps-status"></div>
@@ -503,7 +518,11 @@ const settle = (promise) => promise.then((data) => data.measured, () => null);
 function measureOurs(c, model, name = '') {
   const shown = live, state = live.state;
   const key = model ? model.key || model.url : '';
-  if (!state || shown.out === key) return;
+  if (!state) return;
+  if (shown.out === key) {  // the same solid under another step's name
+    if (state.name !== name) { state.name = name; renderMetrics(c, state); }
+    return;
+  }
   shown.out = key;
   Object.assign(state, { ours: model ? undefined : null, overlap: null, name });
   if (model) {
@@ -706,7 +725,9 @@ function renderSteps(c) {
   live.rows = rows;
   live.chosen = chosen ? chosen.id : null;
   setHTML($('#steps-status'), status);
-  setHTML($('#stage-label'), chosen ? `<span class="n">${chosen.n}</span><b>${esc(chosen.name)}</b><span class="chips">${chosen.chips}</span>` : '');
+  const diff = S.diff && c.truth ? { url: c.truth.url, key: `${c.truth.url}?${c.truth.mtime}` } : null;
+  const legend = '<i class="sw truth"></i>the part · <i class="sw excess"></i>too much · <i class="sw missing"></i>missing';
+  setHTML($('#stage-label'), chosen ? `<span class="n">${chosen.n}</span><b>${esc(chosen.name)}</b><span class="chips">${diff ? legend : chosen.chips}</span>` : '');
   setHTML($('#steps-note'), note);
   renderTimeline(rows, chosen);
   const detail = chosen ? chosen.detail() : '';
@@ -716,7 +737,7 @@ function renderSteps(c) {
   const first = rows.find((r) => r.model);
   showModel($('#ours'), chosen && chosen.model && chosen.model.url, chosen && chosen.model && chosen.model.key, COLORS.ours,
     note ? '' : `<p class="note">${running ? 'Waiting for the first solid…' : 'No solid to show yet.'}</p>`,
-    { before: chosen && chosen.before, frame: run && first ? first.model : null });
+    { before: chosen && chosen.before, frame: run && first ? first.model : null, truth: diff });
 }
 
 // One line on what each step does, shown under its stop. A step can bring its own with
@@ -821,6 +842,7 @@ document.addEventListener('click', async (event) => {
   if (d.fit !== undefined) return fit();
   if (d.orbit !== undefined) return toggleOrbit();
   if (d.ghost !== undefined) return toggleGhost();
+  if (d.diff !== undefined) return toggleDiff();
   if (d.lightbox) return openOverlay(d.lightbox);
   if (d.sel) return selectStep(d.sel);
   if (d.action === 'run') {
@@ -861,7 +883,7 @@ document.addEventListener('keydown', (event) => {
   const act = {
     ArrowRight: () => moveStep(1), ArrowLeft: () => moveStep(-1), ']': () => moveStep(1), '[': () => moveStep(-1),
     ArrowDown: () => moveCase(1), ArrowUp: () => moveCase(-1),
-    '+': () => zoomBy(1.25), '=': () => zoomBy(1.25), '-': () => zoomBy(0.8), f: fit, 0: fit, t: toggleOrbit, g: toggleGhost,
+    '+': () => zoomBy(1.25), '=': () => zoomBy(1.25), '-': () => zoomBy(0.8), f: fit, 0: fit, t: toggleOrbit, g: toggleGhost, d: toggleDiff,
   }[event.key] || (/^[1-8]$/.test(event.key) && (() => showImage(VIEW_NAMES[Number(event.key) - 1])));
   if (!act) return;
   event.preventDefault();
