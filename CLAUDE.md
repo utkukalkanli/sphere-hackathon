@@ -7,12 +7,13 @@ touching the submission format, the Dockerfile or CI.
 
 ## Project memory
 
-These three files are the shared memory of the project. They are loaded with this file at the start
+These four files are the shared memory of the project. They are loaded with this file at the start
 of every session:
 
 - What exists, what is in progress, the latest measurements: @docs/memory/state.md
 - What was decided and why: @docs/memory/decisions.md
 - What is undecided or unknown: @docs/memory/open-questions.md
+- What we learned about the inputs, the eval set and the code: @docs/memory/knowledge.md
 
 Keep them current as part of the work, without being asked:
 
@@ -21,6 +22,8 @@ Keep them current as part of the work, without being asked:
 - When the user decides something, or a measurement settles a choice, add it to `decisions.md` with
   the date and the reason. If it answers an open question, remove that question.
 - When something comes up that nobody can answer yet, add it to `open-questions.md`.
+- When reading or measuring shows how the inputs, the eval set or the code really behave, put it
+  in `knowledge.md`.
 - Give numbers with what they were measured on (which set, how many parts, which commit or date).
 - Several sessions often work in this repo at once. Read a memory file again just before editing it,
   and change only the lines that are yours to change.

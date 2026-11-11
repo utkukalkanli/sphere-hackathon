@@ -32,6 +32,9 @@ the entry and say what changed.
   real material or add material; then use `--iou`.
 - **Routine evals use a fixed 24-part sample with caching** (2026-11-11, user). The user does not
   want minutes of laptop compute on every change. The full 266 parts only on request.
+- **Eval tiers are by face count**: up to 30 simple, up to 200 medium, above that complex
+  (2026-11-11). The organisers do not say how they tier; this rule puts the 9 practice parts into
+  3, 3 and 3, which matches what they announce for the hidden set.
 - **A 266-part local eval set in the organisers' format** (2026-11-11). The practice set has 9 parts
   and no ground truth; the hidden set is different parts, so we need many parts to avoid overfitting.
 

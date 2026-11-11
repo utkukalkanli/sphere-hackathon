@@ -1,6 +1,6 @@
 # Project state
 
-Last updated: 2026-11-11, about 19:20 CET.
+Last updated: 2026-11-11, about 19:35 CET.
 
 ## Pipeline
 
@@ -11,6 +11,10 @@ Everything so far is deterministic. No model is called anywhere yet.
 | 1. Visual hull: a box with the `facts.json` dimensions, cut through wherever a view is white (front/back, right/left, top/bottom, then the two isometric views as a fourth direction) | `src/agentic_cad/visual_hull.py` | committed on `feat/visual-hull` |
 | 2. Holes: every cylindrical hole listed in `facts.json` is cut as a cylinder; a thinner coaxial boss inside a bore is kept | `src/agentic_cad/holes.py` | written, **not committed, not yet measured on the eval set** |
 | 3. Anything that finds pockets and other inner cavities | none | not started |
+
+Unused inputs so far: the text of `description.md` (only its Envelope line is read, as a fallback),
+`context.png`, the shading and edge lines inside the views, and every `facts.json` field except the
+bounding box, the volume and the two cylinder lists.
 
 Guards around every cut (`hull_agent.py`):
 
@@ -27,8 +31,8 @@ Guards around every cut (`hull_agent.py`):
 - `feat/visual-hull` (pushed): step 1, tracing, the redesigned dashboard, and the 9 practice outputs
   of step 1 (44 MB).
 - Uncommitted on `feat/visual-hull`: step 2 (`holes.py`, changes in `hull_agent.py` and
-  `visual_hull.py`) and `tools/eval_hull.py`. Another session was working on these when this file
-  was written.
+  `visual_hull.py`) and `tools/eval_hull.py`. Another session was working on these, and running
+  the 24-part eval, when this file was written.
 - GitHub Actions variables for team-d are set (`ECR_REPOSITORY_URI`, `S3_SUBMISSION_URI`,
   `AWS_REGION`), so a push to `main` submits.
 
@@ -67,6 +71,9 @@ from 1.259 to 1.228.
   complex parts.
 - Round outlines come out as polygons traced from pixels, so output files are 1 to 7 MB with
   hundreds of planar faces.
+- One failing case stops the whole run, and there is no fallback output (see `knowledge.md`).
+- The timeouts make the output depend on how fast the machine is: a cut that finishes here may time
+  out on the organisers' machine and give a different solid.
 - The Docker image has never been built or run. The Dockerfile has the libraries OpenCascade needs,
   but that is untested.
 - The dashboard section of README.md describes the first dashboard, not the redesigned one.
