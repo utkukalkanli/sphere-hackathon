@@ -30,6 +30,7 @@ const S = {
 };
 const traces = new Map();  // "<run>/<case>" -> { events, loading, loaded, failed }
 let live = { id: 0, rows: [] };  // bumped whenever another case or run comes on screen
+let started = null;  // a run just launched here that /api/state may not list yet
 
 // -- helpers ------------------------------------------------------------------------------------
 
@@ -233,7 +234,12 @@ async function ensureCases(force = false) {
 function normalise() {
   if (!S.datasets.some((d) => d.id === S.dataset)) S.dataset = S.datasets[0] && S.datasets[0].id;
   const runs = datasetRuns();
-  if (S.runId == null || (S.runId && !runs.some((r) => r.id === S.runId))) S.runId = runs[0] ? runs[0].id : '';
+  if (runs.some((r) => r.id === started)) started = null;
+  if (S.runId && S.runId !== started && !runs.some((r) => r.id === S.runId)) S.runId = null;
+  if (S.runId == null) {  // the newest run that has this case; without a case, the newest run
+    const run = S.caseName ? runs.find((r) => runCase(r, S.caseName)) : runs[0];
+    S.runId = run ? run.id : '';
+  }
   if (cases().length && !currentCase()) {
     const run = currentRun();
     const first = run && run.cases[0] && cases().find((c) => c.name === run.cases[0].name);
@@ -303,6 +309,7 @@ function renderMain() {
     renderTruth(c);
   }
   renderSteps(c);
+  measureOurs(c);
 }
 
 // -- left: input --------------------------------------------------------------------------------
@@ -400,9 +407,7 @@ function showImage(name, turn = true) {
 // -- right: ground truth ------------------------------------------------------------------------
 
 function renderTruth(c) {
-  const id = live.id, output = outputOf(c);
-  const state = { truth: undefined, ours: output ? undefined : null };
-  const settle = (promise) => promise.then((data) => data.measured, () => null);
+  const id = live.id, state = live.state = { truth: undefined, ours: null };
   if (c.truth) {
     const key = `${c.truth.url}?${c.truth.mtime}`;
     showModel($('#truth'), c.truth.url, key, COLORS.truth);
@@ -413,7 +418,23 @@ function renderTruth(c) {
     $('#truth-label').textContent = viewLabel(S.image);
     hydrateImages($('#truth'));
   }
-  if (output) settle(loadStep(output.url, output.key)).then((m) => { state.ours = m; if (id === live.id) renderMetrics(c, state); });
+}
+
+const settle = (promise) => promise.then((data) => data.measured, () => null);
+
+// Called on every render: measures our output again whenever its file changes, so the table fills
+// in as soon as a run has written its .stp.
+function measureOurs(c) {
+  const shown = live, state = live.state, output = outputOf(c);
+  const key = output ? output.key || output.url : '';
+  if (!state || shown.out === key) return;
+  shown.out = key;
+  state.ours = output ? undefined : null;
+  if (output) {
+    settle(loadStep(output.url, output.key)).then((m) => {
+      if (live === shown && shown.out === key) { state.ours = m; renderMetrics(c, state); }
+    });
+  }
   renderMetrics(c, state);
 }
 
@@ -602,7 +623,7 @@ function render() {
 
 function selectCase(name, datasetId = S.dataset) {
   if (datasetId !== S.dataset) Object.assign(S, { dataset: datasetId, runId: null });
-  Object.assign(S, { caseName: name, sel: null });
+  Object.assign(S, { caseName: name, sel: null, runId: null });  // normalise() picks this case's newest run
   render();
 }
 
@@ -626,6 +647,7 @@ document.addEventListener('click', async (event) => {
   if (d.action === 'run') {
     try {
       const { id } = await api('/api/run', { dataset: S.dataset, only: [S.caseName], target: 'run' });
+      started = id;
       Object.assign(S, { runId: id, sel: null });
       await poll();
     } catch (error) { toast(`Could not start the run: ${error.message}`); }
@@ -641,7 +663,12 @@ document.addEventListener('dblclick', (event) => {
 document.addEventListener('change', (event) => {
   const el = event.target;
   if (el.id === 'case-select') { const [ds, name] = el.value.split('/'); selectCase(name, ds); }
-  else if (el.id === 'run-select') { Object.assign(S, { runId: el.value, sel: null }); render(); }
+  else if (el.id === 'run-select') {
+    Object.assign(S, { runId: el.value, sel: null });
+    const run = currentRun();  // a run of other cases: go to its first case
+    if (run && run.cases.length && !runCase(run, S.caseName)) S.caseName = run.cases[0].name;
+    render();
+  }
 });
 
 document.addEventListener('keydown', (event) => {
@@ -661,9 +688,9 @@ window.addEventListener('hashchange', async () => { readHash(); await ensureCase
 
 // -- polling ------------------------------------------------------------------------------------
 
-let polling = false;
+let polling = false, again = false;
 async function poll() {
-  if (polling) return;
+  if (polling) { again = true; return; }  // the answer on its way may be older than what was just done
   polling = true;
   try {
     const state = await api('/api/state');
@@ -681,7 +708,10 @@ async function poll() {
     document.body.classList.remove('offline');
   } catch (error) {
     document.body.classList.add('offline');
-  } finally { polling = false; }
+  } finally {
+    polling = false;
+    if (again) { again = false; poll(); }
+  }
 }
 
 readHash();
