@@ -1,0 +1,146 @@
+{
+ "bounding_box_mm": {
+  "x": 112.58,
+  "y": 71.74,
+  "z": 67.27
+ },
+ "volume_mm3": 159220.3,
+ "surface_area_mm2": 19567.1,
+ "solids": 1,
+ "through_holes_genus": 0,
+ "faces": 27,
+ "edges": 57,
+ "face_types": {
+  "PLANE": 10,
+  "CYLINDER": 9,
+  "BSPLINE": 4,
+  "CONE": 3,
+  "TORUS": 1
+ },
+ "cylindrical_holes_and_bores": [
+  {
+   "diameter": 21.15,
+   "axis": "(-0.00, 0.82, 0.57)",
+   "count": 1,
+   "lengths": [
+    0.5
+   ],
+   "centres": [
+    [
+     74.93,
+     65.2,
+     53.11
+    ]
+   ]
+  },
+  {
+   "diameter": 10.0,
+   "axis": "(0.94, 0.32, 0.12)",
+   "count": 1,
+   "lengths": [
+    10.0
+   ],
+   "centres": [
+    [
+     7.03,
+     12.09,
+     28.2
+    ]
+   ]
+  }
+ ],
+ "cylindrical_shafts_and_bosses": [
+  {
+   "diameter": 75.31,
+   "axis": "(-0.00, 0.82, 0.57)",
+   "count": 1,
+   "lengths": [
+    5.0
+   ],
+   "centres": [
+    [
+     74.93,
+     35.51,
+     32.3
+    ]
+   ]
+  },
+  {
+   "diameter": 34.17,
+   "axis": "(-0.00, 0.82, 0.57)",
+   "count": 1,
+   "lengths": [
+    5.0
+   ],
+   "centres": [
+    [
+     74.93,
+     51.89,
+     43.78
+    ]
+   ]
+  },
+  {
+   "diameter": 25.3,
+   "axis": "(-0.00, 0.82, 0.57)",
+   "count": 1,
+   "lengths": [
+    2.0
+   ],
+   "centres": [
+    [
+     74.93,
+     61.31,
+     50.38
+    ]
+   ]
+  },
+  {
+   "diameter": 23.3,
+   "axis": "(-0.00, 0.82, 0.57)",
+   "count": 1,
+   "lengths": [
+    8.0
+   ],
+   "centres": [
+    [
+     74.93,
+     57.22,
+     47.51
+    ]
+   ]
+  },
+  {
+   "diameter": 22.07,
+   "axis": "(-0.00, 0.82, 0.57)",
+   "count": 1,
+   "lengths": [
+    4.0
+   ],
+   "centres": [
+    [
+     74.93,
+     63.77,
+     52.1
+    ]
+   ]
+  }
+ ],
+ "partial_cylinders_arcs": [],
+ "fillets_rounds_from_cylinders": [
+  {
+   "radius": 21.5,
+   "type": "convex round",
+   "faces": 2
+  }
+ ],
+ "fillets_from_tori_minor_radii": {
+  "15": 1
+ },
+ "cones_half_angle_deg": {
+  "20.0": 2,
+  "59.0": 1
+ },
+ "_note": "positions in mm from the bounding-box min corner, in the frame of the 8 views",
+ "_n_shells": 1
+}

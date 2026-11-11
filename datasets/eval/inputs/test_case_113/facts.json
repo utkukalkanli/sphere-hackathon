@@ -1,0 +1,168 @@
+{
+ "bounding_box_mm": {
+  "x": 10.03,
+  "y": 10.0,
+  "z": 43.05
+ },
+ "volume_mm3": 1312.5,
+ "surface_area_mm2": 1062.7,
+ "solids": 1,
+ "through_holes_genus": 0,
+ "faces": 50,
+ "edges": 101,
+ "face_types": {
+  "CYLINDER": 19,
+  "CONE": 17,
+  "PLANE": 11,
+  "TORUS": 3
+ },
+ "cylindrical_holes_and_bores": [],
+ "cylindrical_shafts_and_bosses": [
+  {
+   "diameter": 5.0,
+   "axis": "Z",
+   "count": 9,
+   "lengths": [
+    0.2
+   ],
+   "centres": [
+    [
+     5.33,
+     5.0,
+     41.54
+    ],
+    [
+     5.34,
+     5.0,
+     42.74
+    ],
+    [
+     5.27,
+     5.0,
+     33.14
+    ],
+    [
+     5.28,
+     5.0,
+     34.34
+    ],
+    [
+     5.28,
+     5.0,
+     35.54
+    ],
+    [
+     5.29,
+     5.0,
+     36.74
+    ],
+    [
+     5.3,
+     5.0,
+     37.94
+    ],
+    [
+     5.31,
+     5.0,
+     39.14
+    ],
+    [
+     5.32,
+     5.0,
+     40.34
+    ]
+   ]
+  },
+  {
+   "diameter": 4.0,
+   "axis": "Z",
+   "count": 8,
+   "lengths": [
+    0.42
+   ],
+   "centres": [
+    [
+     5.34,
+     5.0,
+     42.14
+    ],
+    [
+     5.27,
+     5.0,
+     33.74
+    ],
+    [
+     5.28,
+     5.0,
+     34.94
+    ],
+    [
+     5.29,
+     5.0,
+     36.14
+    ],
+    [
+     5.3,
+     5.0,
+     37.34
+    ],
+    [
+     5.31,
+     5.0,
+     38.54
+    ],
+    [
+     5.32,
+     5.0,
+     39.74
+    ],
+    [
+     5.33,
+     5.0,
+     40.94
+    ]
+   ]
+  },
+  {
+   "diameter": 10.0,
+   "axis": "Z",
+   "count": 1,
+   "lengths": [
+    4.0
+   ],
+   "centres": [
+    [
+     5.02,
+     5.0,
+     2.54
+    ]
+   ]
+  },
+  {
+   "diameter": 6.0,
+   "axis": "Z",
+   "count": 1,
+   "lengths": [
+    27.4
+   ],
+   "centres": [
+    [
+     5.16,
+     5.0,
+     19.34
+    ]
+   ]
+  }
+ ],
+ "partial_cylinders_arcs": [],
+ "fillets_rounds_from_cylinders": [],
+ "fillets_from_tori_minor_radii": {
+  "0.3": 1,
+  "0.5": 2
+ },
+ "cones_half_angle_deg": {
+  "60.0": 17
+ },
+ "_note": "positions in mm from the bounding-box min corner, in the frame of the 8 views",
+ "_n_shells": 1
+}

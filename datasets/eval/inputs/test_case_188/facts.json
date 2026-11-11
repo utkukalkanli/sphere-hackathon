@@ -1,0 +1,93 @@
+{
+ "bounding_box_mm": {
+  "x": 35.09,
+  "y": 12.71,
+  "z": 59.09
+ },
+ "volume_mm3": 4349.0,
+ "surface_area_mm2": 3335.9,
+ "solids": 1,
+ "through_holes_genus": 3,
+ "faces": 38,
+ "edges": 89,
+ "face_types": {
+  "CYLINDER": 17,
+  "PLANE": 9,
+  "BSPLINE": 6,
+  "TORUS": 6
+ },
+ "cylindrical_holes_and_bores": [
+  {
+   "diameter": 5.7,
+   "axis": "Y",
+   "count": 2,
+   "lengths": [
+    2.0
+   ],
+   "centres": [
+    [
+     17.54,
+     1.0,
+     6.0
+    ],
+    [
+     17.54,
+     1.0,
+     53.09
+    ]
+   ]
+  },
+  {
+   "diameter": 2.5,
+   "axis": "(0.00, 0.34, 0.94)",
+   "count": 1,
+   "lengths": [
+    23.48
+   ],
+   "centres": [
+    [
+     17.54,
+     2.94,
+     32.13
+    ]
+   ]
+  }
+ ],
+ "cylindrical_shafts_and_bosses": [],
+ "partial_cylinders_arcs": [
+  {
+   "diameter": 12.0,
+   "type": "convex",
+   "faces": 3
+  }
+ ],
+ "fillets_rounds_from_cylinders": [
+  {
+   "radius": 1.0,
+   "type": "convex round",
+   "faces": 4
+  },
+  {
+   "radius": 2.0,
+   "type": "concave fillet",
+   "faces": 3
+  },
+  {
+   "radius": 2.0,
+   "type": "convex round",
+   "faces": 2
+  },
+  {
+   "radius": 17.54,
+   "type": "convex round",
+   "faces": 2
+  }
+ ],
+ "fillets_from_tori_minor_radii": {
+  "1": 4,
+  "2": 2
+ },
+ "cones_half_angle_deg": {},
+ "_note": "positions in mm from the bounding-box min corner, in the frame of the 8 views",
+ "_n_shells": 1
+}

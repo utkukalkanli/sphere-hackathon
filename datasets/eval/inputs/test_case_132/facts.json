@@ -1,0 +1,146 @@
+{
+ "bounding_box_mm": {
+  "x": 96.15,
+  "y": 100.84,
+  "z": 67.83
+ },
+ "volume_mm3": 30413.1,
+ "surface_area_mm2": 15044.7,
+ "solids": 1,
+ "through_holes_genus": 0,
+ "faces": 256,
+ "edges": 594,
+ "face_types": {
+  "CYLINDER": 91,
+  "TORUS": 55,
+  "BSPLINE": 40,
+  "PLANE": 36,
+  "SPHERE": 26,
+  "CONE": 8
+ },
+ "cylindrical_holes_and_bores": [],
+ "cylindrical_shafts_and_bosses": [],
+ "partial_cylinders_arcs": [
+  {
+   "diameter": 0.8,
+   "type": "convex",
+   "faces": 4
+  },
+  {
+   "diameter": 2.0,
+   "type": "convex",
+   "faces": 4
+  },
+  {
+   "diameter": 2.4,
+   "type": "convex",
+   "faces": 2
+  },
+  {
+   "diameter": 4.0,
+   "type": "convex",
+   "faces": 4
+  },
+  {
+   "diameter": 24.0,
+   "type": "convex",
+   "faces": 1
+  },
+  {
+   "diameter": 46.7,
+   "type": "concave",
+   "faces": 2
+  }
+ ],
+ "fillets_rounds_from_cylinders": [
+  {
+   "radius": 1.0,
+   "type": "convex round",
+   "faces": 2
+  },
+  {
+   "radius": 2.0,
+   "type": "convex round",
+   "faces": 40
+  },
+  {
+   "radius": 5.0,
+   "type": "concave fillet",
+   "faces": 2
+  },
+  {
+   "radius": 5.0,
+   "type": "convex round",
+   "faces": 3
+  },
+  {
+   "radius": 8.0,
+   "type": "convex round",
+   "faces": 2
+  },
+  {
+   "radius": 14.0,
+   "type": "concave fillet",
+   "faces": 2
+  },
+  {
+   "radius": 20.0,
+   "type": "convex round",
+   "faces": 2
+  },
+  {
+   "radius": 23.35,
+   "type": "concave fillet",
+   "faces": 4
+  },
+  {
+   "radius": 24.95,
+   "type": "concave fillet",
+   "faces": 1
+  },
+  {
+   "radius": 30.6,
+   "type": "concave fillet",
+   "faces": 4
+  },
+  {
+   "radius": 45.08,
+   "type": "concave fillet",
+   "faces": 3
+  },
+  {
+   "radius": 48.08,
+   "type": "convex round",
+   "faces": 3
+  },
+  {
+   "radius": 207.26,
+   "type": "concave fillet",
+   "faces": 2
+  },
+  {
+   "radius": 207.26,
+   "type": "convex round",
+   "faces": 2
+  },
+  {
+   "radius": 210.26,
+   "type": "convex round",
+   "faces": 2
+  }
+ ],
+ "fillets_from_tori_minor_radii": {
+  "1": 6,
+  "1.2": 2,
+  "2": 41,
+  "5": 2,
+  "14": 2,
+  "20": 2
+ },
+ "cones_half_angle_deg": {
+  "51.3": 4,
+  "63.4": 4
+ },
+ "_note": "positions in mm from the bounding-box min corner, in the frame of the 8 views",
+ "_n_shells": 1
+}

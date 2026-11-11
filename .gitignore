@@ -5,3 +5,11 @@
 .env
 *.env
 !.env.example
+
+# Raw downloads and caches for tools/dataset (tens of GB, local only); datasets/eval is committed
+datasets/raw/
+datasets/scan/
+datasets/.venv/
+
+# Pipeline traces for the dashboard (ui/)
+runs/

@@ -4,3 +4,10 @@
 # Settings must come from the Dockerfile and the handed-over <team>.env, never a local file
 .env
 *.env
+
+# Local eval data: must never enter the build context
+datasets
+
+# Local dashboard and its traces: not part of the agent
+ui
+runs

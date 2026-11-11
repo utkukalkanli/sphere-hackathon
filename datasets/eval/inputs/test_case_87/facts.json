@@ -1,0 +1,228 @@
+{
+ "bounding_box_mm": {
+  "x": 75.0,
+  "y": 183.0,
+  "z": 183.0
+ },
+ "volume_mm3": 329490.7,
+ "surface_area_mm2": 163801.3,
+ "solids": 1,
+ "through_holes_genus": 1,
+ "faces": 527,
+ "edges": 1496,
+ "face_types": {
+  "PLANE": 232,
+  "CYLINDER": 173,
+  "BSPLINE": 42,
+  "CONE": 38,
+  "TORUS": 30,
+  "SPHERE": 12
+ },
+ "cylindrical_holes_and_bores": [
+  {
+   "diameter": 4.92,
+   "axis": "X",
+   "count": 3,
+   "lengths": [
+    13.0
+   ],
+   "centres": [
+    [
+     20.63,
+     111.5,
+     126.14
+    ],
+    [
+     20.63,
+     51.5,
+     91.5
+    ],
+    [
+     20.63,
+     111.5,
+     56.86
+    ]
+   ]
+  },
+  {
+   "diameter": 3.3,
+   "axis": "X",
+   "count": 3,
+   "lengths": [
+    10.0
+   ],
+   "centres": [
+    [
+     53.0,
+     51.0,
+     161.65
+    ],
+    [
+     53.0,
+     172.5,
+     91.5
+    ],
+    [
+     53.0,
+     51.0,
+     21.35
+    ]
+   ]
+  }
+ ],
+ "cylindrical_shafts_and_bosses": [
+  {
+   "diameter": 183.0,
+   "axis": "X",
+   "count": 1,
+   "lengths": [
+    2.5
+   ],
+   "centres": [
+    [
+     15.88,
+     91.5,
+     91.5
+    ]
+   ]
+  },
+  {
+   "diameter": 172.0,
+   "axis": "X",
+   "count": 1,
+   "lengths": [
+    40.87
+   ],
+   "centres": [
+    [
+     37.56,
+     91.5,
+     91.5
+    ]
+   ]
+  }
+ ],
+ "partial_cylinders_arcs": [
+  {
+   "diameter": 3.0,
+   "type": "convex",
+   "faces": 6
+  },
+  {
+   "diameter": 5.0,
+   "type": "convex",
+   "faces": 9
+  },
+  {
+   "diameter": 6.0,
+   "type": "concave",
+   "faces": 6
+  },
+  {
+   "diameter": 10.0,
+   "type": "concave",
+   "faces": 6
+  },
+  {
+   "diameter": 12.0,
+   "type": "convex",
+   "faces": 6
+  }
+ ],
+ "fillets_rounds_from_cylinders": [
+  {
+   "radius": 0.5,
+   "type": "concave fillet",
+   "faces": 21
+  },
+  {
+   "radius": 0.5,
+   "type": "convex round",
+   "faces": 24
+  },
+  {
+   "radius": 1.5,
+   "type": "convex round",
+   "faces": 6
+  },
+  {
+   "radius": 3.0,
+   "type": "concave fillet",
+   "faces": 12
+  },
+  {
+   "radius": 3.5,
+   "type": "convex round",
+   "faces": 6
+  },
+  {
+   "radius": 4.0,
+   "type": "concave fillet",
+   "faces": 6
+  },
+  {
+   "radius": 6.0,
+   "type": "concave fillet",
+   "faces": 6
+  },
+  {
+   "radius": 6.0,
+   "type": "convex round",
+   "faces": 3
+  },
+  {
+   "radius": 17.0,
+   "type": "concave fillet",
+   "faces": 6
+  },
+  {
+   "radius": 18.0,
+   "type": "concave fillet",
+   "faces": 3
+  },
+  {
+   "radius": 28.69,
+   "type": "concave fillet",
+   "faces": 6
+  },
+  {
+   "radius": 30.41,
+   "type": "concave fillet",
+   "faces": 3
+  },
+  {
+   "radius": 31.36,
+   "type": "convex round",
+   "faces": 3
+  },
+  {
+   "radius": 31.41,
+   "type": "convex round",
+   "faces": 3
+  },
+  {
+   "radius": 57.68,
+   "type": "concave fillet",
+   "faces": 6
+  },
+  {
+   "radius": 82.5,
+   "type": "concave fillet",
+   "faces": 18
+  }
+ ],
+ "fillets_from_tori_minor_radii": {
+  "0.5": 12,
+  "1.5": 9,
+  "3": 6,
+  "6": 3
+ },
+ "cones_half_angle_deg": {
+  "1.5": 7,
+  "21.5": 6,
+  "59.0": 6,
+  "77.5": 19
+ },
+ "_note": "positions in mm from the bounding-box min corner, in the frame of the 8 views",
+ "_n_shells": 1
+}

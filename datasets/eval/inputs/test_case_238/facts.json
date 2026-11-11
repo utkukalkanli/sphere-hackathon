@@ -1,0 +1,54 @@
+{
+ "bounding_box_mm": {
+  "x": 11.05,
+  "y": 19.05,
+  "z": 7.94
+ },
+ "volume_mm3": 993.5,
+ "surface_area_mm2": 1119.7,
+ "solids": 1,
+ "through_holes_genus": 3,
+ "faces": 38,
+ "edges": 92,
+ "face_types": {
+  "PLANE": 29,
+  "CONE": 6,
+  "CYLINDER": 3
+ },
+ "cylindrical_holes_and_bores": [
+  {
+   "diameter": 3.2,
+   "axis": "X",
+   "count": 3,
+   "lengths": [
+    10.55
+   ],
+   "centres": [
+    [
+     5.53,
+     15.88,
+     5.56
+    ],
+    [
+     5.53,
+     9.53,
+     5.56
+    ],
+    [
+     5.53,
+     3.18,
+     5.56
+    ]
+   ]
+  }
+ ],
+ "cylindrical_shafts_and_bosses": [],
+ "partial_cylinders_arcs": [],
+ "fillets_rounds_from_cylinders": [],
+ "fillets_from_tori_minor_radii": {},
+ "cones_half_angle_deg": {
+  "45.0": 6
+ },
+ "_note": "positions in mm from the bounding-box min corner, in the frame of the 8 views",
+ "_n_shells": 1
+}

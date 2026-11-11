@@ -1,0 +1,156 @@
+{
+ "bounding_box_mm": {
+  "x": 60.0,
+  "y": 126.0,
+  "z": 17.0
+ },
+ "volume_mm3": 26765.7,
+ "surface_area_mm2": 19407.9,
+ "solids": 1,
+ "through_holes_genus": 45,
+ "faces": 356,
+ "edges": 990,
+ "face_types": {
+  "PLANE": 332,
+  "CYLINDER": 24
+ },
+ "cylindrical_holes_and_bores": [
+  {
+   "diameter": 2.0,
+   "axis": "Z",
+   "count": 24,
+   "lengths": [
+    3.0
+   ],
+   "centres": [
+    [
+     15.0,
+     18.0,
+     1.5
+    ],
+    [
+     25.0,
+     38.0,
+     1.5
+    ],
+    [
+     25.0,
+     18.0,
+     1.5
+    ],
+    [
+     15.0,
+     58.0,
+     1.5
+    ],
+    [
+     15.0,
+     38.0,
+     1.5
+    ],
+    [
+     35.0,
+     18.0,
+     1.5
+    ],
+    [
+     25.0,
+     58.0,
+     1.5
+    ],
+    [
+     35.0,
+     58.0,
+     1.5
+    ],
+    [
+     35.0,
+     38.0,
+     1.5
+    ],
+    [
+     25.0,
+     88.0,
+     1.5
+    ],
+    [
+     45.0,
+     58.0,
+     1.5
+    ],
+    [
+     45.0,
+     38.0,
+     1.5
+    ],
+    [
+     45.0,
+     18.0,
+     1.5
+    ],
+    [
+     35.0,
+     108.0,
+     1.5
+    ],
+    [
+     15.0,
+     108.0,
+     1.5
+    ],
+    [
+     35.0,
+     88.0,
+     1.5
+    ],
+    [
+     25.0,
+     108.0,
+     1.5
+    ],
+    [
+     15.0,
+     68.0,
+     1.5
+    ],
+    [
+     15.0,
+     88.0,
+     1.5
+    ],
+    [
+     45.0,
+     108.0,
+     1.5
+    ],
+    [
+     45.0,
+     88.0,
+     1.5
+    ],
+    [
+     45.0,
+     68.0,
+     1.5
+    ],
+    [
+     25.0,
+     68.0,
+     1.5
+    ],
+    [
+     35.0,
+     68.0,
+     1.5
+    ]
+   ]
+  }
+ ],
+ "cylindrical_shafts_and_bosses": [],
+ "partial_cylinders_arcs": [],
+ "fillets_rounds_from_cylinders": [],
+ "fillets_from_tori_minor_radii": {},
+ "cones_half_angle_deg": {},
+ "_note": "positions in mm from the bounding-box min corner, in the frame of the 8 views",
+ "_n_shells": 1
+}
