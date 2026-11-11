@@ -7,7 +7,9 @@ Remove a question when it is answered, and record the answer in `decisions.md` o
 - **Will the timeouts ever fire on the organisers' machine?** The practice run takes 19 s on the
   laptop and no cut came near a timeout, and the amd64 container gave the same solids. But the worst
   case by the timeouts is 9 x (3 x 30 + 40) s, about the whole 20 minutes, and a cut that times out
-  there but not here changes the output. A budget for the whole run would close this.
+  there but not here changes the output. A budget for the whole run would close this. It does
+  happen: on the Windows PC two eval parts (51, 99) lose their top/bottom cut to the 30 s timeout
+  that the ARM laptop meets (see state.md), which costs 1 point on the 24-part sample.
 - **When do we make the first submission?** Nothing is on the leaderboard yet. The image and the
   outputs of steps 1 + 2 are ready on `feat/visual-hull`; it takes a merge to `main`, which the user decides.
 
@@ -44,10 +46,10 @@ Remove a question when it is answered, and record the answer in `decisions.md` o
   CadQuery loop (`feat/llm-cad-agent`) both replace what `scripts/main.py` does. Options: pick one;
   give the loop the hull solid as a start or a fallback; or score both per case against `facts.json`
   and keep the better. Neither has been measured against the other.
-- **Does step 3 help with a real model?** It has only seen a scripted answer. It needs the Brev
-  endpoint; it can only be judged on the 9 practice parts (volume ratio), since the eval briefs hold
-  nothing beyond `facts.json`. Also open: whether `LLM_VISION=1` helps, and whether 75 s per case is
-  enough for a 30B model to answer.
+- **Are the cuts step 3 keeps on practice parts 7 and 9 right?** With Qwen3-30B they lowered the
+  volume ratio (7: 2.20 -> 2.14, 9: 1.89 -> 1.86), but these parts are far above the 97 % floor, so
+  a cut through real inner material would pass the volume check too, and the view check cannot see
+  inside. Ways to check: look at the solids in the dashboard; try `LLM_VISION=1` with the VLM.
 - **`context.png` is not used.** Is there anything in it worth using? It is absent for some parts.
 ## Housekeeping
 

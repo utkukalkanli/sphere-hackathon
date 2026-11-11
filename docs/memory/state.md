@@ -1,6 +1,6 @@
 # Project state
 
-Last updated: 2026-11-11, about 21:30 CET (step 3 added on `ananas`).
+Last updated: 2026-11-11, about 22:45 CET (step 3 measured with the real model).
 
 ## Pipeline
 
@@ -12,7 +12,7 @@ Steps 1 and 2 are deterministic. Step 3 (on `ananas` only) calls a model and run
 | --- | --- | --- |
 | 1. Visual hull: a box with the `facts.json` dimensions, cut through wherever a view is white (front/back, right/left, top/bottom). Before cutting, each traced outline is rebuilt from straight lines and circular arcs (`outline_fit.py`). A fourth cut along the isometric views is implemented but off since 2026-11-11 | `src/agentic_cad/visual_hull.py`, `src/agentic_cad/outline_fit.py` | committed on `feat/visual-hull` |
 | 2. Holes: every cylindrical hole listed in `facts.json` is cut as a cylinder; a thinner coaxial boss inside a bore is kept | `src/agentic_cad/holes.py` | committed on `feat/visual-hull`, measured (below) |
-| 3. Model-planned cuts: the brief, `facts.json` and the drilled holes go to an OpenAI-compatible model, which answers with box, cylinder and prism cuts as numbers. All are tried at once, then one by one; a cut is kept only if the solid stays at 97 % of the true volume or more and no view (6 straight + 2 iso, `views.py`) shows more than a few pixels of new background where the render shows the part. 75 s per case in all (`PLANNED_BUDGET`), 20 s per boolean, 60 s per request | `src/agentic_cad/features.py`, `src/agentic_cad/llm_cuts.py`, `hull_agent.cut_planned` | on `ananas`; tested with a scripted answer only (practice 1: a wrong notch rejected by the views, an oversized cut by the volume, a valid one kept). Never run against a real model, not measured |
+| 3. Model-planned cuts: the brief, `facts.json` and the drilled holes go to an OpenAI-compatible model, which answers with box, cylinder and prism cuts as numbers. All are tried at once, then one by one; a cut is kept only if the solid stays at 97 % of the true volume or more and no view (6 straight + 2 iso, `views.py`) shows more than a few pixels of new background where the render shows the part. 75 s per case in all (`PLANNED_BUDGET`), 20 s per boolean, 60 s per request | `src/agentic_cad/features.py`, `src/agentic_cad/llm_cuts.py`, `hull_agent.cut_planned` | on `ananas`, measured with Qwen3-30B (below) |
 
 Unused inputs without a model: the text of `description.md` (only its Envelope line is read, as a fallback),
 `context.png`, the shading and edge lines inside the views, and every `facts.json` field except the
@@ -101,6 +101,25 @@ sample, 2026-11-11. Score after each step, sampled IoU against the ground truth,
 - Holes (measured with traced pixels and the isometric cut on): sampled IoU 0.834 with holes, 0.824
   without. Holes were cut on 14 of the 24 parts; none got worse, the best gained 17 points (part 171).
 - Lowest: parts 51 (0.14) and 99 (0.26), thin-walled parts whose true volume is 2 to 4 % of the box.
+
+Step 3 with the real model (Qwen3-30B-A3B-FP8 on the Brev box, thinking off), 2026-11-11, at 47dd503:
+
+- Eval sample, 24 parts, on the Windows PC: score 0.8287 -> 0.8293, sampled IoU 0.8246 -> 0.8252.
+  Only parts 51 and 75 changed; no part got worse. As expected the eval briefs give the model
+  nothing beyond `facts.json`, so this mainly shows that the checks keep wrong cuts out.
+- Practice set, volume / true volume after step 3: part 7 2.20 -> 2.14, part 9 1.89 -> 1.86, the
+  others unchanged. Most proposed cuts were rejected (part 5: 0 of 10, part 8: 2 of 8, part 7: 6 of
+  7 kept, part 9: 5 of 5). Without ground truth it is unknown whether the kept cuts on 7 and 9 removed
+  only excess material.
+- With Qwen3's thinking on, the thinking alone used the 6000 tokens (25 s) and no answer came.
+  Without it an answer takes 1 to 5 s.
+
+**Steps 1 + 2 score lower on the Windows PC than in the table above: 0.829 instead of 0.839 (IoU
+0.825), same 24 parts, 2026-11-11.** Simple and medium are equal; the difference is parts 51 (0.14 ->
+0.04) and 99 (0.26 -> 0.11), whose top/bottom cut (316 loops on part 51) times out at 30 s here.
+On part 51, with the machine idle, the fitted outline did not finish in 300 s and the traced pixels
+took about 96 s. The code from before 2bc65c8 (2cfc439) also times out at 30 s on both, so it is the
+machine, not a code change. The table above was measured on the ARM laptop.
 
 Where the remaining excess material is (same sample, traced-pixel outlines, 1200 sampled points per
 part, 2026-11-11):
