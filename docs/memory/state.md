@@ -86,8 +86,8 @@ along +-X, +-Y or +-Z. Only 3 % are hidden from all six directions. If everythin
 axis direction were removed, the sampled IoU would go from 0.827 to 0.970 (complex: 0.688 to 0.914).
 We cut almost nothing that belongs to the part (0.4 % of the true volume, in complex parts).
 
-Practice set, steps 1 + 2 without the isometric cut, our volume / true volume: part 8 is 1.00,
-parts 1, 2, 3, 4, 5 are between 1.07 and 1.25, part 9 is 1.89, part 7 is 2.11, part 6 is 3.81.
+Practice set, steps 1 + 2 without the isometric cut, our volume / true volume: part 8 is 1.01,
+parts 1, 2, 3, 4, 5 are between 1.07 and 1.25, part 9 is 1.89, part 7 is 2.20, part 6 is 3.81.
 
 Run time and Docker, 2026-11-11: the 9 practice parts take 19 s alone on the laptop. The image
 builds for `linux/amd64` and runs as a non-root user with read-only inputs in 50 s (emulated on an
