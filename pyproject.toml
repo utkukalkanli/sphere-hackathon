@@ -1,10 +1,13 @@
 [project]
 name = "agentic-cad"
 version = "0.1.0"
-description = "Add your description here"
+description = "Prompt-to-CAD agent: an LLM writes CadQuery, the result is measured, compared and corrected"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.13"
 dependencies = [
+    "cadquery>=2.5",
+    "numpy>=1.26",
+    "pillow>=10",
     "requests>=2.34.2",
 ]
 
@@ -19,3 +22,10 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.uv]
+# cadquery declares numba but only its optional NURBS helpers import it; leaving it out keeps the
+# image smaller and avoids building llvmlite on platforms without a wheel.
+exclude-dependencies = ["numba", "llvmlite"]
+# resolve to versions that also ship wheels for Intel Macs, so the team can run the pipeline locally
+required-environments = ["sys_platform == 'darwin' and platform_machine == 'x86_64'"]

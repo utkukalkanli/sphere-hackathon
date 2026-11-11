@@ -11,3 +11,10 @@ datasets
 # Local dashboard and its traces: not part of the agent
 ui
 runs
+
+# Hand-written reference models of the practice parts: the agent must never see them
+cad
+
+# Tests and dataset tooling are not needed at run time
+tests
+tools

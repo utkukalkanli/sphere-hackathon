@@ -36,6 +36,37 @@ account).
 
 # Repo overview
 
+# How the agent works
+
+`scripts/main.py` runs one generate → build → measure → compare → correct loop per test case
+(`src/agentic_cad/`):
+
+1. **Generate** (`agent.py`, `prompts.py`, `llm.py`): the model gets the brief, `facts.json` and the 8 views
+   and writes a CadQuery script. Scripts use absolute-coordinate helpers (`cadlib.py`: `box`, `cyl`, `prism`,
+   `revolve`, ...) so features can be placed straight from the numbers in the brief.
+2. **Build** (`runner.py`): the script runs in its own process with a timeout. The result is reduced to one
+   valid solid, moved to the bounding-box origin, exported to STEP and re-imported to prove it is readable.
+3. **Measure and compare** (`evaluate.py`, `render.py`): bounding box, volume, surface area and cylinder
+   diameters are checked against `facts.json`; the silhouette is drawn in the pixel frame of each
+   orthographic view and scored by IoU; target and candidate views are tiled side by side.
+4. **Correct**: the differences (and the side-by-side images) go back to the model, which sends a full
+   corrected script. The loop stops when every check is within tolerance, after `AGENT_MAX_ITERS`
+   attempts, or when the case's share of the time budget is used up.
+
+The best solid so far is written to the output directory after every improvement, starting with a plain
+block of the envelope before the first model call, so a slow or failing endpoint never leaves a case
+without a file. Settings are environment variables (`src/agentic_cad/config.py`); a vision model is needed
+unless `AGENT_USE_IMAGES=0`.
+
+```sh
+uv run python scripts/main.py --only test_case_1 --output_dir /tmp/out   # one case, outputs kept out of the repo
+TRACE=1 uv run python scripts/main.py --output_dir /tmp/out              # also write traces for ui/server.py
+uv run pytest                                                            # loop tests use a scripted model
+```
+
+`cad/` holds hand-written CadQuery models of the nine practice parts, kept as a reference for what a good
+script looks like. They are not used by the agent and are excluded from the image.
+
 # Submission format
 
 Your submission comprises of two parts: i) docker image containing your agent workflow, and ii) your output CAD .stp files. The docker image should be built from the root of the repo, and should contain all dependencies required to run your agent workflow. The output .stp files should be placed in the `artifacts/outputs` directory.

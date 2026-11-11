@@ -13,3 +13,5 @@ datasets/.venv/
 
 # Pipeline traces for the dashboard (ui/)
 runs/
+
+.DS_Store
