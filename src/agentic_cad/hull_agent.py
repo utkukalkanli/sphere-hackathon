@@ -11,6 +11,8 @@ from pathlib import Path
 
 from agentic_cad import holes as hl
 from agentic_cad import outline_fit as of
+from agentic_cad import depth
+from agentic_cad import rounds
 from agentic_cad import trace
 from agentic_cad import visual_hull as vh
 
@@ -25,6 +27,11 @@ HOLES_TIMEOUT = float(os.environ.get("HULL_HOLES_TIMEOUT", 40))
 RETRY_BUDGET = float(os.environ.get("HULL_RETRY_BUDGET", 20))
 
 
+# Steps after the holes, in order; HULL_SKIP=rounds,depth switches some off
+LATER_STEPS = {"rounds": rounds, "depth": depth}
+SKIP_STEPS = {name for name in os.environ.get("HULL_SKIP", "").split(",") if name}
+
+
 class VisualHullAgent:
     # The isometric cut is off: measured on the eval set it adds under one point of overlap, is by far
     # the slowest cut, and leaves slanted faces that are not features of the part. Its views are better
@@ -35,6 +42,10 @@ class VisualHullAgent:
         self.cutter = vh.Cutter()
         self.volumes: dict[str, float] = {}  # volume in mm3 after each step of the last case
         self._stage = 0
+        self.deadline: float | None = None  # time.time() after which the case's later steps are skipped
+
+    def out_of_time(self) -> bool:
+        return self.deadline is not None and time.time() > self.deadline
 
     def close(self) -> None:
         self.cutter.close()
@@ -47,10 +58,26 @@ class VisualHullAgent:
                 solid = self.cut_holes(solid, case_dir)
             except Exception as error:  # the hull is still a valid answer
                 trace.log(f"cut_holes raised {error!r}; keeping the hull", level="error")
+        solid = self.refine(solid, case_dir, views)
         with trace.step("export_step", kind="tool", input={"output_path": str(output_path)}) as step:
             solid = vh.tidy(solid)
             vh.write_step(solid, output_path)
             step.metric(volume_cm3=round(vh.volume(solid) / 1000, 3))
+
+    def refine(self, solid, case_dir: Path | None, views: list[Path], skip: tuple[str, ...] = ()):
+        """The steps after the holes, each in its own module with an `apply(agent, solid, case_dir,
+        views)`. A step that raises is skipped: the solid so far is still a valid answer."""
+        for name, module in LATER_STEPS.items():
+            if name in skip or name in SKIP_STEPS:
+                continue
+            if self.out_of_time():
+                trace.log(f"the case has used its share of the run's time; {name} and later steps are skipped", level="warning")
+                break
+            try:
+                solid = module.apply(self, solid, case_dir, views)
+            except Exception as error:
+                trace.log(f"{name} raised {error!r}; keeping the solid as it was", level="error")
+        return solid
 
     def _record(self, step, solid, label: str) -> None:
         """Note the volume after this step and, when tracing, save the solid for the dashboard."""

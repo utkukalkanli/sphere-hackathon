@@ -1,4 +1,6 @@
 import argparse
+import os
+import time
 import traceback
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,6 +13,11 @@ from agentic_cad.trace import Tracer
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_INPUTS = REPO_ROOT / "artifacts/inputs"
 DEFAULT_OUTPUTS = REPO_ROOT / "artifacts/outputs"
+# The organisers stop the whole run after 20 minutes. The time left is shared equally among the cases
+# still to do: a case past its share skips its later steps, and when even that is too little the
+# remaining cases get their bounding box, so that every case has a file when the run ends.
+RUN_BUDGET = float(os.environ.get("HULL_RUN_BUDGET", 17 * 60))
+MIN_CASE_SECONDS = 5.0
 
 
 @dataclass
@@ -94,11 +101,19 @@ def main(args):
     results: dict[str, str] = {}
     # Records every step under runs/ for the dashboard (ui/); a no-op where it can't write
     with Tracer(meta={"input_dir": args.input_dir, "output_dir": args.output_dir}) as tracer:
-        for test_case in test_cases:
+        started = time.time()
+        for index, test_case in enumerate(test_cases):
             print(f"processing {test_case.name}")
             output_path = args.output_dir / f"{test_case.name}.stp"
+            share = (RUN_BUDGET - (time.time() - started)) / (len(test_cases) - index)
             with tracer.case(test_case.name) as case:
-                results[test_case.name] = process(agent, test_case, output_path)
+                if share < MIN_CASE_SECONDS:
+                    print(f"{test_case.name}: the run is out of time, writing the bounding box")
+                    output_path.unlink(missing_ok=True)
+                    results[test_case.name] = "fallback" if write_fallback(test_case, output_path) else "failed"
+                else:
+                    agent.deadline = time.time() + share
+                    results[test_case.name] = process(agent, test_case, output_path)
                 case.output(output_path)
 
     agent.close()

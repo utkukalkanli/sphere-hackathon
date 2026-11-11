@@ -106,6 +106,23 @@ organisers' format:
   as a face and keeps the traced polygon for the ones that fail (eval part 99: 1 of 32 loops).
 - **The solid is built with its bounding-box min corner at the origin**, the same frame as the
   positions in `facts.json` and the brief.
+- **The verifier** (`verify.py`): `observe(case_dir)` gives mask, lines and mm per pixel of every
+  view; `draw(mesh, view, dims, mm_per_px)` gives depth, face and normal per pixel of a candidate on
+  the same pixel grid; `check(solid, case_dir, observed).score` is lines x silhouettes x volume
+  ratio. A check takes 1 to 4 s. Lines are found as what a 5 px closing fills in (at least 28 grey
+  levels darker than the surroundings).
+- **The scale of an isometric view** follows from the top view: the part's extent along (1, 1, 0) is
+  known there in mm and is the width of the part in the isometric view in pixels. No guess about what
+  the renderer framed is needed (`verify._iso_scale`).
+- **A silhouette overlap below 1 is normal for thin parts**: the ground truth itself gets 0.83 against
+  its own view when the part is 12 px thick, from a one-pixel difference.
+- **The tone of faces looking at the camera** is the most common part colour of a straight view. In
+  the eval renders it is the same in every view (BGR 85, 141, 178); in the practice renders it varies
+  by view (practice part 9: 104, 159, 202 in four views, 97, 146, 184 in two), so it is taken per view.
+- **A hole of ours can show past the edge of a face**: when a listed hole is not where the view draws
+  it, its floor appears as a sliver of lower level inside the neighbouring face (eval part 123).
+- **A new later step** is a module with `apply(agent, solid, case_dir, views)` added to `LATER_STEPS`
+  in `hull_agent.py` and its label to `STEPS` in `tools/eval_hull.py`.
 - **`Cutter.run(operation, shape, argument, timeout)`** runs any boolean in a spawned child process.
   The operation must be a module-level function and the argument picklable. Use it for every new
   geometric step.

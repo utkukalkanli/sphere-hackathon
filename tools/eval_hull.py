@@ -33,7 +33,7 @@ ROOT = Path(__file__).resolve().parents[1]
 EVAL = ROOT / "datasets" / "eval"
 SRC = ROOT / "src" / "agentic_cad"
 CACHE = ROOT / "runs" / "_eval_cache"
-STEPS = ["box", "front_back", "right_left", "top_bottom", "iso", "holes"]
+STEPS = ["box", "front_back", "right_left", "top_bottom", "iso", "holes", "rounds", "depth"]
 IOU_POINTS = 1500
 
 
@@ -120,6 +120,7 @@ def evaluate(job: dict) -> dict:
             volumes_path.write_text(json.dumps(agent.volumes))
         if options["holes"]:
             solid = agent.cut_holes(solid, case)
+        solid = agent.refine(solid, case, views, skip=tuple(options["skip"]))
         faces, explorer = 0, TopExp_Explorer(vh.tidy(solid), TopAbs_FACE)
         while explorer.More():
             faces += 1
@@ -144,6 +145,7 @@ def main() -> None:
     parser.add_argument("--only", nargs="*", metavar="test_case_<n>")
     parser.add_argument("--iso", action="store_true", help="also make the isometric cut (off in the pipeline; slow)")
     parser.add_argument("--no-holes", action="store_true", help="skip step 2")
+    parser.add_argument("--skip", nargs="*", default=[], metavar="STEP", help="later steps to leave out: rounds, depth")
     parser.add_argument("--iou", action="store_true", help="measure the real overlap with the ground truth (slower)")
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--no-cache", action="store_true")
@@ -152,11 +154,10 @@ def main() -> None:
     with open(EVAL / "index.csv", newline="") as f:
         tiers = {f"test_case_{row['n']}": row["tier"] for row in csv.DictReader(f)}
     names = args.only or (list(tiers) if args.all else sample(tiers, args.cases))
-    options = {"iso": args.iso, "holes": not args.no_holes, "iou": args.iou}
+    options = {"iso": args.iso, "holes": not args.no_holes, "iou": args.iou, "skip": sorted(args.skip)}
     outline = os.environ.get("HULL_OUTLINE", "arcs")
     hull_key = digest(SRC / "visual_hull.py", SRC / "outline_fit.py", {"iso": options["iso"], "outline": outline})
-    result_key = digest(SRC / "visual_hull.py", SRC / "outline_fit.py", SRC / "holes.py", SRC / "hull_agent.py",
-                        Path(__file__), options, {"outline": outline})
+    result_key = digest(*sorted(SRC.glob("*.py")), Path(__file__), options, {"outline": outline})
     CACHE.mkdir(parents=True, exist_ok=True)
     jobs = [{"name": n, "options": options, "hull_key": hull_key, "result_key": result_key,
              "cache": not args.no_cache} for n in names]

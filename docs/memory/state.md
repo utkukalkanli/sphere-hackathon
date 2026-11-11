@@ -1,6 +1,6 @@
 # Project state
 
-Last updated: 2026-11-11, about 20:45 CET.
+Last updated: 2026-11-11, about 22:00 CET.
 
 ## Pipeline
 
@@ -10,11 +10,15 @@ Everything so far is deterministic. No model is called anywhere yet.
 | --- | --- | --- |
 | 1. Visual hull: a box with the `facts.json` dimensions, cut through wherever a view is white (front/back, right/left, top/bottom). Before cutting, each traced outline is rebuilt from straight lines and circular arcs (`outline_fit.py`). A fourth cut along the isometric views is implemented but off since 2026-11-11 | `src/agentic_cad/visual_hull.py`, `src/agentic_cad/outline_fit.py` | committed on `feat/visual-hull` |
 | 2. Holes: every cylindrical hole listed in `facts.json` is cut as a cylinder; a thinner coaxial boss inside a bore is kept | `src/agentic_cad/holes.py` | committed on `feat/visual-hull`, measured (below) |
-| 3. Anything that finds pockets and other inner cavities | none | not started |
+| 3. Rounds: along every boss or bore axis of `facts.json`, where both side views show one strip of the same width centred on the axis, the square the silhouettes left is cut to the circle (revolved fitted outline). Only where `facts.json` lists a boss of that radius there, or the part is a disc seen along the axis and has only lathe faces | `src/agentic_cad/rounds.py` | committed on `feat/visual-hull`, measured (below) |
+| 4. Level faces: in each straight view, an area between the dark lines with the flat tone of a face looking at the camera is one face at one depth. Where it covers several flat levels of our solid, the whole area is cut down to the lowest (if that level covers at least 5 % of the area) | `src/agentic_cad/depth.py` | committed on `feat/visual-hull`, measured (below) |
+| Verifier (not a step): draws a candidate solid from the 8 cameras and compares silhouettes, face-boundary lines, volume and area with the inputs. Steps 3 and 4 keep a cut only if its score does not drop | `src/agentic_cad/verify.py`, `tools/check_verify.py` | committed on `feat/visual-hull`, measured (below) |
+| Blind pockets, slanted and curved faces from the shading and the isometric views | `src/agentic_cad/shading.py` | another session is writing it |
 
 Unused inputs so far: the text of `description.md` (only its Envelope line is read, as a fallback),
-`context.png`, the shading and edge lines inside the views, and every `facts.json` field except the
-bounding box, the volume and the two cylinder lists.
+`context.png`, the shading inside the views (the lines are used by step 4 and the verifier), and
+every `facts.json` field except the bounding box, the volume, the two cylinder lists and the face
+types.
 
 Guards around every cut (`hull_agent.py`):
 
@@ -28,6 +32,11 @@ Guards around every cut (`hull_agent.py`):
   with that direction first (only while the case has used under 20 s). A final `check_views` step
   compares the solid with all three silhouettes and rebuilds with traced outlines if it disagrees.
 - If cutting all holes at once is refused, they are retried one `facts.json` entry at a time.
+- Steps 3 and 4 run through `VisualHullAgent.refine` (`LATER_STEPS`; `HULL_SKIP=rounds,depth` switches
+  them off). Each keeps a cut only if the verifier's score does not drop by more than 0.003.
+- The whole run has one time budget (`HULL_RUN_BUDGET`, 17 minutes, `scripts/main.py`): the time left
+  is shared among the cases still to do; a case past its share skips its later steps, and with under
+  5 s per case left the remaining cases get their bounding box.
 - An exception in one view direction or in the hole step keeps the solid carved so far; an
   exception anywhere else in a case makes `scripts/main.py` write the bounding box for that case
   and go on (uncommitted).
@@ -103,14 +112,40 @@ cleanly: no fallback, no retry, no warning. Against a native run on the ARM lapt
 the same face count and the same volume to 7 digits or better. **The committed `artifacts/outputs`
 are the files the image produced**.
 
+Steps 3 and 4 on the fixed 24-part eval sample, sampled IoU against the ground truth, 2026-11-11
+(the hull changed slightly since the table above, so compare within this table):
+
+| | steps 1 + 2 | + rounds | + level faces |
+| --- | --- | --- | --- |
+| simple (8) | 0.960 | 0.994 | 0.994 |
+| medium (8) | 0.838 | 0.841 | 0.861 |
+| complex (8) | 0.705 | 0.705 | 0.706 |
+| all (24) | 0.834 | 0.847 | 0.854 |
+
+- No part got worse in either step and none was cut below the true volume. Level faces changed 5 of
+  the 24 parts; the best gained 12 points (part 182, raised letters on a plate).
+- Practice set with steps 1 to 4, our volume / true volume (before in brackets): part 1 is 1.00
+  (1.07), part 2 is 1.10 (1.23), part 3 is 1.00 (1.09), part 4 is 1.07 (1.24), part 7 is 2.14
+  (2.20); parts 5, 6, 8, 9 hardly change (1.23, 3.78, 1.01, 1.89). All 9 are one valid solid.
+  `artifacts/outputs` still holds the outputs of steps 1 + 2; they have to be regenerated from the
+  amd64 image before a submission.
+- Run time: the 9 practice parts take 87 s alone on the laptop (8 s with steps 1 + 2). Each verifier
+  check costs 1 to 4 s; step 4 took up to 21 s on one eval part with 4 processes running.
+
+Verifier on the same 24 parts, 2026-11-11: the ground truth scores 0.96 on average (0.91 to 0.99),
+our steps 1 + 2 solid 0.71, the bounding box 0.24; the ground truth scores at least as high as our
+solid on all 24.
+
 ## Known weaknesses
 
-- Inner cavities and pockets are not found by either step. This is the largest loss, mostly on
-  complex parts.
+- Blind pockets (recesses our solid does not reach anywhere) and inner cavities are not found by
+  steps 1 to 4. This is the largest loss, mostly on complex parts.
+- The verifier cannot see a wrong cut that leaves silhouettes and lines alone and brings the volume
+  closer (eval part 123: a face pushed back 5 mm passed it; the 5 % rule in step 4 stopped that one).
 - Outlines that are neither straight nor circular (splines, ellipses of slanted cylinders) stay
   polylines. Practice outputs are now 0.05 to 1.3 MB (4.4 MB in total, was 44 MB).
-- The timeouts make the output depend on how fast the machine is: a cut that finishes here may time
-  out on the organisers' machine and give a different solid.
+- The timeouts and the run budget make the output depend on how fast the machine is: a cut that
+  finishes here may time out on the organisers' machine and give a different solid.
 - Not yet submitted: the image and the outputs are ready (see Measurements), but nothing is on `main`.
 - The dashboard section of README.md describes the first dashboard, not the redesigned one.
 

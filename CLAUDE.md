@@ -54,6 +54,7 @@ uv run python scripts/main.py --only test_case_5       # one case
 uv run python scripts/main.py --input_dir datasets/eval/inputs --output_dir <dir>
 uv run python tools/eval_hull.py                       # score on 24 fixed eval parts, cached
 uv run python tools/eval_hull.py --iou                 # also check the overlap against ground truth
+uv run python tools/check_verify.py                    # verifier scores of ground truth, our solid and the box
 uv run python ui/server.py                             # dashboard, http://localhost:8765
 uv run pytest                                          # what CI runs
 ```
@@ -63,7 +64,7 @@ uv run pytest                                          # what CI runs
 | path | contents |
 | --- | --- |
 | `scripts/main.py` | entrypoint the organisers run |
-| `src/agentic_cad/` | the agent: `visual_hull.py` (step 1), `holes.py` (step 2), `hull_agent.py` (runs the steps), `trace.py` (run traces for the dashboard) |
+| `src/agentic_cad/` | the agent: `visual_hull.py` (step 1), `holes.py` (step 2), `rounds.py` (step 3), `depth.py` (step 4), `verify.py` (checks a candidate solid against the inputs), `hull_agent.py` (runs the steps), `trace.py` (run traces for the dashboard) |
 | `artifacts/inputs` | the 9 practice parts; `artifacts/outputs` holds our committed answers for them |
 | `datasets/eval` | 266 extra parts in the same format, with ground truth, for local scoring |
 | `tools/eval_hull.py` | local score; `tools/dataset/` built the eval set |

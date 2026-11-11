@@ -8,6 +8,16 @@ the entry and say what changed.
 - **A model will be used** (2026-11-11, user). A teammate has rented a GPU on Brev and is setting
   up a VLM and an LLM there. Until it is reachable, work goes into the deterministic steps and into
   what the model step will need from them.
+- **Steps after the holes keep a cut only if the verifier does not rate the result lower**
+  (2026-11-11). They can remove real material, and the volume guard only catches large mistakes.
+  The verifier needs no ground truth, so the same test works on the hidden parts and for a model's
+  proposals later.
+- **Steps stay simple and general; no tuning to single parts** (2026-11-11, user: "do not overfit, a
+  step that works correctly is enough, we improve step by step").
+- **One time budget for the whole run** (2026-11-11). 17 of the 20 minutes, shared among the cases
+  still to do; a case past its share skips its later steps, and the last resort is the bounding box.
+- **The bosses of `facts.json` are used to make square sections round** (2026-11-11; answers "do the
+  bosses help?"). Only where both side views confirm a square centred on the axis.
 - **Start with a deterministic step, not a model** (2026-11-11, user). The first step builds the
   bounding box from `facts.json` and cuts away what the views show as white. It is fast, cannot
   hallucinate, and gives later steps a solid that already contains the part.
