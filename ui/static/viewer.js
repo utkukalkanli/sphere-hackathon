@@ -180,7 +180,7 @@ export async function createViewer(container, meshes, color = COLORS.ours, { int
     color, roughness: 0.62, metalness: 0.12, side: THREE.DoubleSide,
     polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
   });
-  const lines = new THREE.LineBasicMaterial({ color: 0x0b0d10 });
+  const lines = new THREE.LineBasicMaterial({ color: 0x08090a });
   const root = new THREE.Group(), shade = new THREE.Group(), used = [];
   let triangles = 0;
   const add = (group, list, fill, stroke, order) => {
@@ -248,10 +248,7 @@ export async function createViewer(container, meshes, color = COLORS.ours, { int
     renderer.setViewport(0, 0, w, h);
     renderer.setScissor(0, 0, w, h);
     renderer.render(scene, camera);
-    const glow = ctx.createRadialGradient(w / 2, h * 0.45, 0, w / 2, h * 0.45, Math.max(w, h) * 0.7);
-    glow.addColorStop(0, '#20252b');
-    glow.addColorStop(1, '#0c0e10');
-    ctx.fillStyle = glow;
+    ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, w, h);
     ctx.drawImage(renderer.domElement, 0, renderer.domElement.height - h, w, h, 0, 0, w, h);
     if (interactive) drawAxes(dpr, h);

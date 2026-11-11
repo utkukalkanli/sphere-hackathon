@@ -1,6 +1,6 @@
 // Dashboard front end. One large 3D view of the solid after the chosen pipeline step, with what that
-// step removed drawn over it; a slider of the steps underneath; the input (and what the step took
-// from it) on the left, the output on the right. No build step, no framework.
+// step removed drawn over it; a slider of the steps underneath; everything about the input on the
+// left; the ground truth and what the chosen step extracted on the right. Both side panels can be dragged wider. No build step, no framework.
 import { createViewer, setView, fit, zoomBy, trackball, setTrackball, ghost, setGhost, VIEWS, COLORS } from '/static/viewer.js';
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -30,7 +30,6 @@ const S = {
   dataset: null, caseName: null, runId: null,  // runId '' = committed outputs / no run
   image: DEFAULT_VIEW,
   sel: null,  // the step whose solid is shown; null = follow the latest
-  right: 'output',  // what the right window shows: our output or the ground truth
 };
 const traces = new Map();  // "<run>/<case>" -> { events, loading, loaded, failed }
 let live = { id: 0, rows: [] };  // rows: the steps on the slider  // bumped whenever another case or run comes on screen
@@ -319,11 +318,14 @@ function renderMain() {
         ${viewportHTML('ours', 'Our solid after the chosen step. Drag to rotate, shift-drag to pan, scroll to zoom.')}
         <div class="hud"><div id="stage-label"></div><div id="steps-note"></div></div>
         <div class="hud end" id="steps-status"></div>
+        <div class="grip" data-side="left" role="separator" aria-orientation="vertical" title="Drag to resize, double-click to reset"></div>
+        <div class="grip" data-side="right" role="separator" aria-orientation="vertical" title="Drag to resize, double-click to reset"></div>
       </section>
-      <aside class="side" id="result" aria-label="Output">
+      <aside class="side" id="result" aria-label="Ground truth">
         <div id="result-head"></div>
-        ${viewportHTML('out', 'Our output or the ground truth', false)}
+        ${viewportHTML('out', 'Ground truth', false)}
         <div id="metrics"></div>
+        <section id="step-detail"></section>
       </aside>
       <footer id="timeline"></footer>`;
     renderInput(c);
@@ -371,7 +373,7 @@ function factsHTML(facts) {
     && v != null && (typeof v !== 'object' || Object.keys(v).length));
   const feature = ([key, value]) => `<h3>${esc(words(key))}</h3>${tableHTML(value)}`;
   return `<dl class="spec">${spec.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>
-    ${rest.length ? `<details class="fold"><summary>Features (${rest.length})</summary>${rest.map(feature).join('')}</details>` : ''}`;
+    ${rest.map(feature).join('')}`;
 }
 
 // The description is the prompt our pipeline reads. Dimensions are lifted out of the prose so the
@@ -407,9 +409,8 @@ function renderInput(c) {
     <div class="thumbs">${images.map((name, i) => `<button data-image="${name}" aria-pressed="${name === S.image}"
       title="${viewLabel(name)}${VIEWS[name] ? ` — turns the 3D views to this side (${i + 1})` : ''}">
       <img alt="${viewLabel(name)}" src="${imageSrc(c, name)}" data-cut="${imageSrc(c, name)}"></button>`).join('')}</div>` : '<p class="note">This case has no reference renders.</p>'}
-    <section id="step-detail"></section>
-    <details class="fold top"><summary>Brief</summary><article class="prose" id="brief"></article></details>
-    <details class="fold top"><summary>Facts</summary>${factsHTML(c.facts)}</details>`;
+    <h2>Brief</h2><article class="prose" id="brief"></article>
+    <h2>Facts</h2>${factsHTML(c.facts)}`;
   hydrateImages($('#input'));
   const id = live.id;
   fetch(`/api/description?dataset=${S.dataset}&case=${c.name}`).then((r) => r.text()).then((text) => {
@@ -437,15 +438,44 @@ function startMeasuring(c) {
   }
 }
 
+// The ground truth; a case without one (the practice set) shows our output instead
 function renderResult(c) {
-  const side = c.truth && S.right === 'truth' ? 'truth' : 'output';
-  const tab = (id, label) => `<button data-right="${id}" aria-pressed="${side === id}"><i class="sw ${id === 'truth' ? 'truth' : 'ours'}"></i>${label}</button>`;
-  setHTML($('#result-head'), c.truth ? `<div class="tabs">${tab('output', 'Output')}${tab('truth', 'Truth')}</div>`
-    : '<h2><i class="sw ours"></i>Output</h2>');
+  setHTML($('#result-head'), `<h2><i class="sw ${c.truth ? 'truth' : 'ours'}"></i>${c.truth ? 'Ground truth' : 'Output'}</h2>`);
   const output = outputOf(c);
-  if (side === 'truth') showModel($('#out'), c.truth.url, `${c.truth.url}?${c.truth.mtime}`, COLORS.truth);
+  if (c.truth) showModel($('#out'), c.truth.url, `${c.truth.url}?${c.truth.mtime}`, COLORS.truth);
   else showModel($('#out'), output && output.url, output && output.key, COLORS.ours, '<p class="note">No output yet</p>');
 }
+
+// -- side panels: drag the edge to resize ----------------------------------------------------------
+
+const WIDTHS = { left: 330, right: 310 };
+function setWidth(side, width) {
+  const value = Math.round(Math.max(220, Math.min(innerWidth * 0.45, width)));
+  $('#main').style.setProperty(`--${side}`, `${value}px`);
+  try { localStorage.setItem(`panel-${side}`, value); } catch { /* private mode */ }
+}
+for (const side of Object.keys(WIDTHS)) {
+  let saved = null;
+  try { saved = Number(localStorage.getItem(`panel-${side}`)); } catch { /* private mode */ }
+  if (saved) $('#main').style.setProperty(`--${side}`, `${saved}px`);
+}
+document.addEventListener('pointerdown', (event) => {
+  const grip = event.target.closest('.grip');
+  if (!grip) return;
+  event.preventDefault();
+  grip.setPointerCapture(event.pointerId);
+  grip.classList.add('on');
+  const side = grip.dataset.side, box = $('#main').getBoundingClientRect();
+  const move = (e) => setWidth(side, side === 'left' ? e.clientX - box.left : box.right - e.clientX);
+  const done = () => { grip.classList.remove('on'); grip.removeEventListener('pointermove', move); };
+  grip.addEventListener('pointermove', move);
+  grip.addEventListener('pointerup', done, { once: true });
+  grip.addEventListener('pointercancel', done, { once: true });
+});
+document.addEventListener('dblclick', (event) => {
+  const grip = event.target.closest('.grip');
+  if (grip) setWidth(grip.dataset.side, WIDTHS[grip.dataset.side]);
+});
 
 const settle = (promise) => promise.then((data) => data.measured, () => null);
 
@@ -599,7 +629,7 @@ function renderSteps(c) {
         const m = s.metrics || {}, time = duration((s.end || (running ? now : t.last)) - s.start);
         const ratio = truth && m.volume_cm3 != null ? m.volume_cm3 * 1000 / truth : null;
         rows.push({
-          id: s.id, raw: s.name, model, before, changed: Boolean(stage),
+          id: s.id, raw: s.name, about: about(s), model, before, changed: Boolean(stage),
           state: s.end ? s.status : running ? 'running' : 'interrupted',
           n: String(index + 1).padStart(2, '0'), name: words(s.name.replace(/^cut_/, '')),
           ratio: ratio == null ? '' : `×${ratio.toFixed(ratio < 10 ? 2 : 1)}`,
@@ -616,7 +646,7 @@ function renderSteps(c) {
     }
   } else if (!output) note = '<p class="note">No output yet. Run this case to see its steps.</p>';
   if (!rows.length && output) {
-    rows.push({ id: 'output', raw: '', model: output, before: null, changed: true, state: 'ok', n: '', name: 'Output', ratio: '', chips: '',
+    rows.push({ id: 'output', raw: '', about: '', model: output, before: null, changed: true, state: 'ok', n: '', name: 'Output', ratio: '', chips: '',
       detail: () => (run ? '' : '<p class="note">Run this case to see its steps.</p>') });
   }
   if (running && !rows.length) note = '<p class="note pulse">Running…</p>';
@@ -637,10 +667,30 @@ function renderSteps(c) {
     { before: chosen && chosen.before, frame: run && first ? first.model : null });
 }
 
+// One line on what each step does, shown under its stop. A step can bring its own with
+// trace.step(..., description="..."); this list covers the steps the pipeline has today.
+const SIDES = { front_back: 'front and back', right_left: 'right and left', top_bottom: 'top and bottom', iso: 'isometric' };
+const ABOUT = [
+  [/^bounding_box$/, () => 'A box with the facts.json dimensions'],
+  [/^cut_(front_back|right_left|top_bottom|iso)$/, (m) => `Cuts away what the ${SIDES[m[1]]} views show as empty`],
+  [/^retry_(.+)_first$/, (m) => `Cuts again, ${SIDES[m[1]] || words(m[1])} first`],
+  [/^check_views$/, () => 'Compares the solid with the silhouettes'],
+  [/^cut_holes$/, () => 'Cuts the cylindrical holes listed in facts.json'],
+  [/^cut_rounds$/, () => 'Makes square sections round along boss and bore axes'],
+  [/^level_faces$/, () => 'Cuts each flat face down to its lowest level'],
+  [/^shading_depth$/, () => 'Takes pocket depths from the shading of the isometric views'],
+  [/^export_step$/, () => 'Merges coplanar faces and writes the .stp'],
+];
+function about(step) {
+  if (step.meta && step.meta.description) return step.meta.description;
+  for (const [pattern, text] of ABOUT) { const match = step.name.match(pattern); if (match) return text(match); }
+  return '';
+}
+
 // The steps as a slider. It is rebuilt only when the steps change, so a drag is never interrupted.
 function renderTimeline(rows, chosen) {
   const timeline = $('#timeline');
-  const signature = JSON.stringify(rows.map((r) => [r.id, r.name, r.state, r.ratio, r.changed]));
+  const signature = JSON.stringify(rows.map((r) => [r.id, r.name, r.state, r.ratio, r.changed, r.about]));
   if (timeline.dataset.rows !== signature) {
     timeline.dataset.rows = signature;
     timeline.innerHTML = rows.length < 2 ? '' : `<div class="track" style="--n:${rows.length}">
@@ -648,7 +698,8 @@ function renderTimeline(rows, chosen) {
       <input type="range" id="scrub" min="0" max="${rows.length - 1}" step="1" aria-label="Pipeline step">
       ${rows.map((r) => `<button class="stop ${r.changed ? 'cut' : ''}" data-sel="${r.id}" title="${esc(r.name)}${r.ratio ? ` — ${r.ratio} the true volume` : ''}">
         <i class="dot"></i><span class="name">${esc(r.name)}</span>
-        <span class="v ${r.state === 'ok' ? '' : `state ${r.state}`}">${r.state === 'ok' ? r.ratio : r.state}</span></button>`).join('')}
+        <span class="v ${r.state === 'ok' ? '' : `state ${r.state}`}">${r.state === 'ok' ? r.ratio : r.state}</span>
+        <span class="about">${esc(r.about)}</span></button>`).join('')}
     </div>`;
   }
   const scrub = $('#scrub');
@@ -718,7 +769,6 @@ document.addEventListener('click', async (event) => {
   if (d.fit !== undefined) return fit();
   if (d.orbit !== undefined) return toggleOrbit();
   if (d.ghost !== undefined) return toggleGhost();
-  if (d.right) { S.right = d.right; return renderResult(currentCase()); }
   if (d.lightbox) return openOverlay(d.lightbox);
   if (d.sel) return selectStep(d.sel);
   if (d.action === 'run') {
