@@ -1,6 +1,6 @@
 // Dashboard front end. Three columns: the input (reference renders, description, facts), our solid
 // with the pipeline steps that built it, and the ground truth. No build step, no framework.
-import { createViewer, setView, fit, zoomBy, VIEWS, COLORS } from '/static/viewer.js';
+import { createViewer, setView, fit, zoomBy, trackball, setTrackball, VIEWS, COLORS } from '/static/viewer.js';
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -18,6 +18,7 @@ const ICON = {
   minus: icon('<path d="M3.5 8h9"/>'),
   plus: icon('<path d="M3.5 8h9M8 3.5v9"/>'),
   fit: icon('<path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10"/>'),
+  orbit: icon('<circle cx="8" cy="8" r="5.5"/><ellipse cx="8" cy="8" rx="5.5" ry="2.2"/><ellipse cx="8" cy="8" rx="2.2" ry="5.5"/>'),
   play: icon('<path d="M5 3.5v9l7-4.5z" fill="currentColor"/>'),
   stop: icon('<rect x="4" y="4" width="8" height="8" rx="1" fill="currentColor"/>'),
 };
@@ -207,7 +208,13 @@ const viewportHTML = (id, label) => `<div class="viewport" id="${id}">
     <button data-zoom="0.8" title="Zoom out (−)" aria-label="Zoom out">${ICON.minus}</button>
     <button data-zoom="1.25" title="Zoom in (+)" aria-label="Zoom in">${ICON.plus}</button>
     <button data-fit title="Fit the part (F, or double-click)" aria-label="Fit the part">${ICON.fit}</button>
+    <button data-orbit aria-pressed="${trackball()}" title="Free rotation (T)" aria-label="Free rotation">${ICON.orbit}</button>
   </div></div>`;
+
+function toggleOrbit() {
+  setTrackball(!trackball());
+  $$('[data-orbit]').forEach((button) => button.setAttribute('aria-pressed', trackball()));
+}
 
 // -- routing ------------------------------------------------------------------------------------
 
@@ -641,6 +648,7 @@ document.addEventListener('click', async (event) => {
   if (d.image) return showImage(d.image);
   if (d.zoom) return zoomBy(Number(d.zoom));
   if (d.fit !== undefined) return fit();
+  if (d.orbit !== undefined) return toggleOrbit();
   if (d.lightbox) return openOverlay(d.lightbox);
   if (d.sel) { S.sel = d.sel; return renderSteps(currentCase()); }
   if (d.expand) { const closed = $(`#${d.expand}`).classList.toggle('clamp'); target.textContent = closed ? 'Show all' : 'Show less'; return; }
@@ -677,7 +685,7 @@ document.addEventListener('keydown', (event) => {
   const act = {
     ArrowRight: () => moveCase(1), ArrowLeft: () => moveCase(-1),
     ArrowDown: () => moveStep(1), ArrowUp: () => moveStep(-1), ']': () => moveStep(1), '[': () => moveStep(-1),
-    '+': () => zoomBy(1.25), '=': () => zoomBy(1.25), '-': () => zoomBy(0.8), f: fit, 0: fit,
+    '+': () => zoomBy(1.25), '=': () => zoomBy(1.25), '-': () => zoomBy(0.8), f: fit, 0: fit, t: toggleOrbit,
   }[event.key] || (/^[1-8]$/.test(event.key) && (() => showImage(VIEW_NAMES[Number(event.key) - 1])));
   if (!act) return;
   event.preventDefault();

@@ -30,9 +30,48 @@ export const VIEWS = {
   view_7_iso_back_left_bottom: [-135, -ISO],
 };
 
-const pose = { az: 45, el: ISO, zoom: 1, pan: [0, 0, 0] };  // pan in units of each model's radius
+// The camera is two unit vectors in model space: screen right and screen up
+const RAD = Math.PI / 180;
+const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const unit = (a) => { const n = Math.hypot(...a) || 1; return a.map((x) => x / n); };
+function spin(v, axis, angle) {  // v turned about a unit axis, angle in radians
+  const c = Math.cos(angle), s = Math.sin(angle), x = cross(axis, v), d = dot(axis, v) * (1 - c);
+  return v.map((value, i) => value * c + x[i] * s + axis[i] * d);
+}
+function fromAngles(az, el) {
+  const a = az * RAD, e = el * RAD;
+  return { right: [Math.cos(a), Math.sin(a), 0], up: [-Math.sin(a) * Math.sin(e), Math.cos(a) * Math.sin(e), Math.cos(e)] };
+}
+// Axis and angle of the one turn that takes camera `a` to camera `b`
+function turnBetween(a, b) {
+  const A = [a.right, a.up, cross(a.right, a.up)], B = [b.right, b.up, cross(b.right, b.up)];
+  const R = [0, 1, 2].map((r) => [0, 1, 2].map((c) => B[0][r] * A[0][c] + B[1][r] * A[1][c] + B[2][r] * A[2][c]));
+  const cos = Math.max(-1, Math.min(1, (R[0][0] + R[1][1] + R[2][2] - 1) / 2));
+  const skew = [R[2][1] - R[1][2], R[0][2] - R[2][0], R[1][0] - R[0][1]], sin = Math.hypot(...skew) / 2;
+  if (sin > 1e-6) return { axis: unit(skew), angle: Math.atan2(sin, cos) };
+  if (cos > 0) return { axis: [0, 0, 1], angle: 0 };
+  const i = [0, 1, 2].reduce((best, k) => (R[k][k] > R[best][best] ? k : best), 0);  // half a turn
+  const ai = Math.sqrt((R[i][i] + 1) / 2);
+  return { axis: unit([0, 1, 2].map((j) => (j === i ? ai : (R[i][j] + R[j][i]) / (4 * ai)))), angle: Math.PI };
+}
+
+const pose = { ...fromAngles(45, ISO), zoom: 1, pan: [0, 0, 0] };  // pan in units of each model's radius
 const viewers = new Set();
 let frame = 0, tween = 0;
+
+function basis() {
+  return { right: pose.right, up: pose.up, dir: cross(pose.right, pose.up) };  // dir: from the part to the camera
+}
+
+// Drag mode. Turntable: sideways turns about the part's Z. Trackball: about the screen's own axes.
+let free = false;
+try { free = localStorage.getItem('orbit') === 'trackball'; } catch { /* private mode */ }
+export const trackball = () => free;
+export function setTrackball(on) {
+  free = Boolean(on);
+  try { localStorage.setItem('orbit', free ? 'trackball' : 'turntable'); } catch { /* private mode */ }
+}
 
 function schedule() {
   if (frame) return;
@@ -50,13 +89,13 @@ function invalidate() {
 function glide(to) {
   cancelAnimationFrame(tween);
   const from = { ...pose, pan: [...pose.pan] };
-  const turn = ((to.az - from.az) % 360 + 540) % 360 - 180;  // the short way round
+  const { axis, angle } = turnBetween(from, to);
   const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
   const start = performance.now();
   const step = (now) => {
     const t = still ? 1 : Math.min(1, (now - start) / 280), k = 1 - (1 - t) ** 4;
-    pose.az = from.az + turn * k;
-    pose.el = from.el + (to.el - from.el) * k;
+    pose.right = t < 1 ? spin(from.right, axis, angle * k) : to.right;
+    pose.up = t < 1 ? spin(from.up, axis, angle * k) : to.up;
     pose.zoom = from.zoom + (to.zoom - from.zoom) * k;
     pose.pan = from.pan.map((v, i) => v + (to.pan[i] - v) * k);
     invalidate();
@@ -67,23 +106,14 @@ function glide(to) {
 
 export function setView(name) {
   const [az, el] = VIEWS[name] || VIEWS.view_6_iso_front_right_top;
-  glide({ az, el, zoom: 1, pan: [0, 0, 0] });
+  glide({ ...fromAngles(az, el), zoom: 1, pan: [0, 0, 0] });
 }
 export function fit() {
-  glide({ az: pose.az, el: pose.el, zoom: 1, pan: [0, 0, 0] });
+  glide({ right: pose.right, up: pose.up, zoom: 1, pan: [0, 0, 0] });
 }
 export function zoomBy(factor) {
   pose.zoom = Math.min(60, Math.max(0.2, pose.zoom * factor));
   invalidate();
-}
-
-function basis() {
-  const a = pose.az * Math.PI / 180, e = pose.el * Math.PI / 180;
-  return {
-    dir: [Math.sin(a) * Math.cos(e), -Math.cos(a) * Math.cos(e), Math.sin(e)],  // from the part to the camera
-    up: [-Math.sin(a) * Math.sin(e), Math.cos(a) * Math.sin(e), Math.cos(e)],
-    right: [Math.cos(a), Math.sin(a), 0],
-  };
 }
 
 const AXES = [['x', [1, 0, 0], '#ff7a6b'], ['y', [0, 1, 0], '#6fcf97'], ['z', [0, 0, 1], '#6aa5ff']];
@@ -167,7 +197,6 @@ export async function createViewer(container, meshes, color = COLORS.ours, { int
 
   function drawAxes(dpr, h) {  // which way the part is turned
     const { dir, up, right } = basis();
-    const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
     const ox = 26 * dpr, oy = h - 26 * dpr, length = 15 * dpr;
     ctx.lineWidth = 1.5 * dpr;
     ctx.font = `${10 * dpr}px ui-monospace, Menlo, monospace`;
@@ -193,7 +222,9 @@ export async function createViewer(container, meshes, color = COLORS.ours, { int
   canvas.addEventListener('pointerdown', (e) => {
     canvas.setPointerCapture(e.pointerId);
     cancelAnimationFrame(tween);
-    drag = { x: e.clientX, y: e.clientY, pan: e.shiftKey || e.button !== 0 };
+    // past the pole the part is upside down: turn the other way so it still follows the pointer
+    const flip = pose.up[2] < 0 ? -1 : 1;
+    drag = { x: e.clientX, y: e.clientY, pan: e.shiftKey || e.button !== 0, flip };
     canvas.classList.add('dragging');
   });
   canvas.addEventListener('pointermove', (e) => {
@@ -206,8 +237,12 @@ export async function createViewer(container, meshes, color = COLORS.ours, { int
       move(right, -dx * k);
       move(up, dy * k);
     } else {
-      pose.az -= dx * 0.5;
-      pose.el = Math.max(-90, Math.min(90, pose.el + dy * 0.5));
+      // no stop at the poles: the part tumbles all the way round
+      const about = free ? pose.up : [0, 0, 1], turn = -dx * 0.5 * RAD * (free ? 1 : drag.flip);
+      const right = unit(spin(pose.right, about, turn));
+      const up = spin(spin(pose.up, about, turn), right, -dy * 0.5 * RAD);
+      pose.right = right;
+      pose.up = unit(up.map((value, i) => value - right[i] * dot(up, right)));  // keep them square
     }
     invalidate();
   });

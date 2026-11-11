@@ -150,6 +150,7 @@ table.grid :is(th, td):last-child { padding-right: 0; }
 .tools button { display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 5px; background: none; color: var(--text); transition: background-color 0.15s var(--ease), color 0.15s var(--ease); }
 .tools button:hover { background: var(--hover); color: var(--ink); }
 .tools button:active { background: var(--line); }
+.tools button[aria-pressed="true"] { color: var(--accent); background: var(--select); }
 .bench .scroll { flex: 1; min-height: 0; overflow-y: auto; margin: 12px calc(var(--gutter) * -1) 0; padding: 0 var(--gutter) 28px; border-top: 1px solid var(--line); }
 .bench .scroll > .note, #steps-note > * { margin-top: 12px; }
 
