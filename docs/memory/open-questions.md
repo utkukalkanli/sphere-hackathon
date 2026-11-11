@@ -38,7 +38,17 @@ Remove a question when it is answered, and record the answer in `decisions.md` o
   setting up a VLM and an LLM on the Brev instance. Open: which models run on the one RTX PRO 6000
   (96 GB VRAM) within the 20 minutes, and which step calls them. `OPENAI_BASE_URL`, `OPENAI_API_KEY`
   and `OPENAI_MODEL` are not set anywhere yet, and the endpoint must be public and stay up until
-  judging ends.
+  judging ends. `feat/llm-cad-agent` proposes Qwen3-30B-A3B-FP8 (LLM) and Qwen2.5-VL-7B (VLM) via
+  vLLM, but has not been run against a real endpoint.
+- **How do the two approaches combine?** The hull pipeline (`feat/visual-hull`, `ananas`) and the
+  CadQuery loop (`feat/llm-cad-agent`) both replace what `scripts/main.py` does. Options: pick one;
+  give the loop the hull solid as a start or a fallback; or score both per case against `facts.json`
+  and keep the better. Neither has been measured against the other.
+- **Which parts of 9364253 go back into the pipeline?** The merge a8d1c91 dropped them because of
+  conflicts (user, 2026-11-11), meaning to combine the useful parts later; as of 2026-11-11 nothing
+  has been carried over. Candidates: the model-planned cuts (`llm_cuts.py`), cuts as numbers
+  (`features.py`), and checking cuts against all eight views. Note the knowledge entry on practice
+  8: a "the render shows part here" veto wrongly blocks through holes.
 - **`context.png` is not used.** Is there anything in it worth using? It is absent for some parts.
 ## Housekeeping
 

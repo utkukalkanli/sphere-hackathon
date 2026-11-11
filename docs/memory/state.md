@@ -1,10 +1,11 @@
 # Project state
 
-Last updated: 2026-11-11, about 20:45 CET.
+Last updated: 2026-11-11, about 21:00 CET (`ananas` brought level with `feat/visual-hull`).
 
 ## Pipeline
 
-Everything so far is deterministic. No model is called anywhere yet.
+The pipeline on `feat/visual-hull` and `ananas` is deterministic; no model is called. A separate
+model-based agent exists on `feat/llm-cad-agent` (see Git).
 
 | step | file | status |
 | --- | --- | --- |
@@ -30,16 +31,32 @@ Guards around every cut (`hull_agent.py`):
 - If cutting all holes at once is refused, they are retried one `facts.json` entry at a time.
 - An exception in one view direction or in the hole step keeps the solid carved so far; an
   exception anywhere else in a case makes `scripts/main.py` write the bounding box for that case
-  and go on (uncommitted).
+  and go on.
 
 ## Git
 
 - `main`: template, eval set and the first dashboard. It has no `artifacts/outputs`, so **nothing
   has been submitted yet**.
-- `feat/visual-hull` (pushed): step 1, tracing, the redesigned dashboard, and the 9 practice outputs
-  of step 1 (44 MB).
-- `feat/visual-hull` also has step 2, `tools/eval_hull.py`, the isometric cut switched off, and the
-  practice outputs of steps 1 + 2 without the isometric cut.
+- `feat/visual-hull` (pushed): steps 1 + 2, tracing, the redesigned dashboard, `tools/eval_hull.py`,
+  the isometric cut switched off, and the practice outputs of steps 1 + 2 made by the amd64 image.
+- `ananas` (the working branch since 2026-11-11 evening): all of `feat/visual-hull` (merged up to
+  2bc65c8 in 679fbb3, not pushed yet), plus `views.py`, `tests/test_views.py`, `tools/iso_check.py`
+  and the Windows dashboard fix. Commit 9364253 had a second step 2: cuts given as numbers
+  (`features.py`), cuts planned by an OpenAI-compatible model from the brief (`llm_cuts.py`), and
+  every cut checked against all eight views (`views.py` inside `hull_agent.py`). The merge a8d1c91
+  dropped it because of conflicts, and as of 2026-11-11 none of it has been carried over:
+  `views.py` is imported only by `tools/iso_check.py` and the test. The code is still in git at
+  9364253.
+- `feat/llm-cad-agent` (pushed, a teammate's, not merged anywhere): a different approach that
+  replaces `scripts/main.py`. A model writes a CadQuery script per case, it is run, checked against
+  `facts.json` (box, volume, area, cylinder diameters) and the view silhouettes (IoU), and the
+  differences go back to the model for up to 6 rounds, cases in parallel under a 17 min budget.
+  Configured by `OPENAI_*` and `AGENT_*` variables; tested only with a scripted model, never against
+  a real endpoint. Also has `scripts/serve_models.sh` (vLLM on the Brev GPU box: Qwen3-30B-A3B-FP8
+  as LLM on port 8000, Qwen2.5-VL-7B as VLM on 8001), `docs/remote-dev.md`, and `cad/`: hand-written
+  CadQuery models of the 9 practice parts with their STEP files in `artifacts/outputs` (volume
+  within 0.5 % of `facts.json`). **Those outputs do not come from the pipeline**: merging that branch
+  to `main` as it is would submit files the image cannot reproduce.
 - GitHub Actions variables for team-d are set (`ECR_REPOSITORY_URI`, `S3_SUBMISSION_URI`,
   `AWS_REGION`), so a push to `main` submits.
 
