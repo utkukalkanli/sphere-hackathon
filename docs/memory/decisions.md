@@ -52,8 +52,12 @@ the entry and say what changed.
 - **Local score is the volume ratio `min/max`** (2026-11-11). It needs no ground-truth geometry at
   run time and matched the sampled overlap on 40 parts. It stops being valid once a step can remove
   real material or add material; then use `--iou`.
-- **Routine evals use a fixed 24-part sample with caching** (2026-11-11, user). The user does not
-  want minutes of laptop compute on every change. The full 266 parts only on request.
+- **Only the 9 practice parts (`artifacts/inputs`) are used; `datasets/eval` is not run any more**
+  (2026-11-11 evening, user; replaces "routine evals use a fixed 24-part sample"). The eval runs took
+  10 to 15 minutes on the Windows PC. What this costs: the practice parts have no ground truth, so
+  only the volume (and surface area) against `facts.json` can be checked, not the overlap, and a
+  step that cuts real inner material while staying above the true volume goes unnoticed. With 9
+  parts the risk of tuning to them is higher.
 - **Eval tiers are by face count**: up to 30 simple, up to 200 medium, above that complex
   (2026-11-11). The organisers do not say how they tier; this rule puts the 9 practice parts into
   3, 3 and 3, which matches what they announce for the hidden set.
