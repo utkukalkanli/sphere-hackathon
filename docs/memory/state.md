@@ -101,7 +101,7 @@ take 8 s alone on the laptop. The image builds for `linux/amd64` and runs as a n
 read-only inputs in 36 s with tracing on (emulated on an ARM laptop). In the image all 9 parts cut
 cleanly: no fallback, no retry, no warning. Against a native run on the ARM laptop every solid has
 the same face count and the same volume to 7 digits or better. **The committed `artifacts/outputs`
-are the files the image produced** (uncommitted since the last change: see Git).
+are the files the image produced**.
 
 ## Known weaknesses
 
