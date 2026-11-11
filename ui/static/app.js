@@ -726,7 +726,7 @@ function renderSteps(c) {
   live.chosen = chosen ? chosen.id : null;
   setHTML($('#steps-status'), status);
   const diff = S.diff && c.truth ? { url: c.truth.url, key: `${c.truth.url}?${c.truth.mtime}` } : null;
-  const legend = '<i class="sw truth"></i>the part · <i class="sw excess"></i>too much · <i class="sw missing"></i>missing';
+  const legend = '<i class="sw ours"></i>as the part · <i class="sw excess"></i>too much under this face · <i class="sw missing"></i>missing';
   setHTML($('#stage-label'), chosen ? `<span class="n">${chosen.n}</span><b>${esc(chosen.name)}</b><span class="chips">${diff ? legend : chosen.chips}</span>` : '');
   setHTML($('#steps-note'), note);
   renderTimeline(rows, chosen);

@@ -163,8 +163,9 @@ export const COLORS = { ours: 0xb3bcc6, truth: 0xcfa462, ghost: 0x5b9bff, excess
 // `interactive: false` makes a thumbnail: it follows the shared camera but takes no input.
 // `ghost`: the meshes of the solid before this step; what is no longer there shows as a shell.
 // `frame`: { min, max } to frame instead of the solid itself, so every step sits in the same place.
-// `diff`: { meshes, shift } of the ground truth (shift lays its min corner on the solid's). The view
-// then shows the truth, with what the solid has too much as a red shell and what it lacks in violet.
+// `diff`: { meshes, shift } of the ground truth (shift lays its min corner on the solid's). The solid
+// is then painted red where it has material the truth lacks, and the truth shows in violet where it
+// sticks out of the solid.
 export async function createViewer(container, meshes, color = COLORS.ours, { interactive = true, ghost: before = null, frame = null, diff = null } = {}) {
   const { THREE, renderer } = await load();
   const canvas = document.createElement('canvas');
@@ -213,37 +214,68 @@ export async function createViewer(container, meshes, color = COLORS.ours, { int
   if (before && !diff) add(shade, before, haze, hazeLines, 0);
   scene.add(shade, root);
 
-  // The difference to the ground truth, drawn in three passes over the same pixels:
-  //   1. the truth as it is;
-  //   2. the truth again in violet, but only in front of our solid's nearest surface: there the part
-  //      sticks out of our solid, so we lack it;
-  //   3. our solid as a red shell, hidden wherever the truth is nearer: what is left is too much.
-  // Surfaces the two share are pushed apart in depth, as for the removed material above.
-  const passes = [], extra = [];
+  // The difference to the ground truth, painted on the surfaces. The depth of each solid's nearest
+  // surface is drawn into a texture first; then every pixel of our solid is compared with the truth
+  // behind it and every pixel of the truth with our solid:
+  //   our surface in front of the truth's: there is material under it the part does not have (red,
+  //     stronger the thicker that layer is along the line of sight);
+  //   the truth's surface in front of ours: the part sticks out of our solid, we lack it (violet);
+  //   the two in the same place: our solid's own colour.
+  let prepare = null;
+  const extra = [];
   if (diff) {
-    const far = { polygonOffset: true, polygonOffsetFactor: 4, polygonOffsetUnits: 3000 };
-    const make = (Material, options) => { const m = new Material(options); extra.push(m); return m; };
-    const brass = make(THREE.MeshStandardMaterial, { color: COLORS.truth, roughness: 0.62, metalness: 0.12, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
-    const hidden = make(THREE.MeshBasicMaterial, { colorWrite: false, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
-    const lacking = make(THREE.MeshStandardMaterial, { color: COLORS.missing, roughness: 0.7, metalness: 0, side: THREE.DoubleSide, depthFunc: THREE.LessDepth, ...far });
-    const surplus = make(THREE.MeshBasicMaterial, { color: COLORS.excess, transparent: true, opacity: 0.24, depthWrite: false, side: THREE.DoubleSide, ...far });
-    const surplusLines = make(THREE.LineBasicMaterial, { color: 0xa13a33 });
-    const none = make(THREE.LineBasicMaterial, { visible: false });
-    const group = (...parts) => {
-      const g = new THREE.Group();
-      for (const [list, fill, stroke, order, shifted] of parts) {
-        const part = new THREE.Group();
-        if (shifted) part.position.set(...diff.shift);
-        add(part, list, fill, stroke, order);
-        g.add(part);
-      }
-      scene.add(g);
-      passes.push(g);
+    const size = new THREE.Vector2(1, 1), offset = { polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 };
+    const depthOf = () => {
+      const target = new THREE.WebGLRenderTarget(1, 1, { depthTexture: new THREE.DepthTexture(1, 1) });
+      extra.push(target);
+      return target;
     };
-    group([diff.meshes, brass, lines, 1, true]);
-    group([meshes, hidden, none, 0, false], [diff.meshes, lacking, none, 1, true]);
-    group([diff.meshes, hidden, lines, 2, true], [meshes, surplus, surplusLines, 0, false]);
-    root.visible = false;
+    const truthDepth = depthOf(), oursDepth = depthOf();
+    // gap: how far the other solid's surface lies behind this pixel, in units of the depth range.
+    // 4e-4 of it is about a quarter of a percent of the part's size: below that the two coincide.
+    const compare = (target, other, body) => {
+      target.customProgramCacheKey = () => body;  // else three.js shares one program between the two
+      target.onBeforeCompile = (shader) => {
+        shader.uniforms.otherDepth = { value: other.depthTexture };
+        shader.uniforms.viewSize = { value: size };
+        shader.fragmentShader = `uniform sampler2D otherDepth;\nuniform vec2 viewSize;\n${shader.fragmentShader}`.replace('#include <dithering_fragment>', `
+          float gap = texture2D(otherDepth, gl_FragCoord.xy / viewSize).x - gl_FragCoord.z;
+          ${body}
+          #include <dithering_fragment>`);
+      };
+    };
+    compare(material, truthDepth, `if (gap > 4e-4) {
+      float light = dot(gl_FragColor.rgb, vec3(0.333));
+      gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(1.0, 0.27, 0.22) * (0.25 + light), 0.6 + 0.4 * clamp(gap * 40.0, 0.0, 1.0));
+    }`);
+    const lacking = new THREE.MeshStandardMaterial({ color: COLORS.missing, roughness: 0.7, metalness: 0, side: THREE.DoubleSide, ...offset });
+    compare(lacking, oursDepth, 'if (gap <= 4e-4) discard;');
+    const plain = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, ...offset });
+    extra.push(lacking, plain);
+    const truth = new THREE.Group();
+    truth.position.set(...diff.shift);
+    for (const m of diff.meshes) {
+      used.push(m);
+      truth.add(new THREE.Mesh(acquire(THREE, m).geometry, lacking));
+    }
+    scene.add(truth);
+    const outlines = root.children.filter((o) => o.isLineSegments);
+    prepare = (w, h) => {
+      size.set(w, h);
+      scene.overrideMaterial = plain;
+      for (const o of outlines) o.visible = false;
+      for (const [target, shown, other] of [[truthDepth, truth, root], [oursDepth, root, truth]]) {
+        if (target.width !== w || target.height !== h) target.setSize(w, h);
+        shown.visible = true;
+        other.visible = false;
+        renderer.setRenderTarget(target);
+        renderer.render(scene, camera);
+      }
+      renderer.setRenderTarget(null);
+      scene.overrideMaterial = null;
+      truth.visible = true;
+      for (const o of outlines) o.visible = true;
+    };
   }
   let centre, radius;
   if (frame) {
@@ -284,17 +316,8 @@ export async function createViewer(container, meshes, color = COLORS.ours, { int
     if (bufferSize.x < w || bufferSize.y < h) renderer.setSize(Math.max(bufferSize.x, w), Math.max(bufferSize.y, h), false);
     renderer.setViewport(0, 0, w, h);
     renderer.setScissor(0, 0, w, h);
-    if (!passes.length) renderer.render(scene, camera);
-    else {
-      renderer.autoClear = false;
-      renderer.clear();
-      for (const pass of passes) {
-        for (const other of passes) other.visible = other === pass;
-        renderer.clearDepth();
-        renderer.render(scene, camera);
-      }
-      renderer.autoClear = true;
-    }
+    if (prepare) prepare(w, h);
+    renderer.render(scene, camera);
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, w, h);
     ctx.drawImage(renderer.domElement, 0, renderer.domElement.height - h, w, h, 0, 0, w, h);

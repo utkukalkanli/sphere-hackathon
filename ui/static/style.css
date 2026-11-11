@@ -45,7 +45,7 @@ h1, h2, h3, h4, p, ol, ul, dl, figure { margin: 0; }
 i.sw { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 7px; }
 i.sw.ours { background: var(--steel); }
 i.sw.truth { background: var(--brass); }
-i.sw.excess { background: rgba(255, 90, 77, 0.45); border: 1px solid #ff5a4d; }
+i.sw.excess { background: #e2574c; }
 i.sw.missing { background: #b98cff; }
 i.sw.ghost { background: rgba(91, 155, 255, 0.45); border: 1px solid var(--accent); }
 .spacer { flex: 1; }
