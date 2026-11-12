@@ -350,9 +350,32 @@ def measure(shape: TopoDS_Shape) -> tuple[float, float]:
     return volume.Mass(), area.Mass()
 
 
+# The last reports, so a solid the steps hand in twice is drawn once (level faces checked the current
+# solid again on every attempt: 70 drawings, 125 of its 229 s on practice 7). Entries:
+# (shape, case_dir, views, volume, area, report).
+_REPORTS: list[tuple] = []
+_REPORTS_KEPT = 6
+
+
 def check(shape: TopoDS_Shape, case_dir: Path, observed: dict[str, Observed] | None = None,
           views: tuple[str, ...] | None = None) -> Report:
-    """Compare a candidate solid with the views and facts of a case."""
+    """Compare a candidate solid with the views and facts of a case. A solid that was checked a
+    moment ago (the same shape, unchanged in volume and area) gets the same report without being
+    drawn again."""
+    volume, area = measure(shape)
+    key_views = tuple(views) if views is not None else None
+    for cached, cached_dir, cached_views, cached_volume, cached_area, report in _REPORTS:
+        if (cached_dir == case_dir and cached_views == key_views and cached.IsEqual(shape)
+                and cached_volume == volume and cached_area == area):
+            return report
+    report = _check(shape, case_dir, observed, views, volume, area)
+    _REPORTS.insert(0, (shape, case_dir, key_views, volume, area, report))
+    del _REPORTS[_REPORTS_KEPT:]
+    return report
+
+
+def _check(shape: TopoDS_Shape, case_dir: Path, observed: dict[str, Observed] | None,
+           views: tuple[str, ...] | None, volume: float, area: float) -> Report:
     facts = json.loads((case_dir / "facts.json").read_text())
     dims = {k: float(facts["bounding_box_mm"][k]) for k in "xyz"}
     if observed is None:
@@ -363,7 +386,6 @@ def check(shape: TopoDS_Shape, case_dir: Path, observed: dict[str, Observed] | N
         for name, view in observed.items():
             if views is None or name in views:
                 report.views[name] = compare(view, draw(mesh, name, dims, view.mm_per_px, view.mask.shape[0]))
-    volume, area = measure(shape)
     if facts.get("volume_mm3"):
         report.volume = volume / facts["volume_mm3"]
     if facts.get("surface_area_mm2"):
