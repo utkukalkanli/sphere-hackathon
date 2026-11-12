@@ -36,17 +36,33 @@ truth. What it holds:
   so the eval set has no such case. `holes.py` alone cuts the whole span: on practice 8 that makes
   through holes of all 12, about 12 cm3 of the 121 cm3 part for the 8 large ones alone.
   `spans.py` now replaces such a span (see `state.md`).
-- **Where practice 8 differs from its views** (2026-11-12, whole pipeline with `spans.py`, 129.6
-  cm3 against the true 121.5; our solid drawn with the tone table beside each of the 8 views, by
-  eye, no ground truth). Tones are off and lines are missing in one kind of place only: the
-  rounded hollows where the four outer lobes of the flange (front centre, back centre, the two
-  back corners) run into the body, above and below, and the flat panels between them; our solid is
-  a prism there, cut by the top outline. Share of part pixels with a tone more than 15 levels off:
-  back 18 %, front 9 %, left and right 5 %, top and bottom 4 %, isometric 1 and 4 %. The foot
-  pockets are cut but their lines differ. How much volume lies there is not known. What is known:
-  the solid has only 14.9 cm3 behind y = 113 and 1.2 behind y = 122, so the hollows at the back
-  cannot hold all 8.1 cm3; and the guessed depth of the blind holes alone is worth up to 3.7 cm3
-  (d7 holes 10 mm deep instead of 5.05: 3.1; d4.2 holes 11 instead of 5.94: 0.6).
+- **Where practice 8 differs from its views** (2026-11-12, whole pipeline with `spans.py`, 1.063
+  times the true volume, 7.7 cm3 of excess; `tools/check_views.py`, no ground truth). One kind of
+  place: the lobes of the flange around the bolt holes. In the part a lobe is a boss of radius 6
+  that stands only at the top and at the bottom, about 7 mm of cylinder ending in a dome, with a
+  fillet into the body wall; between the two domes there is no lobe. Our solid has every lobe as
+  a prism over the full height, because the top outline is the union over all heights. The back
+  centre lobe is right already (the side silhouette shows its profile). Wrong are the two back
+  corner lobes, hidden behind it in the side views, and the front centre lobe, hidden behind the
+  feet: about 1 cm3 each by a rough estimate. Their profiles are in the views, but as lines inside
+  the part (side views, isometric views), not as silhouette. Tone more than 15 levels off: back
+  17.5 % of the part pixels, front 8.4 %, left and right 4 to 5 %, top and bottom under 1 % since
+  the drill points, isometric 1 and 3 %. The rest of the excess can be the hole depth: up to 3.7
+  cm3 (d7 holes 10 mm deep instead of 5.05: 3.1; d4.2 holes 11 instead of 5.94: 0.6).
+- **The isometric silhouette takes 0.8 % of the true volume off practice 8** (hull 1.112 to
+  1.104, the notches between the domes of the lobes on the silhouette's rim), which is under the
+  1 % minimum gain, so with `HULL_ISO_EXCESS=1.05` the support runs and is not kept.
+- **Practice 5, 7, 9 against their views** (`tools/check_views.py`, whole pipeline of 2026-11-12
+  noon, volumes 1.224, 1.936, 1.729 times the truth). Share of part pixels with the tone more than
+  15 levels off, over the 8 views: 4.0 %, 16.7 %, 22.1 % (practice 8: 6.2 %), so the measure
+  ranks the parts as the volume does, without a ground truth. Lines of the views with no edge of
+  ours near: 28 %, 41 %, 50 %. Where, by eye in the saved pictures: practice 5, three dark
+  rounded-rectangle openings and three scallops in the bottom view and three areas of 5900 px in
+  the back view that we have flat; practice 7, the whole deep cavity of the top view (89000 px in
+  two areas) is filled in ours; practice 9, in the top and front views the mouths of the six d127
+  bores do not show in our solid at all (view 82, ours 202, 31000 px each): the bores are cut
+  (hull + holes 2.68 to 1.88) but material of ours lies over their mouths, and the big recess of
+  the front view (65000 px) is flat in ours.
 - **The cone count of `facts.json` confirms the blind holes of practice 8** (2026-11-12).
   `cones_half_angle_deg` lists 48 faces at 59 degrees, the point of a 118 degree drill, which the
   brief calls chamfers. Two blind holes per listed span in the two groups is 16 + 8 = 24 holes,

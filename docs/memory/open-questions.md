@@ -99,6 +99,13 @@ Remove a question when it is answered, and record the answer in `decisions.md` o
   have 10.1 mm before they would reach the main bore. Unused: that lower bound, and whether the true volume can fix the depth once the rest
   of the part is right. The depth is worth up to 3.7 of the 8.1 cm3 of excess on practice 8
   (`knowledge.md`, "Where practice 8 differs from its views").
+- **Features that stand only over part of the height** (2026-11-12, practice 8: bolt lobes that
+  are a boss at the top and at the bottom and absent in between; `knowledge.md`). A silhouette is
+  the union over the whole depth, so the hull keeps them as full prisms; the surface behind is
+  curved, so level faces, shading and pockets do not apply. Idea, not built: a silhouette cut
+  restricted to a region, with an occluding contour drawn inside a perpendicular view as the
+  profile and the figure of the facing view as the region. Unknown how often hidden parts have
+  this and whether the eval set can measure it.
 - **Pockets from lines under our surface: what is left to gain?** (2026-11-12) Lines under our
   surface exist on 7 of the 24 eval parts. Taken now: closed figures and figures that end on
   another line of the view (eval 236, 171). Not pockets at all: the seams of a curved surface our

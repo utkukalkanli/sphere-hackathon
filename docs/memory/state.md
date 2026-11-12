@@ -516,6 +516,12 @@ alone on the solid before it, 24 eval parts, sampled IoU with 20 000 points:
   lines on a solid are the outlines of its B-rep faces (also between faces that meet smoothly), not
   edges found by angle; cut faces are hatched and outlined. Both side panels are resized by dragging their
   edge. Reads `runs/`. Committed on `feat/visual-hull`.
+- `tools/check_views.py SOLIDS_DIR test_case_<n> ... [--inputs DIR] [--save DIR]`: where a solid
+  of ours disagrees with the 8 views of its case, with no ground truth: per view the share of part
+  pixels whose tone is more than 15 levels from what the solid's face would show (tone table), the
+  share of the view's lines with no edge of ours near, the share of our edges the view does not
+  draw, the largest tone-off areas with their position, and with `--save` a picture per view. It
+  is the local check asked for in `decisions.md` (Evaluation). About 15 s a part.
 - `tools/check_normals.py --table FILE.npz` writes the tone table the agent reads. The two in
   `src/agentic_cad/tone_tables.npz` were made that way: `organisers` from the 9 practice parts
   (normals of our own solid), `eval` from the 24 eval parts (ground truth normals).
