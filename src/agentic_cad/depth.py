@@ -34,7 +34,6 @@ from OCP.TopoDS import TopoDS_Shape
 from OCP.collections import List_TopoDS_Shape
 
 from agentic_cad import regions
-from agentic_cad import tone
 from agentic_cad import trace
 from agentic_cad import verify
 from agentic_cad import visual_hull as vh
@@ -46,7 +45,6 @@ TONE_MATCH = 5.0         # ... and is this close to the tone of the faces that l
 LEVEL_PX = 1.5           # depths closer than this many pixels are the same level
 MIN_LEVEL_PX = 40        # a level counts when our solid has it flat over this many pixels of the area
 MIN_LEVEL_SHARE = 0.05   # ... and over this share of the area
-UNEXPLAINED = 12.0       # grey levels: the solid's surface does not explain an area's tones if they are this far off (median)
 MIN_EDGE_ON = 0.9        # share of a face's edge-on stretch in a view at right angles that must lie on a line
 MIN_RECALL_GAIN = 0.01   # share of the views' lines a supported cut must newly explain to be kept on that alone
 MIN_SOLIDITY = 0.9       # a slanted face's area fills this share of its convex outline
@@ -125,7 +123,7 @@ def lowest_level(depth: np.ndarray, facing: np.ndarray, tolerance: float) -> flo
     return level
 
 
-def support_level(depth: np.ndarray, normal: np.ndarray, tolerance: float, misfit: float | None) -> float | None:
+def support_level(depth: np.ndarray, normal: np.ndarray, tolerance: float) -> float | None:
     """The level a flat face square to the camera can be cut down to where our solid has no flat level
     under it at all (a flat face that the solid covers with a cone or a slope).
 
@@ -135,13 +133,13 @@ def support_level(depth: np.ndarray, normal: np.ndarray, tolerance: float, misfi
     else.
 
     All of that needs the area to be a face square to the camera, and its tone does not prove it:
-    other directions have that tone too (the fin of practice part 6 that looks at the side camera, a
-    cone patch 22 degrees off, was sliced flat by a first version of this). So nothing is cut where
-    the solid's own surface already explains the tones of the area: `misfit` is the median difference
-    between the area's tones and those the renderer gives the solid's surface there (tone.py), and it
-    must be large. Nor where the solid's surface over the area is one plane. The caller also wants a
-    line where the face is seen edge-on (`seen_edge_on`)."""
-    if len(depth) < MIN_LEVEL_PX / MIN_LEVEL_SHARE or misfit is None or misfit < UNEXPLAINED:
+    other directions have that tone too (the fin of practice part 6 that looks at the side camera was
+    sliced flat by a first version of this). The caller therefore wants a line where the face is seen
+    edge-on (`seen_edge_on`). Comparing the area's tones with those the solid's own surface would have
+    does not help: under the flat triangles of part 6 the solid is a cone whose tone, on the lit side,
+    is the facing tone too. Nothing is cut where the solid's surface over the area is one plane: then
+    the area is more likely that slanted face."""
+    if len(depth) < MIN_LEVEL_PX / MIN_LEVEL_SHARE:
         return None
     mean = normal.mean(axis=0)
     mean /= max(float(np.linalg.norm(mean)), 1e-9)
@@ -180,12 +178,15 @@ def seen_edge_on(area: np.ndarray, level: float, view: verify.Observed, observed
         if id(other) not in _NEAR_LINE:   # one case at a time: the views of the previous one are dropped
             if len(_NEAR_LINE) > 16:
                 _NEAR_LINE.clear()
-            _NEAR_LINE[id(other)] = (other, cv2.distanceTransform((~other.lines).astype(np.uint8), cv2.DIST_L2, 3) <= verify.TOLERANCE_PX)
+            # every boundary between two areas of the view counts: the lines, and what regions.py
+            # takes for one where the line is too faint to be found (two dark faces)
+            boundary = other.lines | ((regions.segment(other)[0] == 0) & other.mask)
+            _NEAR_LINE[id(other)] = (other, cv2.distanceTransform((~boundary).astype(np.uint8), cv2.DIST_L2, 3) <= verify.TOLERANCE_PX)
         best = max(best, float(_NEAR_LINE[id(other)][1].ravel()[stretch].mean()))
     return best
 
 
-def find(view: verify.Observed, drawing: verify.Drawing, dims: dict[str, float], table=None,
+def find(view: verify.Observed, drawing: verify.Drawing, dims: dict[str, float],
          observed: dict | None = None, facing: int | None = None) -> list[vh.Silhouette]:
     """What to cut away in one view: for every flat face that covers several levels of our solid, the
     face's area from its lowest level towards the camera."""
@@ -215,13 +216,8 @@ def find(view: verify.Observed, drawing: verify.Drawing, dims: dict[str, float],
         # lines our own solid would draw inside the area are fine; its depth is what counts
         level = lowest_level(drawing.depth[inside], facing[inside], tolerance)
         supported = False
-        if level is None and SUPPORT and table is not None and observed is not None:
-            chosen_table = table() if callable(table) else table
-            misfit = None
-            if chosen_table is not None:
-                expected = chosen_table.tone(tone.in_camera(drawing.normal[inside], view.name))
-                misfit = float(np.median(np.abs(view.image[inside].max(axis=1).astype(float) - expected)))
-            highest = support_level(drawing.depth[inside], drawing.normal[inside], tolerance, misfit)
+        if level is None and SUPPORT and observed is not None:
+            highest = support_level(drawing.depth[inside], drawing.normal[inside], tolerance)
             if highest is not None:
                 # The tone does not prove the face is square to the camera; a line where the views at
                 # right angles see it edge-on does, and says at which level: looked for from the
@@ -258,8 +254,9 @@ def slanted_cuts(view: verify.Observed, labels: np.ndarray, levels: dict[int, fl
     Such a face is a plane through the straight edge it shares with the level face. Of all planes
     through that edge, the solid contains the part's, and the part's cannot be steeper than the
     steepest one that stays inside the solid over the area. So the solid is cut down to that plane:
-    like the level faces, with no depth from anywhere else. `surface` is the solid's height per pixel
-    with the level faces already lowered."""
+    like the level faces, with no depth from anywhere else. An area that lies along several such
+    edges is several faces; see below. `surface` is the solid's height per pixel with the level faces
+    already lowered."""
     right, up, towards = verify.camera(view.name)
     centre = np.array([dims["x"], dims["y"], dims["z"]]) / 2
     top = float(abs(towards) @ np.array([dims["x"], dims["y"], dims["z"]])) / 2
@@ -267,8 +264,21 @@ def slanted_cuts(view: verify.Observed, labels: np.ndarray, levels: dict[int, fl
     half = view.mask.shape[0] / 2
     pixel = view.mm_per_px
     tones = view.image.max(axis=2).astype(float)
-    kernel = np.ones((3, 3), np.uint8)
-    grown = {label: cv2.dilate((labels == label).astype(np.uint8), kernel) > 0 for label in levels}
+    # the straight edges of every level face, as (two end points in pixels, level)
+    edges = []
+    for neighbour, level in levels.items():
+        contours, _ = cv2.findContours((labels == neighbour).astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+        if not contours:
+            continue
+        corners = cv2.approxPolyDP(max(contours, key=cv2.contourArea), 2.0, True).reshape(-1, 2).astype(float)
+        inner = cv2.moments(max(contours, key=cv2.contourArea))
+        if inner["m00"] <= 0:
+            continue
+        heart = np.array([inner["m10"] / inner["m00"], inner["m01"] / inner["m00"]])
+        for first, second in zip(corners, np.roll(corners, -1, axis=0)):
+            if np.linalg.norm(second - first) >= MIN_EDGE_PX:
+                edges.append((first, second, heart, level))
+
     cuts = []
     for label in np.unique(labels[labels > 0]):
         if label in levels:
@@ -277,75 +287,109 @@ def slanted_cuts(view: verify.Observed, labels: np.ndarray, levels: dict[int, fl
         inside = area & core & np.isfinite(surface)
         if inside.sum() < MIN_AREA_PX:
             continue
-        low, high = np.percentile(tones[inside], (8, 92))
-        if high - low > regions.FLAT_SPREAD:
-            continue   # not one even tone: not a flat face
-        # Two faces of the same tone with no line found between them are one area (two flanks either
-        # side of a groove). Such an area bends around a corner; one that fills its own convex outline
-        # is taken for one face.
-        contours, _ = cv2.findContours(area.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if not contours or area.sum() < MIN_SOLIDITY * cv2.contourArea(cv2.convexHull(max(contours, key=cv2.contourArea))):
-            continue
         rows, cols = np.nonzero(inside)
         a, b = (cols + 0.5 - half) * pixel, (half - 0.5 - rows) * pixel
-        best = None
-        for neighbour, level in levels.items():
-            edge_rows, edge_cols = np.nonzero(area & grown[neighbour])
-            if len(edge_rows) < MIN_EDGE_PX:
+        solid = surface[rows, cols]
+        # the level faces' edges this area lies along: most of the edge has the area just outside it
+        border = cv2.dilate(area.astype(np.uint8), np.ones((7, 7), np.uint8)) > 0
+        anchors = []
+        for first, second, heart, level in edges:
+            along = (second - first) / np.linalg.norm(second - first)
+            outward = np.array([-along[1], along[0]])
+            if (heart - first) @ outward > 0:
+                outward = -outward                      # in pixels (column, row), away from the level face
+            steps = np.linspace(0.1, 0.9, max(8, int(np.linalg.norm(second - first) / 3)))[:, None]
+            probe = np.rint(first + steps * (second - first) + 4 * outward).astype(int)
+            ok = (probe >= 0).all(axis=1) & (probe < labels.shape[0]).all(axis=1)
+            if ok.sum() < 8 or border[probe[ok, 1], probe[ok, 0]].mean() < 0.8:
                 continue
-            points = np.column_stack([(edge_cols + 0.5 - half) * pixel, (half - 0.5 - edge_rows) * pixel])
-            middle = points.mean(axis=0)
-            _, _, axes = np.linalg.svd(points - middle)
-            along, across = axes[0], axes[1]
-            if np.abs((points - middle) @ across).max() > 2.0 * pixel or np.ptp((points - middle) @ along) < MIN_EDGE_PX * pixel:
-                continue   # not a straight edge
-            if (np.column_stack([a, b]).mean(axis=0) - middle) @ across < 0:
-                across = -across   # now pointing into the area
-            reach = (a - middle[0]) * across[0] + (b - middle[1]) * across[1]
-            far = reach >= 3 * pixel
-            if far.sum() < MIN_AREA_PX / 3:
-                continue
-            # the steepest plane through the edge under the solid's surface: as with the levels, a
-            # twentieth of the area may lie under it
-            slope = float(np.percentile((surface[rows, cols][far] - level) / reach[far], 100 * MIN_LEVEL_SHARE))
-            height = level + slope * reach
-            removes = float(np.clip(surface[rows, cols] - height, 0, None).sum()) * pixel ** 2
-            if removes / (len(rows) * pixel ** 2) < MIN_DROP_PX * pixel:
-                continue
-            if best is None or removes > best[0]:
-                best = (removes, middle, across, slope, level)
-        if best is None:
+            middle = (first + second) / 2
+            start = np.array([(middle[0] + 0.5 - half) * pixel, (half - 0.5 - middle[1]) * pixel])
+            across = np.array([outward[0], -outward[1]])   # in (a right, b up)
+            anchors.append((start, across, level, (a - start[0]) * across[0] + (b - start[1]) * across[1]))
+        if not anchors:
             continue
-        removes, middle, across, slope, level = best
+        if len(anchors) == 1:
+            # One edge, one face. Two faces of the same tone with no line between them make an area
+            # that bends around a corner; one that fills its own convex outline is taken for one face.
+            contours, _ = cv2.findContours(area.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            if not contours or area.sum() < MIN_SOLIDITY * cv2.contourArea(cv2.convexHull(max(contours, key=cv2.contourArea))):
+                continue
+        # Several edges: several faces that meet in creases the views do not draw (the renderer leaves
+        # out the line at the bottom of a groove: practice part 6). Faces that rise from their edges
+        # and meet in a groove are, together, the highest of their planes at every point. Which point
+        # belongs to which plane follows from the planes; they are found in a few rounds, starting
+        # from "the edge it is farthest outside of".
+        reaches = np.array([anchor[3] for anchor in anchors])
+        base = np.array([anchor[2] for anchor in anchors])
+        owner = reaches.argmax(axis=0)
+        slopes = None
+        for _ in range(4):
+            found = []
+            for index in range(len(anchors)):
+                mine = (owner == index) & (reaches[index] >= 3 * pixel)
+                if mine.sum() < MIN_AREA_PX / 3:
+                    found.append(None)
+                    continue
+                # the steepest plane through the edge under the solid's surface: as with the levels,
+                # a twentieth of the area may lie under it
+                found.append(float(np.percentile((solid[mine] - base[index]) / reaches[index][mine], 100 * MIN_LEVEL_SHARE)))
+            slopes = found
+            planes = np.array([base[i] + slopes[i] * reaches[i] if slopes[i] is not None else np.full(len(rows), -np.inf)
+                               for i in range(len(anchors))])
+            if not np.isfinite(planes).any():
+                break
+            again = planes.argmax(axis=0)
+            if (again == owner).all():
+                break
+            owner = again
+        used = [i for i in range(len(anchors)) if slopes and slopes[i] is not None]
+        if not used:
+            continue
+        # every one of those faces is flat only if it has one even tone
+        shade = tones[rows, cols]
+        if any(np.ptp(np.percentile(shade[owner == i], (8, 92))) > regions.FLAT_SPREAD for i in used if (owner == i).sum() >= 20):
+            continue
+        height = np.max([base[i] + slopes[i] * reaches[i] for i in used], axis=0)
+        removes = float(np.clip(solid - height, 0, None).sum()) * pixel ** 2
+        if removes / (len(rows) * pixel ** 2) < MIN_DROP_PX * pixel:
+            continue
         outlines = vh.trace_outlines(area.astype(np.uint8) * 255, to_mm, pixel)
         if not outlines:
             continue
-        point = centre + middle[0] * right + middle[1] * up + level * towards
-        normal = towards - slope * (across[0] * right + across[1] * up)
+        planes = []
+        for i in used:
+            start, across, level, _ = anchors[i]
+            point = centre + start[0] * right + start[1] * up + level * towards
+            normal = towards - slopes[i] * (across[0] * right + across[1] * up)
+            planes.append((tuple(map(float, point)), tuple(map(float, normal / np.linalg.norm(normal)))))
         cuts.append(vh.Silhouette(name=f"slanted_{label}", views=[view.name], mask=area.astype(np.uint8) * 255,
                                   outlines=outlines, origin=centre + (top + margin) * towards, right=right, up=up,
                                   direction=-towards, depth=float(2 * (top + margin)),
-                                  info={"plane": (tuple(map(float, point)), tuple(map(float, normal / np.linalg.norm(normal)))),
-                                        "level": round(level, 3), "pixels": int(area.sum()), "supported": True,
-                                        "slope_deg": round(float(np.degrees(np.arctan(slope))), 1)}))
+                                  info={"planes": planes, "level": round(float(base[used[0]]), 3), "pixels": int(area.sum()),
+                                        "supported": True,
+                                        "slope_deg": "/".join(f"{np.degrees(np.arctan(slopes[i])):.1f}" for i in used)}))
     return cuts
 
 
 def _wedge(cut: vh.Silhouette) -> TopoDS_Shape | None:
-    """The column over an area, from its slanted plane towards the camera."""
-    column = vh.prism(cut)
-    point, normal = cut.info["plane"]
-    face = BRepBuilderAPI_MakeFace(gp_Pln(gp_Pnt(*point), gp_Dir(*normal))).Face()
-    above = BRepPrimAPI_MakeHalfSpace(face, gp_Pnt(*(np.array(point) + 1e3 * np.array(normal)))).Solid()
-    common = BRepAlgoAPI_Common(column, above)
-    return common.Shape() if common.IsDone() else None
+    """The column over an area, from its slanted planes towards the camera: what lies above all of them."""
+    tool = vh.prism(cut)
+    for point, normal in cut.info["planes"]:
+        face = BRepBuilderAPI_MakeFace(gp_Pln(gp_Pnt(*point), gp_Dir(*normal))).Face()
+        above = BRepPrimAPI_MakeHalfSpace(face, gp_Pnt(*(np.array(point) + 1e3 * np.array(normal)))).Solid()
+        common = BRepAlgoAPI_Common(tool, above)
+        if not common.IsDone():
+            return None
+        tool = common.Shape()
+    return tool
 
 
 def remove(shape: TopoDS_Shape, cuts: list[vh.Silhouette]) -> TopoDS_Shape | None:
     """`shape` without the prisms of `cuts`. One valid solid, or None. Runs in a child process."""
     tools = List_TopoDS_Shape()
     for cut in cuts:
-        tool = _wedge(cut) if cut.info.get("plane") else vh.prism(cut)
+        tool = _wedge(cut) if cut.info.get("planes") else vh.prism(cut)
         if tool is not None:
             tools.Append(tool)
     if tools.Size() == 0:
@@ -380,7 +424,6 @@ def apply(agent, solid: TopoDS_Shape, case_dir: Path | None, views: list[Path]) 
         score = recall = None
         deflection = 0.3 * min(view.mm_per_px for view in observed.values())
         levelled = 0
-        chosen: list = []
         facing = regions.facing_tone({name: regions._measure(observed[name])[1] for name in straight})
 
         def attempt(current, cuts):
@@ -408,20 +451,13 @@ def apply(agent, solid: TopoDS_Shape, case_dir: Path | None, views: list[Path]) 
             if agent.out_of_time():
                 step.log("out of time for this case; the remaining views are not looked at", level="warning")
                 break
-            mesh = verify.tessellate(solid, deflection)
-            drawing = verify.draw(mesh, name, dims, observed[name].mm_per_px)
-
-            def table(mesh=mesh):   # which renderer's tones: asked for only when a face needs it
-                if not chosen:
-                    chosen.append(tone.choose(observed, {n: verify.draw(mesh, n, dims, o.mm_per_px) for n, o in observed.items()}))
-                return chosen[0]
-
-            cuts = find(observed[name], drawing, dims, table, observed, facing)
+            drawing = verify.draw(verify.tessellate(solid, deflection), name, dims, observed[name].mm_per_px)
+            cuts = find(observed[name], drawing, dims, observed, facing)
             if not cuts:
                 continue
-            slanted = sum(1 for c in cuts if c.info.get("plane"))
+            slanted = sum(1 for c in cuts if c.info.get("planes"))
             step.log(f"{name}: {len(cuts) - slanted} flat face(s) to level, {slanted} slanted face(s) standing on one: "
-                     + ", ".join(f"{c.info['pixels']} px to {c.info['level']} mm" + (f" at {c.info['slope_deg']} deg" if c.info.get("plane") else "")
+                     + ", ".join(f"{c.info['pixels']} px to {c.info['level']} mm" + (f" at {c.info['slope_deg']} deg" if c.info.get("planes") else "")
                                  for c in cuts[:8]))
             carved = attempt(solid, cuts)
             if carved is not None:

@@ -39,6 +39,10 @@ the entry and say what changed.
   is cut to the solid's lowest point over it and a flat face to the steepest plane through a known
   edge. What decides that an area is such a face is a line, not a tone: tones named a fin's flank a
   level face. These cuts live in the level-face step because they are the same argument.
+- **Eval 99 is left a little worse by the supported cuts** (2026-11-12, user: "leave it"). They
+  take the 24-part mean from 0.8668 to 0.8791, nearly all of it on part 38, and cost part 99 0.011.
+  An area threshold between part 99's largest wrong cut (4600 px) and part 38's smallest right one
+  (5300 px) would have been tuned to this sample.
 - **Round on a disc's evidence only if the views' lines do not fit worse** (2026-11-12). Dropping
   the lathe-faces condition outright would round a square body under a round flange; the line term
   refused 3 of 10 such proposals on the eval set and none of the 6 it let through got worse.

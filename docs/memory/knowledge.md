@@ -146,6 +146,16 @@ the two isometric views.
   triangles and 15 flanks cut, volume 3.31 to 2.99, score 0.227 to 0.206). The walls left standing
   next to a cut are edges the views do not draw, so precision falls (front view 0.94 to 0.44), while
   recall rises in every view (0.61 to 0.74): more of the views' lines have become face boundaries.
+- **The organisers' renderer draws no line at the bottom of a groove** (practice 6, top view,
+  every ridge and valley of the lower half looked at pixel by pixel, 2026-11-12). Each ridge between
+  two flanks has a line 20 to 80 levels darker than both; no valley has one, only the step from one
+  flank's tone to the other's, which is as little as 2 levels (70 and 68). So two faces that meet
+  in a concave crease can be one area, and no threshold separates them. `depth.py` solves such an
+  area from the level edges it lies along instead (see `state.md`).
+- **Comparing an area's tones with those the solid's surface would have does not say whether the
+  solid is right there** (practice 6): under four of the flat triangles the solid is a cone whose
+  tone, on the lit side, is the facing tone to within 1 to 10 levels. Used as a guard it kept those
+  four from being levelled.
 - **Lines between two dark faces are missed** (practice 6, top view: faces of tone 55 to 70, line
   30 to 45). `regions.segment` now also takes what a 5 px closing fills in by 8 levels and 15 % of
   the tone; that separates most flanks, not those in the darkest third of the view. An area made

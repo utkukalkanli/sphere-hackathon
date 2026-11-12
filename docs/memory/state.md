@@ -190,28 +190,36 @@ verifier's line term does not drop.
   shows (the bottom view is a closed face with one blind bore).
 
 Level faces without a level in the solid, and slanted faces standing on them (`depth.py`,
-2026-11-12, uncommitted; `HULL_DEPTH_SUPPORT=0` switches both off):
+2026-11-12; `HULL_DEPTH_SUPPORT=0` switches both off):
 
 - What it does. A flat area with the facing tone under which the solid has no flat level is cut
   down to a level between the solid's lowest point over it and the level a twentieth of it lies
-  under: the highest one at which a view at right angles shows a line along the whole face seen
-  edge-on (at least 90 % of it). Not where the solid's own surface explains the area's tones (tone
-  table) or is one plane. A flat area of another even tone that shares a straight edge with a face
-  of known level is cut down to the steepest plane through that edge that stays inside the solid.
-  Both rest on the solid containing the part. Such cuts are kept if the verifier's score holds, or
-  if they make 1 % more of the views' lines boundaries of the solid and leave the outline alone.
-- Practice 6: this step takes the round solid from 3.31 to 2.99 times the true volume in 26 s; the
-  whole pipeline gives 2.94 (3.73 before today), read back valid. Of the 18 flat triangles of the
-  flange between the fins 14 are levelled, all with the edge-on line along 100 % of them; of the 36
-  flanks 15 are cut. The rest are not separate areas: lines between two dark faces are not found.
-- 24 eval parts, the step with and without it on the same solid, sampled IoU: only parts 3 and 99
-  get such a cut. Part 3 does not move. Part 99 went from 0.252 to 0.243 with the edge-on threshold
-  at 0.7 (its three cuts had 71, 88 and 100 % of their stretch on a line); the threshold is now
-  0.9. Rerun on part 99 alone the step cut nothing either way, but on another solid: that run's
-  hull scored 0.406 and the first one's 0.250 (a cut that times out under load). No slanted face
-  was cut on any eval part. Mean of the 24: 0.8641 without, 0.8637 with (threshold 0.7).
-- Not done on practice 6: the top cap is still square (the "disc" cut of its last 10 mm came back
-  unchanged and nothing checks a round cut against the views; about 11 cm3), and 21 flanks.
+  under: the highest one at which a view at right angles shows a line (or a boundary between two
+  of its areas) along at least 90 % of the face seen edge-on. Not where the solid's surface over
+  the area is one plane. An area that lies along a straight edge of a face of known level is cut
+  down to the steepest plane through that edge that stays inside the solid; an area along several
+  such edges is solved as several planes that meet in a groove (the highest of them at each
+  point), each of which must have one even tone. Both rest on the solid containing the part. Such
+  cuts are kept if the verifier's score holds, or if they make 1 % more of the views' lines
+  boundaries of the solid and leave the outline alone.
+- 24 eval parts, the step with and without these cuts on the same solid (hull, holes, rounds,
+  curved), sampled IoU, 2026-11-12 03:05 with the machine heavily loaded: mean 0.8668 without,
+  0.8791 with. Part 38 (the U-channel whose floor no isometric camera sees) 0.628 to 0.933, volume
+  1.623 to 1.107 times the truth; 235 0.995 to 0.997; 212 0.977 to 0.978; 1, 3 and 182 unchanged;
+  27 0.984 to 0.982; **99 0.252 to 0.241** (six cuts on areas of 1200 to 4600 px took real
+  material from its thin walls). The other 16 get no such cut.
+- Practice 6: the step alone takes the round solid from 3.31 to 2.77 times the true volume. All 18
+  flat triangles of the flange between the fins are levelled (edge-on line along 100 % of each)
+  and most flanks are cut, at 82 to 83 degrees; two or three fins at the bottom of the top view are
+  still one lump. The verifier's score does not move (0.2270).
+- Practice set, whole pipeline as of commit a889456 plus this, 2026-11-12 03:14 (loaded machine),
+  our volume / true volume for parts 1 to 9: 1.003, 1.018, 1.000, 1.028, 1.224, 2.759, 1.951,
+  1.002, 1.754. All nine read back as one valid solid. Against the run of the evening before
+  (1.003, 1.018, 1.000, 1.027, 1.226, 3.728, 2.076, 1.006, 1.822): part 6 is this work (rounds
+  "disc" and these cuts); parts 7 and 9 also had the other sessions' new steps in between
+  (pockets, isometric support), so their change is not split up here.
+- Not done on practice 6: whether the top cap is round was not rechecked after the "disc" cut of
+  its last 10 mm came back unchanged once; the lump of fins at the bottom of the top view.
 
 Curved recesses (`curved.py`), 2026-11-12:
 
