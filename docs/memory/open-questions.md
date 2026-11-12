@@ -66,8 +66,9 @@ Remove a question when it is answered and record the answer in `decisions.md`, `
   186), so it counts as a level face; our solid over it is at 192.4 with a patch at 189.87
   towards the tip, and the whole lobe goes down to 189.87. The front view has its top edge at
   192.4 up to 20 mm from the tip. The rim round the lobe hid this in every outline until the
-  rim cuts took it away (118 px of the front view, 41 of the left). Untried: asking that a
-  level cut leaves each straight outline alone with the rims gone; a narrower tone tolerance
+  rim cuts took it away (118 px of the front view, 41 of the left). Built and not
+  measured (`depth.harmed`, `HULL_DEPTH_OUTLINES`): a view's cuts are made together and those
+  that take part of a perpendicular straight view's outline are left out. Untried: a narrower tone tolerance
   round the tone of the largest flat faces.
 - **Depth of blind recesses**, the largest loss. Still not found: floors no isometric camera
   sees (eval 38 inside the channel before the supported cuts; deep or narrow pockets), small
