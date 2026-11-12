@@ -97,6 +97,7 @@ class VisualHullAgent:
         self._evidence = None  # what the inputs of the case in hand say (evidence.py)
         self._output_path: Path | None = None  # where `refine` writes the case's answer, for `save`
         self._sound: bool | None = None  # whether the solid so far reads back valid from its file, if asked
+        self.holes_stated: int | None = None  # the part's number of through-holes, while the later steps run
 
     def evidence(self, case_dir: Path, dims: dict | None = None) -> "evidence_table.Evidence":
         """The views of a case and what the steps derive from them, read once for the case."""
@@ -219,6 +220,9 @@ class VisualHullAgent:
         done so far). A step whose solid does not survive that is dropped, it alone."""
         self.keep_faces, self.lines_found = False, None
         self._output_path = output_path
+        # From here on no cut may take the number of through-holes further above the part's (`_guarded`):
+        # a cut that breaks through a wall is wrong wherever it is, and nothing later can close the hole.
+        self.holes_stated = hole_count.stated(case_dir) if hole_count.ENABLED else None
         self._show_evidence(solid, case_dir)
         names = [name for name in LATER_STEPS if name not in skip and name not in SKIP_STEPS]
         for index, name in enumerate(names):
@@ -565,6 +569,15 @@ class VisualHullAgent:
                 step.fail("the cut gave no valid solid; keeping the previous one")
             return None
         after = vh.volume(carved)
+        if self.holes_stated is not None:
+            holes, held = hole_count.genus(carved), hole_count.genus(solid)
+            # ... unless the count is that of a pinch (two bodies touching in an edge or a point), which
+            # is no hole and which the hole count step takes away (practice 4, the rounds step)
+            if holes > held and holes > self.holes_stated and not hole_count.pinches(carved):
+                message = (f"the cut would give {holes} through-holes, the part has {self.holes_stated}; "
+                           "keeping the previous solid")
+                step.log(message, level="warning") if quiet else step.fail(message)
+                return None
         if target and after < share * target:
             if refused is not None:
                 refused.append((carved, None))
