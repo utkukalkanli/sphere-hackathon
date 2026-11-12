@@ -547,6 +547,25 @@ alone on the solid before it, 24 eval parts, sampled IoU with 20 000 points:
   371. Our volume / true volume: 1.003, 1.018, 1.000, 1.028, 1.224, 2.759, 1.936, 1.002, 1.729.
   Slowest cases: part 7 127 s, part 9 99 s, part 6 77 s.
 
+Whole pipeline with the hole work of 2026-11-12 (spans, skins, drill points, mouths and their
+faces), commit 6847e04 plus the other session's uncommitted working tree, afternoon:
+
+- Practice set through `scripts/main.py` into a scratch folder, 6 min 40 s for the 9 parts: all 9
+  files one valid solid. Our volume / true volume: 1.003, 1.018, 1.000, 1.028, 1.225, 2.759,
+  1.943, 1.063, 1.205 (run `20261112-064134-d0e0` of the morning: 1.003, 1.018, 1.000, 1.028,
+  1.224, 2.759, 1.936, 1.002, 1.729). Part 8 is higher because its 12 holes are no longer cut
+  through (`decisions.md`, Evaluation), part 9 is the mouths. Faces: 19 of 17, 22 of 12, 9 of 9,
+  542 of 178, 152 of 172, 799 of 122, 733 of 628, 333 of 306, 225 of 371.
+- 24 eval parts, `tools/eval_hull.py --iou`, 346 s with 4 processes: volume score 0.8973, sampled
+  IoU 0.8929 (simple 0.9943, medium 0.9260, complex 0.7584), 295 faces a solid. Without the
+  mouths step (the tool did not call it until 6847e04): 0.8970 and 0.8925; the step moves the
+  complex tier after the holes from 0.7640 to 0.7649 (eval 123 and 171). Lowest: 51 (0.14), 99
+  (0.44), 171 (0.76), 236 (0.80), 110 (0.86). Eval 75 ends below the true volume, as before.
+  The run of 02:35 the same day gave 0.885 and 0.882; most of that difference is the other
+  session's work on depth, shading and pockets, not the holes.
+- `tools/eval_hull.py` calls `build_hull` and `cut_holes` itself, not `carve`: a step added to
+  `carve` has to be added there too.
+
 ## Known weaknesses
 
 - **A solid can be valid in memory and invalid in the file.** Practice part 4 (crankshaft) was
