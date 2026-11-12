@@ -444,6 +444,14 @@ Geometry (OpenCascade):
 
 Pipeline:
 
+- **Cuts made side by side leave a wall between them**: each area's outline is fitted alone and
+  two fitted outlines do not meet. On practice 4 such walls were a fraction of a pixel thick and
+  146 mm high. Hence the 3 px reach of the level-face cuts.
+- **Level faces leave blocks on the faces they do not level** (practice 4: the round on a web's
+  edge, 2.5 mm wide, and a lobe that is not quite flat, under the block of the next web). No
+  straight view shows them once two webs overlap; the isometric outline does.
+- **A slack per accepted cut adds up**: tried one by one or in halves, cuts that each lower the
+  verifier's score by under 0.003 took eval 27 from 0.846 to 0.827.
 - Straight cuts: the two opposite views are mirrored onto each other; a pixel is cut only if
   both show background.
 - `outline_fit.py`: the traced outline is split at the corners of a 1.2 px polygon; runs within

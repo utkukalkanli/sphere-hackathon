@@ -120,6 +120,13 @@ kept beside its successor. Older wording: `git show bda2104:docs/memory/decision
 - **A cavity is read as detail inside a face that our solid has flat**, not as a void no view
   shows (2026-11-12, this session's reading of the user's "cavities"). An enclosed void has no
   evidence in the views and a wrong one always costs overlap.
+- **What a levelled face leaves standing beside it is cut only where it stands alone**
+  (2026-11-12, after the user saw walls and a wedge on practice 4). Cutting every face under a
+  step of ours down to its lower part took real material where the face is a slope up to a
+  higher neighbour (eval 171 IoU 0.885 to 0.799, eval 27 0.984 to 0.962), and the verifier kept
+  it because the volume came closer. The share of the surroundings that must be lower, 0.75,
+  was chosen with practice 4 on the table (0.9 left its blocks, which touch the next web) and
+  then run on the 24 parts, where it changes nothing.
 - **Level faces take their flat areas from the drawing** (2026-11-12, user). On the 24 parts
   sampled IoU 0.8945 to 0.8957 and 295 to 288 faces a solid; eval 27 and 38 up, eval 99 no
   longer cut by the step.

@@ -41,7 +41,7 @@ reasons in `decisions.md`.
 | mouths (`open_mouths`) | `mouths.py` | `HULL_MOUTHS=0`, `HULL_MOUTH_FACES=0` | practice 9 whole pipeline 1.727 to 1.205 times the true volume; eval 123 and 171: of 334 sampled points removed none is in the truth |
 | rounds (`cut_rounds`) | `rounds.py` | `HULL_SKIP=rounds`, `HULL_ROUNDS_DISC=0` | IoU 0.834 to 0.847 (simple 0.960 to 0.994); "disc": cuts 6 of 266 eval parts, none lower; practice 6 3.81 to 3.31 |
 | curved recesses (`cut_curved`) | `curved.py`, `tone.py`, `regions.py` | `HULL_SKIP=curved` | no cut on the 24; 5 of the 37 lathe-type eval parts, none worse (249: 0.725 to 0.981); practice 2 1.105 to 1.018 |
-| level faces (`level_faces`) | `depth.py` | `HULL_SKIP=depth`, `HULL_DEPTH_SUPPORT=0` | IoU 0.847 to 0.854; supported cuts 0.8668 to 0.8791 (38: 0.628 to 0.933; 99: 0.252 to 0.241, accepted); practice 6 3.31 to 2.77 |
+| level faces (`level_faces`) | `depth.py` | `HULL_SKIP=depth`, `HULL_DEPTH_SUPPORT=0`, `HULL_DEPTH_STEPS=0`, `HULL_DEPTH_RIMS=0`, `HULL_DEPTH_SEAM=0`, `HULL_DEPTH_ALONE` (0.75) | IoU 0.847 to 0.854; supported cuts 0.8668 to 0.8791 (38: 0.628 to 0.933; 99: 0.252 to 0.241, accepted); practice 6 3.31 to 2.77. Blocks left standing, seams (2026-11-12, in commit `1895e2f`): 24 parts IoU 0.9076 with and without, only eval 99 and 182 differ, by faces; practice 4 1.034 to 1.019, its isometric outline off by 6770 to 1916 px, 476 to 499 faces; a few small pieces on practice 7, the other seven untouched |
 | plane faces (`plane_faces`) | `planes.py`, `sources.py` | `HULL_SKIP=planes` | cuts eval 110, 236, 171 and 74 (74: IoU 0.8675 to 0.9000; 110: 0.8605 to 0.8680), none lower; 24 parts 0.8928 to 0.8945; practice 7 one cut |
 | cavities (`open_cavities`) | `cavities.py`, `drawing.py`, `propose.try_cuts` | `HULL_SKIP=cavities`, `HULL_MAX_CAVITIES` | not run on the eval parts (user, 2026-11-12); practice 7 1.878 to 1.449, practice 5 1.225 to 1.133 |
 | recesses (`open_recesses`) | `recesses.py`, `drawing.py`, `propose.try_cuts` | `HULL_SKIP=recesses`, `HULL_RECESS_EITHER=0` | 24 parts IoU 0.8957 to 0.9076: eval 236 0.7897 to 0.9329, 171 0.7703 to 0.8561, 38 0.9371 to 0.9926 (38 through the choice of two), the other 21 untouched; practice 7 1.943 to 1.878, practice 8 four small ones |
@@ -87,6 +87,13 @@ What each step does:
   area). Supported cuts: with no level under it, down to the highest level at which a
   perpendicular view draws a line along 90 % of the face seen edge-on; an area along straight
   edges of known level is cut to the steepest planes through those edges inside the solid.
+  Then what a levelled face leaves standing on the faces beside it (`depth.standing`): over a
+  face of any kind where our solid has a step and the view no line, the upper part is cut to
+  where the lower ends; a narrow face (20 px) along a level face is cut to that level. Only
+  blocks that stand alone (three quarters of what surrounds them a step lower), joined across
+  faces, tried apart, kept only if the verifier's score does not drop at all. Every cut of the
+  step reaches 3 px over its border where the solid ends up no higher, so that no wall is left
+  between two cuts; a refused group of cuts is tried again in halves, 12 tries a group.
 - **Plane faces.** A large flat face of an isometric view that is square to an axis has a plane
   read off the pictures alone (`sources.py`, "sure"). The flat area of the straight view it lands
   in is cut down to that plane where our solid stands more than 4 px in front of it. Left alone
@@ -352,7 +359,7 @@ image, emulated, took 10.5 minutes at phase 0.
 
 | tool | what |
 | --- | --- |
-| `tools/eval_hull.py [--iou] [--all]` | score on the fixed 24 eval parts (8 per tier), cached in `runs/_eval_cache` by source hash; the step 1 solid has its own cache |
+| `tools/eval_hull.py [--iou] [--all]` | score on the fixed 24 eval parts (8 per tier), cached in `runs/_eval_cache` by source hash and by any `HULL_` switch set; the step 1 solid has its own cache |
 | `tools/check_views.py SOLIDS_DIR test_case_<n> ...` | where a solid disagrees with its 8 views, no ground truth needed: tone off, lines lacking, edges not drawn; `--save` pictures. 15 s a part |
 | `tools/check_sources.py [--practice --save DIR]` | grades `sources.py` against the ground truth: lines and tone steps, axis faces, their levels |
 | `tools/check_verify.py` | verifier scores of ground truth, our solid and the box |
