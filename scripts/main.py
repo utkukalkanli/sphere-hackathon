@@ -21,6 +21,11 @@ DEFAULT_OUTPUTS = REPO_ROOT / "artifacts/outputs"
 # A case with less than MIN_CASE_SECONDS left for its hull keeps its bounding box.
 RUN_BUDGET = float(os.environ.get("HULL_RUN_BUDGET", 17 * 60))
 MIN_CASE_SECONDS = 5.0
+# In the third pass a case may take this many equal shares of the time left (never more than what is
+# left). With one share each, the first cases, which are the ones with the most to gain, were stopped
+# at 1/9 of the budget in a run that needs less than half of it, so the output followed the machine's
+# speed (practice 7: 110 to 140 s against a share of 113 s). Every case has its file before this pass.
+CASE_SHARES = 2.0
 
 
 @dataclass
@@ -132,8 +137,8 @@ def main(args):
                     case.output(output_path)
 
         # 3. The later steps, where there is most to gain first: that only matters when time runs short.
-        # The time left is shared equally among the cases still to do; a case past its share skips the
-        # rest of its steps and keeps the file of the last one that went through.
+        # The time left is shared among the cases still to do (CASE_SHARES); a case past its share skips
+        # the rest of its steps and keeps the file of the last one that went through.
         carved.sort(key=lambda entry: -excess(entry[0], entry[1]))
         for index, (test_case, solid, state) in enumerate(carved):
             print(f"refining {test_case.name}")
@@ -142,7 +147,8 @@ def main(args):
             with case:
                 try:
                     agent.resume(state)
-                    agent.deadline = time.time() + max(share(len(carved) - index), 0.0)
+                    left = len(carved) - index
+                    agent.deadline = time.time() + max(share(left) * min(CASE_SHARES, left), 0.0)
                     case_dir = test_case.views[0].parent.parent if test_case.views else None
                     solid = agent.refine(solid, case_dir, test_case.views, output_path=output_path)
                     agent.finish(solid, output_path)

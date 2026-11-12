@@ -63,6 +63,44 @@ Guards around every cut (`hull_agent.py`):
   to 2e-6. Which budget or boolean made the difference was not looked into. The dashboard was
   checked on the events only (one case, one start and end, all steps), not in a browser.
 
+Plan phase 1 (2026-11-12, uncommitted on `feat/phase0-safe-runs`):
+
+- **Drawing** (`verify.rasterise`): a triangle whose rectangle has 1024 px or more is drawn by
+  itself on that rectangle, with the same test and depth as before. On the 33 cached solids
+  (`runs/_shading_cache`, 24 eval and 9 practice) the masks are identical, the face maps differ on
+  at most 0.025 % of the pixels (where two triangles are equally near), `verify.check(...).score`
+  differs by at most 2e-6. A check takes 0.5 to 1.8 s instead of 0.6 to 3.5 s (summed over the 33:
+  54.7 to 33.0 s, two processes at once); eval 99 gains nothing (2.9 to 2.8 s). Not the 10 times of
+  the prototype: after this change most of a check is `verify.draw` itself (edges, normals), not
+  the triangles.
+- **Judge** (`src/agentic_cad/judge.py`, `tools/check_judge.py`): the local accept rule of the
+  plan, behind `HULL_JUDGE=local`, in `shading.py`, `pockets.py` and the column cuts of `depth.py`.
+  **The default stays `score`**: the plan's gate failed. 23 eval parts (the fixed 24 without 99),
+  level faces, shading and pockets on one cached solid per part, 20 000 points, each cut graded
+  where it acts (share of true excess in what it removed against r / (1 + r)):
+
+  | rule | mean IoU | kept right / wrong / too small to grade | refused right / wrong / too small |
+  | --- | --- | --- | --- |
+  | before the three steps | 0.8863 | | |
+  | score | 0.9139 | 13 / 0 / 26 | 1 / 6 / 4 |
+  | local | 0.9046 | 12 / 0 / 16 | 15 / 6 / 36 |
+  | local, tone error must fall 0.02 per changed px | 0.9045 | 11 / 0 / 14 | 16 / 6 / 41 |
+  | local, 0.05 | 0.9042 | 9 / 0 / 11 | 17 / 6 / 50 |
+
+  Lower with local by more than 0.01: eval 236 (0.796 to 0.704, all 10 right cuts refused), 38
+  (0.906 to 0.823), 146 (0.998 to 0.978), 171 (0.759 to 0.739). Real material lost, summed over the
+  parts: 0.87 % of a part with score, 0.53 % with local. The evidence variants are not in the code.
+  The local rule costs more time (613 s against 447 s for the three steps over the 23 parts).
+- **No step has a clock of its own any more**: the 45, 30 and 15 s budgets of shading, pockets and
+  split are gone (their work is bounded by counts that were already there), and in the third pass
+  a case may use two equal shares of the time left (`CASE_SHARES`, `scripts/main.py`). Practice
+  set, two runs with different load on the laptop (four eval processes beside it, 7 min 10 s; one
+  process and another session, 7 min 19 s): the same volume and face count on all 9. Against the
+  phase 0 run only part 8 differs, through the blind holes another session committed in between
+  (`HULL_HOLE_SPANS=0` gives the old 121 696.63 mm3). With the budgets off practice 7 takes about
+  140 s (shading 79 s), 9 about 75 s, 6 about 60 s, measured with four other processes running.
+  Not run: the image, the 24-part `eval_hull.py`.
+
 ## Git
 
 - `main`: template, eval set and the first dashboard. It has no `artifacts/outputs`, so **nothing

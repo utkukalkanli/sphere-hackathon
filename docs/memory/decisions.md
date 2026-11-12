@@ -112,6 +112,18 @@ the entry and say what changed.
   pixels. If a cut with the fitted outline fails or goes below the true volume, that direction is
   cut again with the traced pixels.
 
+- **The later steps keep the verifier's score as their accept rule; the local rule is a switch**
+  (2026-11-12, measurement: `state.md`, plan phase 1). On the cuts these steps propose the score
+  rule kept no wrong cut that could be graded, and the local rule refused more than half of the
+  right ones. The finding that the score rule passes most wrong cuts was made on systematic column
+  cuts, which the steps do not propose. `HULL_JUDGE=local` stays for the model's proposals.
+- **The judge does not ask that the volume comes closer to the true one** (2026-11-12; the plan
+  asked for it). It would refuse a right cut on the part's total alone, against the rule under
+  Evaluation. The 97 % guard stays.
+- **Steps are bounded by counts, not by their own clocks** (2026-11-12, plan phase 1). A clock
+  makes the solid depend on the machine; the counts were there already. The run budget stays, and
+  a case may use two equal shares of what is left, since every case has its file before that pass.
+
 ## Evaluation
 
 - **A change is judged where it acts, not by the part's total** (2026-11-12, user). A whole-part

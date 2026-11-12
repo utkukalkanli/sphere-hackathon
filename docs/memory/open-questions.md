@@ -130,16 +130,21 @@ Remove a question when it is answered, and record the answer in `decisions.md` o
 - **The image and the laptop give different solids on practice 6, 7 and 9** (2026-11-12,
   `state.md`). The committed outputs must come from the image anyway; open is whether the
   organisers' faster machine gives a third result (see the wall-clock budgets below).
-- **Wall-clock budgets decide the practice outputs** (2026-11-12): shading (45 s) stopped out of
-  time on practice 7 and 9 and split (15 s) on practice 9, so the organisers' re-run will give
-  other solids there. Budgets by count instead of by clock?
-- **Should the later steps accept by local image error instead of the verifier's score?**
-  (2026-11-12, numbers in `knowledge.md`.) On single column cuts the rule "error over the 8 views
-  does not rise and the volume improves" let 30 of 307 wrong cuts through against 175. Not tested
-  in sequences, on slanted or curved cuts, or in the pipeline; on practice 9 it refuses a shading
-  cut that looks right by eye. Together with the coplanar-pair detector it was safe and small
-  (`knowledge.md`); what it lacks is a demand for evidence: "not worse" passes every floor that no
-  view sees.
+- **The case's share of the run is the one clock left** (2026-11-12). The steps' own budgets are
+  gone; a case in the third pass may use two equal shares of the time left. On a machine three or
+  four times slower than the laptop (the emulated image) practice 7 would still be stopped. Not
+  measured: the image after this change.
+- **How does a judge tell a right cut with an uncut neighbour from a wrong cut?** (2026-11-12,
+  after `tools/check_judge.py`, `state.md`.) The local rule refuses 15 of 27 right cuts: the walls
+  a cut leaves against excess that is still there are faces the part does not have, and their
+  tones and edges count against it (eval 236, 38). The score rule lets them through because the
+  volume term pays for them. Phase 3 needs the stricter rule for a model's guesses; open is
+  whether new walls should be excused (then a column cut in a facing area has no tone evidence
+  left at all: its floor has the tone of the face above it), or cuts judged in groups.
+- **The 97 % volume guard is a refusal on the part's total** (2026-11-12). The judge does not ask
+  that the volume comes closer to the true one (`decisions.md`, "judged where it acts"), but it
+  keeps the guard, as every step does. On a part whose volume is right for a wrong reason
+  (practice 8 before the blind holes) the guard refuses right cuts.
 - **How does the organisers' scorer treat an enclosed void, and is the score volume or surface?**
   A first submission would show it if the leaderboard gives a score per part: practice 6 near 0.3
   means volume overlap, 0.55 or more a surface or composite score. Carving the core of a shell

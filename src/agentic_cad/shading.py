@@ -30,7 +30,6 @@ the step does not depend on the renderer's lighting.
 from __future__ import annotations
 
 import os
-import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -47,6 +46,7 @@ from OCP.collections import List_TopoDS_Shape
 from agentic_cad import trace
 from agentic_cad import verify
 from agentic_cad import visual_hull as vh
+from agentic_cad import judge
 
 TONE_TOLERANCE = (2, 10)  # tones this close (0..255) are one face direction: measured per view, within these limits
 MIN_REGION_PX = 250      # smaller regions are not worth a cut
@@ -76,7 +76,9 @@ MAX_PASSES = 3           # a cut can uncover the next face behind it: the views 
 SCORE_SLACK = 0.004      # how much lower the verifier may rate a cut that is still kept
 SLANTED = os.environ.get("HULL_SHADING_SLANTED", "1") != "0"   # also look for slanted flat faces
 TIMEOUT = float(os.environ.get("HULL_SHADING_TIMEOUT", 30))
-BUDGET = float(os.environ.get("HULL_SHADING_BUDGET", 45))  # seconds per case for the whole step
+# No clock of its own: the work is bounded by what is counted (MAX_PASSES, MAX_REGIONS, MAX_SLANTED and
+# the six cuts tried singly), so a slower machine gives the same solid. Only the case's share of the
+# run's time (agent.out_of_time) can stop the step.
 
 
 @dataclass
@@ -773,7 +775,6 @@ def apply(agent, solid: TopoDS_Shape, case_dir: Path | None, views: list[Path]) 
     with trace.step("shading_depth", kind="code") as step:
         if case_dir is None:
             return solid
-        started = time.time()
         dims = dict(zip("xyz", vh.read_dimensions(case_dir)))
         target = vh.read_volume(case_dir)
         if target and vh.volume(solid) < MIN_EXCESS * target:
@@ -785,20 +786,29 @@ def apply(agent, solid: TopoDS_Shape, case_dir: Path | None, views: list[Path]) 
             return solid
         score = verify.check(solid, case_dir, observed).score
         before, current, kept, found, drawings = score, solid, [], 0, None
+        rater = judge.Judge(case_dir, dims, observed) if judge.local() else None
 
         def attempt(base, pockets, rating):
             carved = agent._guarded(step, base, target, lambda: agent.cutter.run(
                 cut_pockets, base, [p.silhouette for p in pockets], TIMEOUT), quiet=True)
             if carved is None or vh.volume(carved) >= vh.volume(base) * (1 - 1e-6):
                 return None, rating
+            if rater is not None:
+                verdict = rater.rate(base, carved)
+                judge.note(agent, "shading", base, carved, verdict.accepted, verdict)
+                if not verdict.accepted:
+                    step.log(f"{verdict.reason} ({verdict}); not kept", level="warning")
+                    return None, rating
+                return carved, rating
             after = verify.check(carved, case_dir, observed).score
+            judge.note(agent, "shading", base, carved, after >= rating - SCORE_SLACK)
             if after < rating - SCORE_SLACK:
                 step.log(f"the verifier rates the result lower ({rating:.3f} to {after:.3f}); not kept", level="warning")
                 return None, rating
             return carved, after
 
         def spent() -> bool:
-            return time.time() - started > BUDGET or agent.out_of_time()
+            return agent.out_of_time()
 
         for _ in range(MAX_PASSES):
             cut_before = len(kept)

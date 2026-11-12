@@ -547,6 +547,18 @@ in the session scratchpad, not in the repo.
 - **`verify.rasterise` is the cost of a check, not OpenCascade**: on eval 236 and 38 the boolean
   takes 0.03 s, the tessellation 0.01 s, drawing 8 views 1.4 to 1.7 s. Filling large triangles
   with `cv2.fillConvexPoly` drew the 8 views in 0.09 to 0.14 s on those two.
+- **In the pipeline the gain from drawing large triangles alone is 1.2 to 2.4 times, not 10**
+  (2026-11-12, `state.md`): 8 views of eval 236 take 0.12 s in `rasterise` and 0.44 s in
+  `verify.draw`, whose edges and normals are now most of a check.
+- **The steps' own proposals are not the systematic column cuts of the research round**
+  (`tools/check_judge.py`, 23 eval parts, 2026-11-12): of the cuts that level faces, shading and
+  pockets tried and that were large enough to grade, the run with the score rule had 14 right and
+  6 wrong (it kept 13 and refused all 6), the run with the local rule 27 right and 6 wrong. So "175 of 307 wrong cuts accepted" says what the score rule does with
+  arbitrary proposals, such as a model's, not what it does in the pipeline today.
+- **The local rule counts the walls of an unfinished recess against a right cut** (eval 236,
+  isometric view, looked at as pictures): a pocket cut that is all excess opens walls towards the
+  dish beside it, which is still filled in our solid; the view shows the dish there, the candidate
+  a wall, and the tone error rises by 4300 px over 32 000 changed pixels.
 - **Symmetry is common and worth little**: `solid AND mirror(solid)` on the real cached solids of
   the 24 parts, 0.8712 to 0.8715. Repeated figures do not share a depth (3 of 16 groups) and pocket
   floors are not levels the solid already has (1 of 41 regions).

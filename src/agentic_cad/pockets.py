@@ -21,7 +21,6 @@ kept only if the verifier does not rate the solid lower and at least the part's 
 from __future__ import annotations
 
 import os
-import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -32,6 +31,7 @@ from OCP.TopoDS import TopoDS_Shape
 from agentic_cad import depth as levels
 from agentic_cad import lines, shading, split, trace, verify
 from agentic_cad import visual_hull as vh
+from agentic_cad import judge
 
 UNDER = ("below", "unseen")   # the pieces a figure under our surface may be made of ...
 MIN_BELOW = 0.5        # ... and the share of its length that must be "below"
@@ -52,7 +52,8 @@ MAX_SINGLE = 6         # when a view's pockets are refused together, this many a
 MIN_EXCESS = 1.02      # the step is skipped when the solid has less than this times the true volume
 SCORE_SLACK = 0.003    # the verifier's score may drop by this much through a cut and still pass
 TIMEOUT = float(os.environ.get("HULL_POCKETS_TIMEOUT", 30))
-BUDGET = float(os.environ.get("HULL_POCKETS_BUDGET", 30))   # seconds per case for the whole step
+# No clock of its own: MAX_POCKETS and MAX_SINGLE bound the work, so a slower machine gives the same
+# solid. Only the case's share of the run's time (agent.out_of_time) can stop the step.
 
 
 @dataclass
@@ -221,7 +222,6 @@ def apply(agent, solid: TopoDS_Shape, case_dir: Path | None, views: list[Path]) 
                     description="Cuts pockets whose outline the views draw under our surface") as step:
         if case_dir is None:
             return solid
-        started = time.time()
         dims = dict(zip("xyz", vh.read_dimensions(case_dir)))
         target = vh.read_volume(case_dir)
         if target and vh.volume(solid) < MIN_EXCESS * target:
@@ -242,6 +242,7 @@ def apply(agent, solid: TopoDS_Shape, case_dir: Path | None, views: list[Path]) 
             return solid
         score = before = None   # the verifier's rating, asked for only once there is something to cut
         current, proposed, kept = solid, 0, []
+        rater = judge.Judge(case_dir, dims, observed) if judge.local() else None
 
         def attempt(base, pockets, rating):
             cuts = [cut for cut in (cut_for(p, observed[p.view], dims) for p in pockets) if cut is not None]
@@ -250,14 +251,22 @@ def apply(agent, solid: TopoDS_Shape, case_dir: Path | None, views: list[Path]) 
             carved = agent._guarded(step, base, target, lambda: agent.cutter.run(levels.remove, base, cuts, TIMEOUT), quiet=True)
             if carved is None or vh.volume(carved) >= vh.volume(base) * (1 - 1e-6):
                 return None, rating
+            if rater is not None:
+                verdict = rater.rate(base, carved)
+                judge.note(agent, "pockets", base, carved, verdict.accepted, verdict)
+                if not verdict.accepted:
+                    step.log(f"{verdict.reason} ({verdict}); not kept", level="warning")
+                    return None, rating
+                return carved, rating
             after = verify.check(carved, case_dir, observed).score
+            judge.note(agent, "pockets", base, carved, after >= rating - SCORE_SLACK)
             if after < rating - SCORE_SLACK:
                 step.log(f"the verifier rates the result lower ({rating:.3f} to {after:.3f}); not kept", level="warning")
                 return None, rating
             return carved, after
 
         for view in verify.ORTHO_VIEWS:
-            if view not in found or agent.out_of_time() or time.time() - started > BUDGET:
+            if view not in found or agent.out_of_time():
                 continue
             pockets = find(view, found[view], observed, drawings[view], dims)
             if not pockets:
@@ -269,7 +278,7 @@ def apply(agent, solid: TopoDS_Shape, case_dir: Path | None, views: list[Path]) 
             taken = pockets if carved is not None else []
             if carved is None and len(pockets) > 1:
                 for pocket in pockets[:MAX_SINGLE]:
-                    if time.time() - started > BUDGET:
+                    if agent.out_of_time():
                         break
                     single, rating = attempt(current if carved is None else carved, [pocket], score)
                     if single is not None:

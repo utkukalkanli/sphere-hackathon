@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import json
 import os
-import time
 from pathlib import Path
 
 import cv2
@@ -55,7 +54,7 @@ TOUCH_MM = 1e-4       # two points this close are the same point of the solid
 SAME_PX = 3.0         # two pieces whose points lie this close in space are the same edge seen twice
 MAX_PIECES = 60       # figures drawn per case, the longest first
 TIMEOUT = float(os.environ.get("HULL_SPLIT_TIMEOUT", 20))
-BUDGET = float(os.environ.get("HULL_SPLIT_BUDGET", 15))   # seconds for finding the lines; past it nothing is drawn
+# No clock of its own: MAX_PIECES bounds what is drawn, so a slower machine gives the same solid.
 SCORE_SLACK = 0.0     # the verifier must not rate the split solid lower
 
 
@@ -451,7 +450,6 @@ def apply(agent, solid: TopoDS_Shape, case_dir: Path | None, views: list[Path]) 
             return solid
         facts = json.loads((case_dir / "facts.json").read_text())
         dims = dict(zip("xyz", vh.read_dimensions(case_dir)))
-        started = time.time()
         # The pockets step, when it cut nothing, hands on the merged solid with its lines already found
         cached, agent.lines_found = getattr(agent, "lines_found", None), None
         if cached is not None and cached[0] is solid:
@@ -470,8 +468,8 @@ def apply(agent, solid: TopoDS_Shape, case_dir: Path | None, views: list[Path]) 
         step.metric(lines_not_reproduced=len(every),
                     **{verdict: sum(1 for p in every if p.verdict == verdict) for verdict in ("level", "step", "below", "unseen")})
         step.attach("lines.json", [p.summary() for p in every])
-        if agent.out_of_time() or time.time() - started > BUDGET:
-            step.log("finding the lines took the time this step has; no face is split")
+        if agent.out_of_time():
+            step.log("the case has used its share of the run's time; no face is split")
             return solid
         seam = seams(found, observed, drawings, dims, faces_of(base))
         step.metric(seams=len(seam))

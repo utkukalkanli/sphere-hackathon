@@ -37,6 +37,7 @@ from agentic_cad import regions
 from agentic_cad import trace
 from agentic_cad import verify
 from agentic_cad import visual_hull as vh
+from agentic_cad import judge
 
 MIN_AREA_PX = 150        # smaller areas between lines are not looked at
 EDGE_PX = 3              # this close to its lines an area is not sampled: views and solid differ by a pixel
@@ -420,8 +421,8 @@ def apply(agent, solid: TopoDS_Shape, case_dir: Path | None, views: list[Path]) 
         if not straight:
             step.log("no straight view could be read")
             return solid
-        start = solid
         score = recall = None
+        rater = judge.Judge(case_dir, dims, observed) if judge.local() else None
         deflection = 0.3 * min(view.mm_per_px for view in observed.values())
         levelled = 0
         facing = regions.facing_tone({name: regions._measure(observed[name])[1] for name in straight})
@@ -431,8 +432,16 @@ def apply(agent, solid: TopoDS_Shape, case_dir: Path | None, views: list[Path]) 
             carved = agent._guarded(step, current, target, lambda: agent.cutter.run(remove, current, cuts, TIMEOUT), quiet=True)
             if carved is None or vh.volume(carved) >= vh.volume(current) * (1 - 1e-6):
                 return None
+            if rater is not None and not any(c.info.get("planes") for c in cuts):  # column cuts only
+                verdict = rater.rate(current, carved)
+                judge.note(agent, "depth", current, carved, verdict.accepted, verdict)
+                if not verdict.accepted:
+                    step.log(f"{verdict.reason} ({verdict}); not kept", level="warning")
+                    return None
+                score = recall = None  # the verifier's rating is of another solid now
+                return carved
             if score is None:
-                first = verify.check(start, case_dir, observed)
+                first = verify.check(current, case_dir, observed)
                 score, recall = first.score, first.mean("recall")
             report = verify.check(carved, case_dir, observed)
             after = report.score
@@ -441,6 +450,7 @@ def apply(agent, solid: TopoDS_Shape, case_dir: Path | None, views: list[Path]) 
             # instead: make more of the views' lines boundaries of the solid, and leave the outline alone.
             supported = any(c.info.get("supported") for c in cuts) and report.mean("recall") >= recall + MIN_RECALL_GAIN \
                 and report.mean("silhouette") >= verify.check(current, case_dir, observed).mean("silhouette") - 1e-4
+            judge.note(agent, "depth", current, carved, not (after < score - SCORE_SLACK and not supported))
             if after < score - SCORE_SLACK and not supported:
                 step.log(f"the verifier rates the result lower ({score:.3f} to {after:.3f}); not kept", level="warning")
                 return None
