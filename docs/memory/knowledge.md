@@ -99,6 +99,15 @@ truth. What it holds:
   walls each, 36 fin patches, top, bottom, bore floor); 36 B-spline faces and one plane are left
   for an inner surface. Practice 7 is as thin a shell by volume (wall 18 % of its deepest point,
   practice 6 13 %, all others 33 % or more) but its cavity is open and the top view shows it.
+- **Practice 6 has 18 fins and repeats every 20 degrees, not every 90** (2026-11-12, counted
+  in the top view: a fin at 12 and at 6 o'clock, a groove at 3 and at 9). The brief says
+  "four-fold symmetric with a fin on each cardinal axis", which is wrong. Tried on that word:
+  our solid in common with itself turned by 90, 180 and 270 degrees about the axis, to give the
+  grooves missed in the shade what the lit side has. Volume 2.759 to 2.443 times the truth and
+  the result is wrong: about 40 small fins, the side outlines lose 28 000 to 36 000 px, tone off
+  10.3 to 12.3 %. The turn by 180 degrees alone came back as an empty solid from the boolean.
+  A repeat angle has to be read from the views, never from the brief; with 18 turns of an
+  800-face solid it was not tried.
 - **The cone count of `facts.json` confirms the blind holes of practice 8** (2026-11-12).
   `cones_half_angle_deg` lists 48 faces at 59 degrees, the point of a 118 degree drill, which the
   brief calls chamfers. Two blind holes per listed span in the two groups is 16 + 8 = 24 holes,
