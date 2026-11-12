@@ -89,6 +89,16 @@ const currentCase = () => cases().find((c) => c.name === S.caseName);
 const currentRun = () => S.runs.find((r) => r.id === S.runId);
 const datasetRuns = () => S.runs.filter((r) => !r.dataset || r.dataset === S.dataset);
 const runCase = (run, name) => run && run.cases.find((c) => c.name === name);
+// The runs the run list offers: those of the case on screen (all of the set while no case is chosen)
+const caseRuns = () => datasetRuns().filter((r) => !S.caseName || runCase(r, S.caseName) || r.id === S.runId);
+// Volume score of the case on screen at the end of a run: 1 is the part's own volume
+function runScore(run) {
+  const c = currentCase(), rc = runCase(run, S.caseName);
+  const truth = ((c && c.facts && c.facts.volume_mm3) || 0) / 1000;
+  const volumes = ((rc && rc.stages) || []).map((s) => s.volume_cm3).filter(Boolean);
+  const ours = volumes[volumes.length - 1];
+  return truth && ours ? Math.min(ours, truth) / Math.max(ours, truth) : null;
+}
 
 // The .stp we are judged on for this case: from the selected run, else the committed file
 function outputOf(c) {
@@ -357,8 +367,8 @@ function renderMenu() {
         <em class="${c.score ? grade(c.score.score) : ''}">${c.score ? c.score.score.toFixed(2) : ''}</em><i class="${d.id === S.dataset && inRun.has(c.name) ? 'on' : ''}"></i></button>`).join('');
     }
   } else {
-    const rows = [{ id: '', label: noRun() }, ...datasetRuns().map((r) => ({ id: r.id, label: runLabel(r) }))].filter((r) => !words || r.label.toLowerCase().includes(words));
-    html = rows.map((r) => `<button role="option" data-pick="${esc(r.id)}" aria-selected="${r.id === (S.runId || '')}"><span>${esc(r.label)}</span></button>`).join('');
+    const rows = [{ id: '', label: noRun(), score: null }, ...caseRuns().map((r) => ({ id: r.id, label: runLabel(r), score: runScore(r) }))].filter((r) => !words || r.label.toLowerCase().includes(words));
+    html = rows.map((r) => `<button class="run" role="option" data-pick="${esc(r.id)}" aria-selected="${r.id === (S.runId || '')}"><span>${esc(r.label)}</span><em class="${r.score == null ? '' : grade(r.score)}">${r.score == null ? '' : r.score.toFixed(2)}</em></button>`).join('');
   }
   setHTML(list, html || '<p class="note">Nothing found</p>');
   if (!list.querySelector('.at')) {

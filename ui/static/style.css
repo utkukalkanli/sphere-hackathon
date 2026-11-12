@@ -317,6 +317,7 @@ h4 { margin: 9px 0 4px; font-size: 11px; font-weight: 500; color: var(--muted); 
 #menu h4 small { font: 11px var(--mono); }
 #menu .list button { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto 34px 6px; align-items: center; gap: 10px; width: 100%; height: 30px; padding: 0 10px; border: 0; border-radius: 5px; background: none; color: var(--text); text-align: left; }
 #menu .list button > span:only-child { grid-column: 1 / -1; }
+#menu .list button.run { grid-template-columns: minmax(0, 1fr) 34px; }
 #menu .list button span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 #menu .list button b { font: 500 12px var(--mono); color: var(--ink); text-align: right; }
 #menu .list button small { color: var(--muted); font-size: 12px; }

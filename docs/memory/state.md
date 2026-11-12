@@ -612,7 +612,7 @@ alone on the solid before it, 24 eval parts, sampled IoU with 20 000 points:
   The score is the result of `tools/eval_hull.py` in `runs/_eval_cache` (sampled IoU if it was run
   with `--iou`), else the volume score of the case's newest traced run; the panel reads
   them again every 5 s while open. The case and run lists of the bar are our own component (user):
-  typing a number or a name filters, each case row shows its score. The slider shows every step of
+  typing a number or a name filters, each case row shows its score. The run list holds only the runs of the case on screen, each with that case's volume score at the end of the run (user, 2026-11-12; not yet looked at in a browser). The slider shows every step of
   the case from the start (2026-11-12, user): the agent writes its plan as the first trace event
   (`trace.plan`, `VisualHullAgent.planned`), and a step that has not run is drawn dimmed as pending,
   off (`HULL_SKIP`, isometric cut), skipped (out of time) or not run; the running one pulses. Runs
