@@ -16,6 +16,7 @@ from agentic_cad import iso_support
 from agentic_cad import outline_fit as of
 from agentic_cad import planes
 from agentic_cad import pockets
+from agentic_cad import cavities
 from agentic_cad import propose
 from agentic_cad import recesses
 from OCP.BRepBuilderAPI import BRepBuilderAPI_Copy
@@ -59,15 +60,15 @@ HOLES_TIMEOUT = float(os.environ.get("HULL_HOLES_TIMEOUT", 40))
 RETRY_BUDGET = float(os.environ.get("HULL_RETRY_BUDGET", 20))
 
 
-# Steps after the holes, in order; HULL_SKIP=rounds,curved,depth,planes,recesses,model,shading,pockets,split switches some off.
+# Steps after the holes, in order; HULL_SKIP=rounds,curved,depth,planes,cavities,recesses,model,shading,pockets,split switches some off.
 # "model" (propose.py) does nothing unless an endpoint is configured; it comes before the fine cuts,
 # because a large structural cut lowers the precision every later cut needs.
 # "split" moves no material and must stay last: a later cut or merge would undo it.
-LATER_STEPS = {"rounds": rounds, "curved": curved, "depth": depth, "planes": planes, "recesses": recesses, "model": propose, "shading": shading,
+LATER_STEPS = {"rounds": rounds, "curved": curved, "depth": depth, "planes": planes, "cavities": cavities, "recesses": recesses, "model": propose, "shading": shading,
                "pockets": pockets, "split": split}
 SKIP_STEPS = {name for name in os.environ.get("HULL_SKIP", "").split(",") if name}
 # The name each later step gives its trace step, for the plan the dashboard shows before anything has run
-STEP_NAMES = {"rounds": "cut_rounds", "curved": "cut_curved", "depth": "level_faces", "planes": "plane_faces", "recesses": "open_recesses", "model": "model_cuts",
+STEP_NAMES = {"rounds": "cut_rounds", "curved": "cut_curved", "depth": "level_faces", "planes": "plane_faces", "cavities": "open_cavities", "recesses": "open_recesses", "model": "model_cuts",
               "shading": "shading_depth", "pockets": "cut_pockets", "split": "split_faces"}
 
 

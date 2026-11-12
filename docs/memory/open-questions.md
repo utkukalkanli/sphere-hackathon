@@ -5,6 +5,14 @@ Remove a question when it is answered and record the answer in `decisions.md`, `
 
 ## Submission (the user decides)
 
+- **Do the hidden parts come with `facts.json`?** (2026-11-12.) The extended practice set's README
+  says no ("practice set only, for debugging"); this repo's README lists it as an input. The whole
+  pipeline starts from it: box, true volume (every volume guard), hole list, radii. Without it only
+  the brief's Envelope line is read. Ask the organisers; until then a pipeline that reads the
+  same numbers from `description.md` is the safe side.
+- **Do the 11 new practice parts (10 to 20) belong in the submission?** (2026-11-12.) They are in
+  `artifacts/inputs` and have no file in `artifacts/outputs`, so pytest (and CI) fails until they
+  do. Whether the leaderboard scores 9 or 20 outputs is not known.
 - **Where is the leaderboard, and what did commit `fdcc8c6` score?** (2026-11-12.) The first
   submission is in; the README gives no address. A score per part would also answer the next
   question.
@@ -61,6 +69,12 @@ Remove a question when it is answered and record the answer in `decisions.md`, `
   pocket floor's own edges score lower than its rim's (eval 110); a slanted face on one known
   border with its angle from the tone; a depth map that is our solid's depth where tone and
   lines confirm it; a monocular depth network only to choose between candidates.
+- **Do cavities and the deeper floors hold on parts with a truth?** (2026-11-12.) Built on the
+  census (a third of the ordinary parts' excess under floors of ours that are too shallow) and
+  tried on the practice parts only. Not known: what they do on the 24 eval parts, whether the
+  flat floor a cavity gets is better than what was there (practice 7 at 38 mm, practice 5's
+  passages at 82.55 of 86 mm, which the brief calls through), and their time (nine practice
+  parts 456 to 501 s).
 - **The time of the recess step.** (2026-11-12.) It is bounded by 6 faces or pairs a case, not by
   a clock: eval 236 went from 26 to 203 s, 38 from 29 to 117 s, the nine practice parts from 228
   to 456 s (cases in parallel). On a slower machine the case shares decide what is searched. The

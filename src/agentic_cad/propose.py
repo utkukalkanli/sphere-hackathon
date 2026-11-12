@@ -311,7 +311,8 @@ def try_cuts(agent, step, solid: TopoDS_Shape, case_dir: Path, dims: dict, targe
                 return None
             report[op["id"]] = f"{choice['id']} of {len(found)} that fit: {report[choice['id']]}"
             return carved
-        variants = [v for v in (ops.deeper(op, factor) for factor in DEPTHS) if v is not None] or [op]
+        # "exact": the depth was read off the views, not guessed, and is tried as it is
+        variants = [op] if op.get("exact") else [v for v in (ops.deeper(op, factor) for factor in DEPTHS) if v is not None] or [op]
         for variant in variants:
             if agent.out_of_time():
                 return None

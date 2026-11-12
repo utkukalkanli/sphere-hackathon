@@ -16,6 +16,12 @@ How deep is not known. The column over the deeper face is cut at a row of depths
 judge keeps the one at which the eight views fit best, if they fit strictly better than before:
 the search the model step uses for a recess (propose.try_cuts), with the model's guess of where
 replaced by this reading of the views.
+
+A recess our solid already has can be too shallow: a third of what was left on the ordinary eval
+parts lay under such floors. A facing face under which our solid is one flat level, lower than a
+facing neighbour, is a floor. Since our solid contains the part its true floor is no higher. If
+an isometric face lands in it with a level below ours (sources.py), that level is tried as it
+is; otherwise the depth is searched as above.
 """
 
 from __future__ import annotations
@@ -26,7 +32,7 @@ from pathlib import Path
 import numpy as np
 from OCP.TopoDS import TopoDS_Shape
 
-from agentic_cad import drawing, propose, trace, verify
+from agentic_cad import drawing, propose, sources, trace, verify
 from agentic_cad import visual_hull as vh
 
 MIN_BORDER_PX = 15     # shorter borders are not read
@@ -38,6 +44,8 @@ MIN_SIDE = 3           # ... at this many places at least
 MIN_AREA_PX = 250      # a deeper face smaller than this is not worth a search
 MAX_RECESSES = 6       # per case, the largest first
 EITHER = os.environ.get("HULL_RECESS_EITHER", "1") != "0"   # also borders without a T: both sides are tried
+DEEPEN = os.environ.get("HULL_RECESS_DEEPEN", "1") != "0"   # also the floors of recesses our solid already has
+HINT_PX = 4            # a level read off the isometric views counts as deeper from this far under our floor (as planes.py)
 MIN_EXCESS = 1.02      # nothing is looked for in a solid within this of the part's volume
 
 
@@ -77,6 +85,7 @@ def find(evidence, solid: TopoDS_Shape) -> list[dict]:
     marked: dict[tuple[str, int], dict] = {}             # (view, face) -> recess
     open_pairs: dict[tuple[str, int, int], float] = {}   # (view, face, face) -> length of border without a T
     masks: dict[str, tuple] = {}
+    floors: dict[tuple[str, int], float] = {}            # (view, face) -> the level our solid has under a floor of its own
     for view in verify.ORTHO_VIEWS:
         if view not in evidence.observed:
             continue
@@ -103,8 +112,15 @@ def find(evidence, solid: TopoDS_Shape) -> list[dict]:
             if min(facing[a].area, facing[b].area) < MIN_AREA_PX:
                 continue
             sides = beside(border, sketch.labels, ours.depth, ours.mask)
-            if sides is None or abs(sides[a] - sides[b]) > LEVEL_PX * seen.mm_per_px:
-                continue   # our solid has a step here already
+            if sides is None:
+                continue
+            if abs(sides[a] - sides[b]) > LEVEL_PX * seen.mm_per_px:
+                # our solid has a step here already: the lower face is the floor of a recess of ours
+                lower = a if sides[a] < sides[b] else b
+                under = ours.depth[(sketch.labels == lower) & ours.mask]
+                if flat_under(lower) and np.percentile(under, 90) - np.percentile(under, 10) <= LEVEL_PX * seen.mm_per_px:
+                    floors[(view, lower)] = float(np.median(under))
+                continue
             if not flat_under(a) or not flat_under(b):
                 continue   # ... or is not flat under the two faces
             if border.front is None:
@@ -126,7 +142,29 @@ def find(evidence, solid: TopoDS_Shape) -> list[dict]:
             # the views are judged over the smaller face too, so its size orders the pairs
             listed.append({"type": "either", "view": view, "choices": choices, "border_px": length,
                            "pixels": min(choice["pixels"] for choice in choices)})
-    listed = sorted(listed, key=lambda entry: (entry["type"] != "recess", -entry["pixels"]))[:MAX_RECESSES]
+    listed = sorted(listed, key=lambda entry: (entry["type"] != "recess", -entry["pixels"]))
+    hinted = []
+    if DEEPEN and floors:
+        taken = set(marked) | {(view, face) for view, a, b in open_pairs for face in (a, b)}
+        landed = sources.planes_seen_straight(evidence.observed, evidence.dims, evidence.iso_faces(), areas)
+        size = np.array([evidence.dims[k] for k in "xyz"])
+        deepen = []
+        for (view, face), level in floors.items():
+            if (view, face) in taken:
+                continue
+            labels, facing = masks[view]
+            pixel = evidence.observed[view].mm_per_px
+            below = [value for label, value, _ in landed.get(view, []) if label == face and value < level - HINT_PX * pixel]
+            entry = {"view": view, "area": labels == face, "pixels": facing[face].area, "border_px": 0.0}
+            if below:   # the nearest level under our floor that an isometric face gives it
+                extent = float(abs(verify.camera(view)[2]) @ size)
+                hinted.append({**entry, "type": "region_floor", "exact": True, "depth": extent / 2 - max(below),
+                               "confidence": 1.0, "reason": "an isometric face lands in this floor at a lower level"})
+            else:
+                deepen.append({**entry, "type": "recess"})
+        listed += sorted(deepen, key=lambda entry: -entry["pixels"])
+    # the searches are what takes time: a level read off the views is one cut and always tried
+    listed = sorted(hinted, key=lambda entry: -entry["pixels"])[:MAX_RECESSES] + listed[:MAX_RECESSES]
     for number, entry in enumerate(listed, 1):
         entry["id"] = f"{entry['type']}_{entry['view']}_{number}"
         for letter, choice in zip("ab", entry.get("choices", [])):
@@ -148,8 +186,12 @@ def apply(agent, solid: TopoDS_Shape, case_dir: Path | None, views: list[Path]) 
         pending = find(evidence, solid)
         step.metric(recesses=len(pending))
         if not pending:
-            step.log("no view draws a step, with its deeper side marked, where our solid is level")
+            step.log("no view draws a step where our solid is level, and no recess of ours has a floor to search")
             return solid
-        step.log("; ".join(f"{entry['view']}: {'one of two faces, the smaller ' if entry['type'] == 'either' else ''}{entry['pixels']} px along "
-                           f"{entry['border_px']:.0f} px of border" for entry in pending))
+        step.log("; ".join(
+            f"{entry['view']}: {entry['pixels']} px, " + (
+                "a floor of ours with a lower level from the isometric view" if entry.get("exact")
+                else "one of two faces" if entry["type"] == "either"
+                else f"along {entry['border_px']:.0f} px of border" if entry["border_px"] else "a floor of ours, searched deeper")
+            for entry in pending))
         return propose.try_cuts(agent, step, solid, case_dir, dims, target, evidence, pending, label="recesses")

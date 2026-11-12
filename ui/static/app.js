@@ -5,7 +5,7 @@
 // Underneath, in an area whose height can be dragged: the steps as a line in the middle of it (it
 // wraps when there are too many for one row), and how the chosen step's solid differs from the truth. On the right one window with
 // The boundary between the two views can be dragged. No build step, no framework.
-import { createViewer, setView, fit, zoomBy, trackball, setTrackball, ghost, setGhost, faces, setFaces, section, setSection, VIEWS, COLORS } from '/static/viewer.js';
+import { createViewer, setView, fit, zoomBy, trackball, setTrackball, ghost, setGhost, faces, setFaces, section, setSection, marking, setMarking, redraw, VIEWS, COLORS } from '/static/viewer.js';
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -30,6 +30,7 @@ const ICON = {
   order: icon('<path d="M3 4h10M3 8h7M3 12h4"/>'),
   down: icon('<path d="M4.5 6.5 8 10l3.5-3.5"/>'),
   ghost: icon('<path d="M3 5.5 8 3l5 2.5v5L8 13l-5-2.5z" stroke-dasharray="2 1.7"/>'),
+  pin: icon('<path d="M8 14s4-4.2 4-7.5a4 4 0 0 0-8 0C4 9.8 8 14 8 14z"/><circle cx="8" cy="6.5" r="1.3"/>'),
   play: icon('<path d="M5 3.5v9l7-4.5z" fill="currentColor"/>'),
   stop: icon('<rect x="4" y="4" width="8" height="8" rx="1" fill="currentColor"/>'),
 };
@@ -64,9 +65,9 @@ async function api(path, body) {
   return data;
 }
 
-function toast(message) {
+function toast(message, kind = '') {
   const node = document.createElement('div');
-  node.className = 'toast';
+  node.className = `toast ${kind}`;
   node.setAttribute('role', 'alert');
   node.textContent = message;
   document.body.append(node);
@@ -249,8 +250,9 @@ async function showModel(viewport, url, key, color, empty = '', { before = null,
     const optional = (model) => (model ? loadStep(model.url, model.key).catch(() => null) : null);
     const [solid, old, box, real] = await Promise.all([loadStep(url, key), optional(before), optional(frame), optional(truth)]);
     if (!fresh()) return;
+    const { mark, ...rest } = options;  // mark: 'ours' or 'truth', a solid places can be marked on
     const viewer = await createViewer(stage, solid.meshes, color, {
-      ...options, ghost: old && old.meshes, frame: box && box.measured,
+      ...rest, pins: mark && (() => marks.filter((m) => m.on === mark)), onPick: mark && ((hit) => picked(mark, hit, url, solid.measured)), ghost: old && old.meshes, frame: box && box.measured,
       diff: real && { meshes: real.meshes, shift: solid.measured.min.map((v, i) => v - real.measured.min[i]) } });
     if (!fresh()) return viewer.dispose();
     if (stage.viewer) stage.viewer.dispose();
@@ -270,6 +272,7 @@ const viewportHTML = (id, label, tools = true) => `<div class="viewport" id="${i
     <button data-faces aria-pressed="${faces()}" title="Every face in its own colour (C)" aria-label="Every face in its own colour">${ICON.faces}</button>
     <button data-cut aria-pressed="${section().axis >= 0}" title="Cut the solids open: X, Y, Z, off (X)" aria-label="Section plane">${cutLabel()}</button>
     <input type="range" id="cut" min="0" max="1" step="0.005" value="${section().at}" aria-label="Where the section plane is" ${section().axis < 0 ? 'hidden' : ''}>
+    <button data-mark aria-pressed="${marking()}" title="Mark places on the solid for Claude: click to mark, click a mark to remove it (M)" aria-label="Mark places for Claude">${ICON.pin}</button>
     <button data-orbit aria-pressed="${trackball()}" title="Free rotation (T)" aria-label="Free rotation">${ICON.orbit}</button>
     <button data-zoom="0.8" title="Zoom out (−)" aria-label="Zoom out">${ICON.minus}</button>
     <button data-zoom="1.25" title="Zoom in (+)" aria-label="Zoom in">${ICON.plus}</button>
@@ -303,6 +306,86 @@ function cycleSection() {  // off, X, Y, Z, off
 function toggleGhost() {
   setGhost(!ghost());
   $$('[data-ghost]').forEach((button) => button.setAttribute('aria-pressed', ghost()));
+}
+
+// -- marks ----------------------------------------------------------------------------------------
+
+// Places pointed at on a solid, to talk about with Claude: M, click the solid (ours or the ground
+// truth), write a note if wanted, Send. The marks go to runs/_marks/<id>/ with a picture of the
+// view, and a summary to the clipboard; `tools/marks.py` works out the rest. A mark is in mm from
+// the min corner of the part's box, the frame of facts.json and of our solids.
+const marks = [];
+function picked(on, hit, url, measured) {
+  if (hit.pin) marks.splice(marks.indexOf(hit.pin), 1);
+  else {
+    const origin = on === 'truth' ? measured.min : [0, 0, 0];  // the ground truth lies anywhere
+    const row = live.rows.find((r) => r.id === live.chosen);
+    marks.push({
+      on, kind: hit.kind, at: hit.at, point: hit.at.map((v, i) => v - origin[i]), origin, normal: hit.normal, face: hit.face, note: '',
+      solid: url, box: { min: measured.min, max: measured.max }, camera: hit.camera,
+      step: on === 'ours' && row ? { n: row.n, name: row.name, trace: row.raw } : null,
+      diff: on === 'ours' && S.diff, section: section().axis >= 0 ? 'XYZ'[section().axis] : null,
+    });
+  }
+  marks.forEach((m, i) => { m.n = i + 1; });
+  renderMarks();
+  redraw();
+}
+function renderMarks() {
+  const box = $('#marks');
+  if (!box) return;
+  box.hidden = !marking() && !marks.length;
+  setHTML(box, marks.length ? `${marks.map((m, i) => `<div><b>${m.n}</b><span>${m.point.map((v) => v.toFixed(1)).join(' ')}</span>
+    <input data-note="${i}" value="${esc(m.note)}" placeholder="note" aria-label="Note for mark ${m.n}">
+    <button data-unmark="${i}" title="Remove" aria-label="Remove mark ${m.n}">×</button></div>`).join('')}
+    <footer><button data-marks="clear">Clear</button><button data-marks="send" class="go" title="Save for Claude and copy a summary (⌘↵)">Send</button></footer>`
+    : '<p class="note">Click the solid</p>');
+}
+function toggleMarking() {
+  setMarking(!marking());
+  document.body.classList.toggle('marking', marking());
+  $$('[data-mark]').forEach((button) => button.setAttribute('aria-pressed', marking()));
+  renderMarks();
+}
+function clearMarks() {
+  marks.length = 0;
+  renderMarks();
+  redraw();
+}
+const along = (n) => {  // a direction in words where it is an axis
+  const k = n.findIndex((v) => Math.abs(v) > 0.9995);
+  return k >= 0 ? `${n[k] > 0 ? '+' : '-'}${'XYZ'[k]}` : `(${n.map((v) => v.toFixed(2)).join(', ')})`;
+};
+function marksText(id, c) {
+  const lines = marks.map((m) => {
+    const where = m.on === 'truth' ? 'ground truth' : `our solid${m.step ? `, step ${m.step.n} ${m.step.name}` : ''}`;
+    const what = m.kind === 'section' ? `inside the material, on the section square to ${m.section}`
+      : m.face ? `on face ${m.face.index} (${m.face.flat ? 'flat' : 'curved'}, ${num(m.face.area, 1)} mm², normal here ${along(m.normal)})` : `normal ${along(m.normal)}`;
+    return `${m.n}. ${where}: (${m.point.map((v) => v.toFixed(2)).join(', ')}) mm ${what}${m.note ? ` — "${m.note}"` : ''}`;
+  });
+  return [`Marks ${id}: ${S.dataset} ${c.name}${S.runId ? `, run ${S.runId}` : ', committed output'}`, ...lines,
+    `Details: uv run python tools/marks.py ${id}`].join('\n');
+}
+async function sendMarks() {
+  const c = currentCase();
+  if (!c || !marks.length) return;
+  const now = new Date(), two = (v) => String(v).padStart(2, '0');
+  const id = `${now.getFullYear()}${two(now.getMonth() + 1)}${two(now.getDate())}-${two(now.getHours())}${two(now.getMinutes())}${two(now.getSeconds())}`;
+  const text = marksText(id, c);
+  const copied = navigator.clipboard ? navigator.clipboard.writeText(text).then(() => true, () => false) : Promise.resolve(false);
+  const shots = {};
+  for (const [on, viewport] of [['ours', '#ours'], ['truth', '#out']]) {
+    const viewer = ($(`${viewport} .stage`) || {}).viewer;
+    if (!viewer || !marks.some((m) => m.on === on)) continue;
+    viewer.render();
+    shots[on] = viewer.canvas.toDataURL('image/png');
+  }
+  try {
+    await api('/api/marks', { id, dataset: S.dataset, case: c.name, run: S.runId || null, truth: c.truth ? c.truth.url : null,
+      marks: marks.map(({ at, ...m }) => m), shots });
+    toast(`${marks.length} mark${marks.length === 1 ? '' : 's'} sent${await copied ? ' and copied' : ''} · ${id}`, 'ok');
+    clearMarks();
+  } catch (error) { toast(`Could not send the marks: ${error.message}`); }
 }
 
 // -- routing ------------------------------------------------------------------------------------
@@ -448,6 +531,7 @@ function renderMain() {
     main.dataset.key = key;
     $$('.stage', main).forEach((stage) => stage.viewer && stage.viewer.dispose());
     live = { id: live.id + 1, rows: [] };
+    marks.length = 0;
     htmlCache.delete(main);
     main.innerHTML = `
       <aside id="result" aria-label="Input and ground truth">
@@ -468,6 +552,7 @@ function renderMain() {
         ${viewportHTML('ours', 'Our solid after the chosen step. Drag to rotate, shift-drag to pan, scroll to zoom.')}
         <div class="hud"><div id="stage-label"></div><div id="steps-note"></div></div>
         <div class="hud end" id="steps-status"></div>
+        <div id="marks" hidden></div>
         <div class="grip" role="separator" aria-orientation="vertical" title="Drag to resize, double-click to reset"></div>
       </section>
       <section id="extracted" aria-label="What the chosen step extracted"><div id="step-detail"></div></section>
@@ -475,6 +560,7 @@ function renderMain() {
       <div class="grip row" role="separator" aria-orientation="horizontal" title="Drag to resize, double-click to reset"></div>`;
     placeExtracted();
     new ResizeObserver(layoutTimeline).observe($('#timeline'));
+    renderMarks();
     loadBrief(c);
     startMeasuring(c);
   }
@@ -667,7 +753,7 @@ function renderResult(c) {
   const list = sourcesOf(c), at = sourceOf(c);
   setHTML($('#result-head'), `<h2>${at === 'truth' ? '<i class="sw truth"></i>' : ''}${esc(sourceLabel(at))}</h2>`);
   view.dataset.show = at === 'truth' ? 'model' : isPicture(at) ? 'image' : 'doc';
-  if (c.truth) showModel($('#out'), c.truth.url, `${c.truth.url}?${c.truth.mtime}`, COLORS.truth);  // stays loaded behind the others
+  if (c.truth) showModel($('#out'), c.truth.url, `${c.truth.url}?${c.truth.mtime}`, COLORS.truth, '', { mark: 'truth' });  // stays loaded behind the others
   if (isPicture(at)) showBig(c, at);
   else if (at === 'brief') setHTML($('#doc'), `<article class="prose">${live.brief == null ? '' : markdown(live.brief)}</article>`);
   else if (at === 'facts') setHTML($('#doc'), factsHTML(c.facts));
@@ -1035,14 +1121,14 @@ function renderSteps(c) {
   live.frame = run && first ? first.model : null;
   showModel($('#ours'), chosen && chosen.model && chosen.model.url, chosen && chosen.model && chosen.model.key, COLORS.ours,
     note ? '' : `<p class="note">${running ? 'Waiting for the first solid…' : 'No solid to show yet.'}</p>`,
-    { before: chosen && chosen.before, frame: live.frame, truth: diff });
+    { before: chosen && chosen.before, frame: live.frame, truth: diff, mark: 'ours' });
 }
 
 // The stops every case has, in order. A trace brings its own plan (hull_agent.planned); names it
 // lacks (runs traced before a step was planned, or before there was a plan) are put in from here,
 // so every case of every run shows the same stops.
 const STOPS = ['bounding_box', 'read_sources', 'cut_front_back', 'cut_right_left', 'cut_top_bottom', 'cut_iso', 'isometric_support', 'check_views',
-  'cut_holes', 'open_mouths', 'evidence', 'cut_rounds', 'cut_curved', 'level_faces', 'plane_faces', 'open_recesses', 'model_cuts', 'shading_depth', 'cut_pockets',
+  'cut_holes', 'open_mouths', 'evidence', 'cut_rounds', 'cut_curved', 'level_faces', 'plane_faces', 'open_cavities', 'open_recesses', 'model_cuts', 'shading_depth', 'cut_pockets',
   'split_faces', 'export_step'];
 function fullPlan(given) {
   const plan = given.slice();
@@ -1074,6 +1160,7 @@ const ABOUT = [
   [/^split_faces$/, () => 'Splits a face where the views draw a line across it'],
   [/^level_faces$/, () => 'Cuts each flat face down to its lowest level'],
   [/^plane_faces$/, () => 'Cuts flat faces down to the plane the isometric views give them'],
+  [/^open_cavities$/, () => 'Searches the depth of groups of faces a view shows inside a face our solid has flat'],
   [/^open_recesses$/, () => 'Searches the depth of faces a view draws a step at where our solid is level'],
   [/^shading_depth$/, () => 'Takes pocket depths from the shading of the isometric views'],
   [/^export_step$/, () => 'Merges coplanar faces and writes the .stp'],
@@ -1305,6 +1392,9 @@ document.addEventListener('click', async (event) => {
   if (d.ghost !== undefined) return toggleGhost();
   if (d.faces !== undefined) return toggleFaces();
   if (d.cut !== undefined) return cycleSection();
+  if (d.mark !== undefined) return toggleMarking();
+  if (d.unmark) return picked('', { pin: marks[Number(d.unmark)] });
+  if (d.marks) return d.marks === 'send' ? sendMarks() : clearMarks();
   if (d.scores !== undefined) return toggleScores();
   if (d.active !== undefined) return toggleActive();
   if (d.live) return gotoLive(d.live.slice(0, d.live.lastIndexOf('/')), d.live.slice(d.live.lastIndexOf('/') + 1));
@@ -1397,6 +1487,7 @@ document.addEventListener('contextmenu', (event) => {
 
 document.addEventListener('input', (event) => {
   if (event.target.id === 'menu-filter') { htmlCache.delete($('#menu .list')); return renderMenu(); }
+  if (event.target.dataset.note) { const m = marks[Number(event.target.dataset.note)]; if (m) m.note = event.target.value; return; }
   if (event.target.id === 'cut') return setSection(section().axis, Number(event.target.value));
   if (event.target.id === 'source') { const c = currentCase(); return c && selectSource(sourcesOf(c)[event.target.value]); }
   if (event.target.id === 'scrub' && live.rows[event.target.value]) selectStep(live.rows[event.target.value].id);
@@ -1413,13 +1504,15 @@ document.addEventListener('keydown', (event) => {
     if (act) { event.preventDefault(); act(); }
     return;
   }
+  if (event.target.dataset && event.target.dataset.note && event.key === 'Enter') { event.preventDefault(); return event.metaKey || event.ctrlKey ? sendMarks() : event.target.blur(); }
+  if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && marks.length) return sendMarks();
   if (event.key === 'Escape') { if (scoresOpen) toggleScores(); return closeOverlay(); }
   if (event.target.matches('select, textarea, input:not([type=range])') || event.metaKey || event.ctrlKey || event.altKey) return;
   if (event.target.matches('input[type=range]') && event.key.startsWith('Arrow')) return;  // the slider moves itself
   const act = {
     ArrowRight: () => moveStep(1), ArrowLeft: () => moveStep(-1), ']': () => moveStep(1), '[': () => moveStep(-1),
     ArrowDown: () => moveCase(1), ArrowUp: () => moveCase(-1),
-    '+': () => zoomBy(1.25), '=': () => zoomBy(1.25), '-': () => zoomBy(0.8), f: fit, 0: fit, t: toggleOrbit, g: toggleGhost, d: toggleDiff, c: toggleFaces, x: cycleSection, s: toggleScores, r: toggleActive,
+    '+': () => zoomBy(1.25), '=': () => zoomBy(1.25), '-': () => zoomBy(0.8), f: fit, 0: fit, t: toggleOrbit, g: toggleGhost, d: toggleDiff, c: toggleFaces, x: cycleSection, m: toggleMarking, s: toggleScores, r: toggleActive,
     v: () => moveDerived(1), V: () => moveDerived(-1), ' ': () => setPeek(true),
   }[event.key] || (/^[1-8]$/.test(event.key) && (() => selectSource(VIEW_NAMES[Number(event.key) - 1])));
   if (!act) return;

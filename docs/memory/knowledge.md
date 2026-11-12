@@ -17,7 +17,10 @@ Longer accounts of each finding: `git show bda2104:docs/memory/knowledge.md`.
 
 ## `facts.json`
 
-Exact, measured from the ground truth, and given for the hidden parts too.
+Exact, measured from the ground truth. **Whether the hidden parts have it is in doubt**: the
+README of the organisers' extended practice set (2026-11-12) calls it "practice set only, for
+debugging" and lists the inputs as `images/`, `context.png` and `description.md`, "nothing else";
+this repo's README lists it among the inputs (`open-questions.md`).
 
 | field | gives | does not give |
 | --- | --- | --- |
@@ -193,6 +196,27 @@ Exact, measured from the ground truth, and given for the hidden parts too.
 
 Tiers by our rule (up to 30 faces simple, up to 200 medium): parts 1 to 3, 4 to 6, 7 to 9.
 
+- **Extended practice set** (organisers' `extended-practice.zip`, 2026-11-12): 20 named parts. Nine
+  are byte for byte our parts 1 to 9 (1 camshaft_retainer, 2 engine_valve, 3 crankshaft_bushing,
+  4 crankshaft, 5 engine_silinder_head, 6 engine_air_filter, 7 practice_piece,
+  8 hydraulic_pump_main_body, 9 engine_block); the other eleven are in `artifacts/inputs` as 10 to
+  20, in the zip's alphabetical order. No ground truth, no scorer in the zip. Only 20 lacks
+  `context.png`.
+
+  | part | name in the zip | box mm | faces |
+  | --- | --- | --- | --- |
+  | 10 | engine_a__camshaft | 35 x 38 x 463 | 64 |
+  | 11 | engine_a__camshaft_bushing | 19 x 25 x 25 | 6 |
+  | 12 | engine_a__engine_belt_wheel | 60 x 60 x 41 | 273 |
+  | 13 | engine_a__engine_belt_wheel_pt2 | 166 x 166 x 46 | 703 |
+  | 14 | engine_a__engine_intake_manifold | 995 x 281 x 410 | 350 |
+  | 15 | engine_a__engine_oil_pan | 508 x 127 x 330 | 265 |
+  | 16 | engine_a__engine_side_cover | 478 x 319 x 52 | 157 |
+  | 17 | engine_a__engine_valve_cover | 64 x 165 x 508 | 323 |
+  | 18 | engine_a__rocking_arm_spring | 27 x 30 x 27 | 16 |
+  | 19 | engine_a__turbo_shell | 82 x 156 x 175 | 79 |
+  | 20 | tubing_spider | 328 x 170 x 333 | 341 |
+
 - **Practice 6.** As a body of revolution its outline holds 3.27 times the true volume; the
   flange alone holds more than the whole part. The bottom view is a closed face with one blind
   bore, so no view shows the hollow. About half of its 122 faces are outside; 36 B-spline faces
@@ -281,6 +305,18 @@ scripts behind them are in `runs/_research_scratch/sources/`.
   under 0.5). What is still lost is small: faces a few pixels wide have no core and join a
   neighbour (eval 123's threads, 146's chamfer strips), and the eval renderer's flat shading
   cuts curved faces into strips (eval 147: 10 % either way), which the organisers' does not.
+- **Where the excess is after the drawing, plane faces and recesses** (research script `e15.py`,
+  commit `1db8ab7`, the 24 parts' final solids, straight views, in true volumes summed over the
+  views). 20.3 in all, 19.5 of it in eval 51 and 99. The other 22 parts hold 0.82 (1.50 before
+  these steps), by what the picture says of the face over it and what our solid has there:
+  curved face 39.5 % (eval 3 0.16, 171 0.11); facing face where our solid is one level with steps
+  all round, so a recess of ours that is too shallow, 36.2 % (110 0.16, 74 0.06, 236, 171; the
+  true floor flat and square for all of it); facing, our solid not flat there 7.7 % (171);
+  facing, level across a border without a T 5.8 % (171), with a T 3.7 % (236); slanted flat face
+  3.5 %; faces under 150 px 2.0 %; facing over several levels of ours 1.5 %.
+- **Eval 51's excess lies under one face.** Its walls are 1 to 2 px and the drawing has the
+  whole inside of the tray as one facing face (247 918 px of the top view); the recess step
+  takes it, with a T, and finds no depth at which the views fit better.
 - **How well a face is separated follows its width** (research script `e12.py`, 22 eval parts;
   width = 2 x area / perimeter; lost = best overlap under 0.5): under 2 px 99 % lost, 2 to 4 px
   53 %, 4 to 8 px 18 %, 8 to 16 px 5 %, wider 11 %. Faces of 4 to 8 px are rarely lost and

@@ -37,6 +37,7 @@ reasons in `decisions.md`.
 | curved recesses (`cut_curved`) | `curved.py`, `tone.py`, `regions.py` | `HULL_SKIP=curved` | no cut on the 24; 5 of the 37 lathe-type eval parts, none worse (249: 0.725 to 0.981); practice 2 1.105 to 1.018 |
 | level faces (`level_faces`) | `depth.py` | `HULL_SKIP=depth`, `HULL_DEPTH_SUPPORT=0` | IoU 0.847 to 0.854; supported cuts 0.8668 to 0.8791 (38: 0.628 to 0.933; 99: 0.252 to 0.241, accepted); practice 6 3.31 to 2.77 |
 | plane faces (`plane_faces`) | `planes.py`, `sources.py` | `HULL_SKIP=planes` | cuts eval 110, 236, 171 and 74 (74: IoU 0.8675 to 0.9000; 110: 0.8605 to 0.8680), none lower; 24 parts 0.8928 to 0.8945; practice 7 one cut |
+| cavities (`open_cavities`) | `cavities.py`, `drawing.py`, `propose.try_cuts` | `HULL_SKIP=cavities`, `HULL_MAX_CAVITIES` | not run on the eval parts (user, 2026-11-12); practice 7 1.878 to 1.449, practice 5 1.225 to 1.133 |
 | recesses (`open_recesses`) | `recesses.py`, `drawing.py`, `propose.try_cuts` | `HULL_SKIP=recesses`, `HULL_RECESS_EITHER=0` | 24 parts IoU 0.8957 to 0.9076: eval 236 0.7897 to 0.9329, 171 0.7703 to 0.8561, 38 0.9371 to 0.9926 (38 through the choice of two), the other 21 untouched; practice 7 1.943 to 1.878, practice 8 four small ones |
 | model (`model_cuts`) | `propose.py`, `ops.py`, `judge.py` | off unless `OPENAI_BASE_URL` and `OPENAI_MODEL` are set; `HULL_PROPOSALS=<dir>` replays files | 12 eval parts with excess, Gemma 4 31B, same start solid, 20 000 points: IoU 0.9181 without, 0.9414 with (236: 0.796 to 0.990; 171: 0.759 to 0.844; 74: 0.899 to 0.918; 3: 0.918 to 0.912; 38 and 110 down 0.007); 24 to 332 s a part (below) |
 | shading (`shading_depth`) | `shading.py` | `HULL_SKIP=shading`, `HULL_SHADING_SLANTED=0`, `HULL_SHADING_DEEP=0` | IoU 0.854 to 0.861 (110: 0.79 to 0.86, 236: 0.70 to 0.73), none lower |
@@ -83,6 +84,11 @@ What each step does:
   in is cut down to that plane where our solid stands more than 4 px in front of it. Left alone
   if the solid lies under the plane over 5 % of the area or two faces of one area disagree. Kept
   by the volume guard and the verifier's score, one cut at a time.
+- **Cavities.** A group of faces that a facing face of a straight view encloses (two or more, or
+  one that is curved or slanted), over which our solid is flat, square to the view and level
+  with the face around it, lies under that level: what stood on the face would show in a
+  silhouette. The column over the whole group is cut at nine depths and the judge keeps the
+  best, as for a recess. Up to 4 a case, largest first. Before the recesses.
 - **Recesses.** A straight view draws a line between two faces that both face its camera only
   where they differ in depth. Where our solid is one level across such a border (2 px) and an
   edge ends against the border in a T, the face beside the bar is the deeper one. The column
@@ -91,6 +97,10 @@ What each step does:
   "where" replaced. Without a T both faces are searched from the same solid and the one the
   views fit better with is kept. Only where our solid is flat and square to the view under both
   faces (90 % of its pixels). Up to 6 faces or pairs a case, those with a T first, then largest.
+  Also (`HULL_RECESS_DEEPEN=0` switches it off, not run on the eval parts) the floors of recesses
+  our solid already has, a facing face under which our solid is one flat level lower than a
+  facing neighbour: cut to the level an isometric face gives it if that is 4 px or more under
+  ours, else searched deeper like the others, after them.
 - **Model.** One request per case (six straight views with regions numbered, two isometric
   views, `facts.json`, brief, region table, volume ratio unless `HULL_MODEL_TELL_VOLUME=0`); the
   answer is a list of typed cuts (box, cylinder, prism, halfspace, region_floor). Each is cut,
@@ -220,13 +230,18 @@ Practice set, our volume / true volume (no ground truth, so only excess shows):
 | 12 afternoon, latest | 1.003 | 1.018 | 1.000 | 1.028 | 1.225 | 2.759 | 1.943 | 1.063 | 1.205 |
 | faces, ours of the part's | 19 of 17 | 22 of 12 | 9 of 9 | 542 of 178 | 152 of 172 | 799 of 122 | 733 of 628 | 333 of 306 | 225 of 371 |
 
-- With the drawing, plane faces and recesses (uncommitted, one run of 2026-11-12 night, cases in
-  parallel, 456 s for the nine; 228 s before the pairs without a T): our volume over the true
-  one 1.003, 1.018, 1.000, 1.034, 1.225, 2.690, 1.878, 1.062, 1.199; faces 19, 22, 10, 477, 156,
-  628, 1051, 393, 229. Recesses: practice 7 one face of the back view (66 994 px) down to 71.9 mm
-  and two of the front view (23 182 and 17 899 px, from pairs) to 18.65 mm, two refused; practice
-  8 four faces of about 1180 px by 1.2 to 2.4 mm. Not checked by eye. `artifacts/outputs` is
-  still the image run of `bda2104`, without these steps.
+- With cavities and the deeper search under floors (uncommitted, one run of 2026-11-12 night,
+  cases in parallel, 501 s for the nine): our volume over the true one 1.003, 1.018, 1.000,
+  1.034, 1.133, 2.690, 1.449, 1.062, 1.199; faces 19, 22, 10, 477, 197, 628, 968, 397, 229.
+  Practice 7: one cavity of the top view, 49 faces over 165 772 px, to 38.2 mm (a deeper one was
+  under the part's volume), a floor of the bottom view to an isometric level, two faces of the
+  front view to 18.65 mm; the face of the back view kept before (71.9 mm) no longer fits better.
+  Practice 5: four cavities of about 4480 px (3 to 5 faces each, three in the bottom view, one
+  in the top) to 82.55 of its 86 mm, and one small recess. Practice 8: the four small recesses
+  and one of 290 px. Nothing of this was checked by eye or against a truth. `artifacts/outputs`
+  is still the image run of `bda2104`, without these steps.
+- `artifacts/inputs` holds `test_case_10` to `test_case_20` since 2026-11-12 (untracked, not
+  from this session); `tests/test_submission_format.py` fails for them until they have outputs.
 - Part 8 rose because 12 holes are no longer cut through; the old 1.002 was a cancelled error
   (`decisions.md`, Evaluation). Part 9 fell through the mouths.
 - All 9 files read back as one valid solid. The pockets cuts on practice 5, 7 and 9 (slivers on
@@ -268,6 +283,10 @@ image, emulated, took 10.5 minutes at phase 0.
 
 ## Not done
 
+- **Practice parts 10 to 20** (the organisers' extended set, added to `artifacts/inputs`
+  2026-11-12, uncommitted) have never been run: no outputs, no measurements, and
+  `tests/test_submission_format.py` fails for the 11 missing files. Everything in this file that
+  says "the 9 practice parts" means parts 1 to 9.
 - Model: the time of the step bounded and measured on the practice set, the hard set
   (`tools/find_hard.py` is written and not run: it needs hull and holes on all 266 parts, which
   needs the user's go), a volume-closing depth, depths for boxes and prisms.

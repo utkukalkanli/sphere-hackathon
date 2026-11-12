@@ -95,6 +95,12 @@ kept beside its successor. Older wording: `git show bda2104:docs/memory/decision
   faces** (2026-11-12). The strip of a tyre's tread that faces the camera reads as a flat facing
   face in the eval renders, and the judge kept columns 20 to 36 mm deep in it (eval 3, 0.9172 to
   0.9126). Asking instead for one depth under each face cost eval 38 a right cut (0.9651).
+- **Cavities and the deeper search under floors went in without an eval run** (2026-11-12, user:
+  build them, run no eval case). They rest on the census of the excess and on the practice
+  parts' volumes only; the 24 parts have to be run before these are trusted.
+- **A cavity is read as detail inside a face that our solid has flat**, not as a void no view
+  shows (2026-11-12, this session's reading of the user's "cavities"). An enclosed void has no
+  evidence in the views and a wrong one always costs overlap.
 - **Level faces take their flat areas from the drawing** (2026-11-12, user). On the 24 parts
   sampled IoU 0.8945 to 0.8957 and 295 to 288 faces a solid; eval 27 and 38 up, eval 99 no
   longer cut by the step.
