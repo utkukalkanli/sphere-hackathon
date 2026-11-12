@@ -114,6 +114,13 @@ the entry and say what changed.
 
 ## Evaluation
 
+- **A change is judged where it acts, not by the part's total** (2026-11-12, user). A whole-part
+  number (volume ratio, verifier score, even IoU) can get worse through a change that brings the
+  solid closer to the real part, because an error elsewhere was being cancelled: on practice 8 the
+  holes cut through removed about as much as the hull has in excess, so the volume looked right
+  (1.008 times the truth) with every one of those holes wrong. So measure a step on the region it
+  changes (against the views there, or against the ground truth there), report the total beside it,
+  and do not refuse or tune a step on the total alone.
 - **Committed practice outputs come from the `linux/amd64` image, not from a native laptop run**
   (2026-11-11). The organisers re-run the image and compare with the committed files, and booleans
   can differ between platforms (practice 6 did, before the tangent fit). Regenerate with `docker run` as in README "Code-freeze
@@ -132,13 +139,15 @@ the entry and say what changed.
 
 ## Dashboard
 
-- **One big 3D view, a step slider under it, small input and output windows left and right**
-  (2026-11-11 night, user; replaces the three columns). Each step must show what it extracted: the
-  removed material is drawn over the solid in 3D, and the step's attachments are listed under the
-  truth window on the right. The left panel holds the input and nothing else; since 2026-11-12 it is a small window on the
-  pictures in the bottom left corner of the big view, not a column, with the brief and the facts folded away (user: only used to switch between pictures). The
-  right window shows the ground truth, not our output (user: the output is already the big view).
-  The side panels are resizable. Black background (user), minimal, little text.
+- **Two views and a link: left the input and the ground truth, right our solid, and what the
+  chosen step extracted in a window floating on the boundary between them** (2026-11-12, user:
+  "think of two processes and a link"; replaces the big view with side windows of 2026-11-11
+  night). Extracted was tried under the truth, then in the footer, and was too cramped in both;
+  the user asked for it over the two views, so "never laid over a model" no longer holds for it.
+  The left window has a slider: brief, facts, input pictures, ground truth. It never shows our
+  output. Under the views only the steps and Diff. What a step does is said in a tooltip on its
+  stop, with the solid before and after, not in text under the slider (user: too long); the line
+  of steps may wrap. Black background (user), minimal, little text.
 - **New pipeline steps need no UI change** (2026-11-11). A `with trace.step(...)` in the agent is
   enough; the solid after each step is saved as a stage `.stp` and becomes a stop on the slider.
   Whatever the step attaches as an image or a `.json` list shows up as "extracted". The one-line

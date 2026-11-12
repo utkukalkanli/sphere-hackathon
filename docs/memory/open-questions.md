@@ -8,10 +8,6 @@ Remove a question when it is answered, and record the answer in `decisions.md` o
   to 4), and the run budget in `scripts/main.py` guarantees a file for every case within 17 minutes.
   What stays open: a cut that times out or a step that is skipped there but not here changes the
   output, and the image has not been run with steps 3 and 4 yet.
-- **Practice part 4 reads back as an invalid solid once the rounds step has run** (see Known
-  weaknesses in `state.md`). Whether the organisers' scorer rejects it is unknown; a broken file
-  scores 0. Open: what exactly is invalid, whether a repair on export fixes it, and whether the
-  export should read every file back and fall back to the solid before the offending step.
 - **When do we make the first submission?** Nothing is on the leaderboard yet. The image and the
   outputs of steps 1 + 2 are ready on `feat/visual-hull`; it takes a merge to `main`, which the user decides.
 
@@ -96,6 +92,11 @@ Remove a question when it is answered, and record the answer in `decisions.md` o
   and `OPENAI_MODEL` are not set anywhere yet, and the endpoint must be public and stay up until
   judging ends.
 - **`context.png` is not used.** Is there anything in it worth using? It is absent for some parts.
+- **How deep is a blind hole that `facts.json` lists only as a span?** (2026-11-12, practice 8,
+  `knowledge.md`.) The hole step cuts opposite blind holes as one through hole. Detecting it is
+  clear: the cut opens a line of sight that both views along the axis show closed. Open is what to
+  cut instead: nothing, a blind hole from each end with a guessed depth, or a depth read from the
+  isometric view (it sees the bottom of a hole shallower than about 0.7 diameters). Not built.
 - **Pockets from lines under our surface: what is left to gain?** (2026-11-12) Lines under our
   surface exist on 7 of the 24 eval parts. Taken now: closed figures and figures that end on
   another line of the view (eval 236, 171). Not pockets at all: the seams of a curved surface our
@@ -107,6 +108,33 @@ Remove a question when it is answered, and record the answer in `decisions.md` o
   organisers' score is volume overlap it gains nothing; it is in because the user wants the face
   count right. It also splits few faces so far: figures need joining across pieces the isometric
   camera does not see, and pieces along one circle are still fitted as several short lines.
+
+- **Should each case run in its own process?** (2026-11-12, left out of plan phase 0.) A segfault
+  in the main process now leaves every case a valid file, but the cases after it stay at the box or
+  the hull. A process per case would go on with the next case and would bound the hull by the
+  case's deadline, which nothing does today; tracing lives in the main process.
+- **A kill in the first second, or between a copy and its rename** (2026-11-12). Before the boxes
+  are written (0.7 to 1.1 s, the import of OpenCascade) there are fewer than 9 files. A file waits
+  in the output directory as `.test_case_<n>.stp.part` for the moment of the rename; a SIGKILL in
+  those milliseconds leaves it there (not seen in 7 kills). What the organisers do with an extra
+  file is not known.
+- **The image and the laptop give different solids on practice 6, 7 and 9** (2026-11-12,
+  `state.md`). The committed outputs must come from the image anyway; open is whether the
+  organisers' faster machine gives a third result (see the wall-clock budgets below).
+- **Wall-clock budgets decide the practice outputs** (2026-11-12): shading (45 s) stopped out of
+  time on practice 7 and 9 and split (15 s) on practice 9, so the organisers' re-run will give
+  other solids there. Budgets by count instead of by clock?
+- **Should the later steps accept by local image error instead of the verifier's score?**
+  (2026-11-12, numbers in `knowledge.md`.) On single column cuts the rule "error over the 8 views
+  does not rise and the volume improves" let 30 of 307 wrong cuts through against 175. Not tested
+  in sequences, on slanted or curved cuts, or in the pipeline; on practice 9 it refuses a shading
+  cut that looks right by eye. Together with the coplanar-pair detector it was safe and small
+  (`knowledge.md`); what it lacks is a demand for evidence: "not worse" passes every floor that no
+  view sees.
+- **How does the organisers' scorer treat an enclosed void, and is the score volume or surface?**
+  A first submission would show it if the leaderboard gives a score per part: practice 6 near 0.3
+  means volume overlap, 0.55 or more a surface or composite score. Carving the core of a shell
+  (practice 6) waits on this.
 
 ## Housekeeping
 

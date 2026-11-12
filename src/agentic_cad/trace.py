@@ -173,6 +173,10 @@ class CaseTrace:
         self._ids = itertools.count(1)
         self._files = itertools.count(1)
         self._tokens: list = []
+        # A case may be entered several times (the hull of every case first, the later steps after):
+        # keep this object, set `more` while it will be entered again, and its end is recorded once
+        self.more = False
+        self._started = False
         if tracer is not None and tracer.dir is not None:
             try:
                 self.dir = tracer.dir / name
@@ -251,14 +255,17 @@ class CaseTrace:
 
     def __enter__(self) -> "CaseTrace":
         self._tokens.append((_current_case.set(self), _current_step.set(None)))
-        self._emit({"t": "case_start", "name": self.name})
+        if not self._started:
+            self._emit({"t": "case_start", "name": self.name})
+            self._started = True
         return self
 
     def __exit__(self, exc_type, exc, tb) -> bool:
         event: dict = {"t": "case_end", "status": "ok" if exc_type is None else "error"}
         if exc_type is not None:
             event["error"] = "".join(traceback.format_exception(exc_type, exc, tb))
-        self._emit(event)
+        if exc_type is not None or not self.more:
+            self._emit(event)
         try:
             case_token, step_token = self._tokens.pop()
             _current_step.reset(step_token)

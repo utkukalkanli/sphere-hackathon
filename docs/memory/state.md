@@ -37,12 +37,31 @@ Guards around every cut (`hull_agent.py`):
 - If cutting all holes at once is refused, they are retried one `facts.json` entry at a time.
 - Steps 3 and 4 run through `VisualHullAgent.refine` (`LATER_STEPS`; `HULL_SKIP=rounds,depth` switches
   them off). Each keeps a cut only if the verifier's score does not drop by more than 0.003.
-- The whole run has one time budget (`HULL_RUN_BUDGET`, 17 minutes, `scripts/main.py`): the time left
-  is shared among the cases still to do; a case past its share skips its later steps, and with under
-  5 s per case left the remaining cases get their bounding box.
+- **Every case has a valid file from the first second on** (plan phase 0, 2026-11-12, branch
+  `feat/phase0-safe-runs`, uncommitted). `scripts/main.py` goes over all cases three times: the
+  bounding box of every case; hull and holes of every case; the later steps of every case, the
+  ones with the most volume over the true one first. A file is only ever replaced by a better one,
+  through `export.checkpoint`: the solid is written to `/tmp`, read back, and put in place with one
+  rename only if it reads as one valid solid. `refine` does that after every later step that
+  changed the solid; a step whose file does not read back is dropped, it alone (this replaces the
+  fall-back past all later steps). Tools that call `refine` without an output path get the same
+  check without the file.
+- The whole run has one time budget (`HULL_RUN_BUDGET`, 17 minutes, `scripts/main.py`): in the
+  second and in the third pass the time left is shared among the cases still to do. A case with
+  under 5 s for its hull keeps its box; a case past its share in the third pass skips its remaining
+  later steps and keeps the file of the last step that went through.
 - An exception in one view direction or in the hole step keeps the solid carved so far; an
-  exception anywhere else in a case makes `scripts/main.py` write the bounding box for that case
-  and go on (uncommitted).
+  exception in a later step costs that step; any other exception in a case leaves the file the
+  case already has.
+- Phase 0 checked, 2026-11-12: the 9 practice files of the old and the new `main.py` have the same
+  volume (relative difference 0) and face count, run one after the other on the laptop. SIGKILL at
+  7 moments between 1 and 316 s after the boxes: 9 valid solids and no other file each time (the
+  boxes are there 0.7 to 1.1 s after the start; before that a kill leaves fewer files). The amd64
+  image, as user 12345 with a read-only root and read-only inputs: 9 valid solids in 10.5 minutes
+  emulated, with the kill test loading the laptop; parts 6, 7 and 9 differ from the native run
+  (volume by 0.3 %, 1.1 % and 1e-10, faces 788, 584, 254 against 799, 731, 264), the others agree
+  to 2e-6. Which budget or boolean made the difference was not looked into. The dashboard was
+  checked on the events only (one case, one start and end, all steps), not in a browser.
 
 ## Git
 
@@ -412,8 +431,8 @@ alone on the solid before it, 24 eval parts, sampled IoU with 20 000 points:
   after the `.stp` is read back. Fixed the same day: `export.reads_back_valid` writes and reads the
   file; `rounds.cut_rounds` uses it and cuts the axis lines one at a time when all together fail
   (part 4 keeps all but one: volume 1.049 times the true one instead of 1.027, 46 s for the case),
-  and the final export falls back to the solid before the later steps if the last one fails it.
-  The other steps do not ask it yet. The cause itself (the line that should be square) is with the
+  and since phase 0 every later step's solid is written and read back, and the step dropped if it
+  fails (`refine`). The cause itself (the line that should be square) is with the
   session working on outlines.
 
 - Blind pockets are found by step 5 only when their floor is flat, in sight of an isometric
@@ -434,17 +453,29 @@ alone on the solid before it, 24 eval parts, sampled IoU with 20 000 points:
 - `tools/eval_hull.py`: scores a fixed sample of 24 eval parts (8 per tier). Results are cached in
   `runs/_eval_cache`, keyed by the source files, and the step 1 solid has its own cache so work on
   later steps does not recompute it. `--all` runs all 266.
-- `ui/server.py`: one large 3D view of the solid after the chosen step, with the material that step
-  removed drawn over it in translucent blue; a slider of the steps underneath (volume / true volume
-  and one line on what the step does under each); the input is a small window laid over the bottom left corner of the big view, which now runs to
-  the left edge (user, 2026-11-12: it should not take the whole left side): the view shown large,
-  the others as a strip to switch between; the brief and the facts fold away under it, closed by default; user, 2026-11-12: the
-  text was not read); right the ground truth filling its panel (the practice set has none: there the organisers'
-  render of the part, never our output). Under the truth view two panels that fold away, never laid
-  over a model (user): "Extracted" (the chosen
-  step's attached images and `.json` lists, log, metrics) and "Diff" (the chosen step's solid against
-  the truth: volume score, size per axis, volume, surface, faces, and where a ground-truth solid
-  exists the sampled IoU, excess and missing volume, computed in the browser). Black background; areas are told apart by their surface, not by rules: no lines between bar, views,
+- `ui/server.py`: two views side by side, "like two processes and a link" (user, 2026-11-12).
+  Left, what was given: one window with its own slider under it (brief, facts, the input pictures,
+  then the ground truth, which is where it starts; the practice set has none: there it starts on
+  the isometric render). Right, what we made: the 3D view of the solid after the chosen step, with
+  the material that step removed drawn over it in translucent blue. The boundary between them can
+  be dragged (40 % for the left by default). An input picture in the left window zooms in at the pointer on a click and out on a right click
+  or shift-click (scroll and pinch zoom too, up to 40 times); dragging or a sideways scroll pans it;
+  three buttons at the lower right
+  of the picture zoom out, zoom in and show the whole picture again; it never opens full screen; changing the picture resets it (user, 2026-11-12; not yet looked at in
+  a browser). On the boundary floats "Extracted", a window over both
+  views that always shows the chosen step (its attached images and `.json` lists, log, metrics);
+  for a cut along one direction it first shows the two input views the cut read, the second one
+  mirrored as the agent mirrors it, then the joined silhouette (user: the picture showed only front);
+  it is a plain card (user: no connector lines), dragged by its title, and a double-click puts it
+  back. Under the views an area whose height can be dragged at its upper edge (user), with the
+  steps in the middle of it and, to their right, "Diff". The steps are a line with only the name and volume / true volume under each
+  stop; with the pointer on a stop a tooltip gives the one line on what the step does and two small
+  3D views, the solid before and after the step (user: the lines under the stops were too long).
+  The line wraps onto more rows when a stop would get under 74 px; on one row it can be dragged,
+  on several the stops are clicked. "Diff" is the chosen step's solid against the truth, as three
+  rows Truth, Ours, Diff under size per axis, volume, surface and faces; above them the volume
+  score and, where a ground-truth solid exists, the sampled IoU, excess and missing volume,
+  computed in the browser. Checked in headless Chrome on eval 27 and practice 9. Black background; areas are told apart by their surface, not by rules: no lines between bar, views,
   panels and slider, no frames inside a panel (user, 2026-11-12: too many lines and nested boxes).
   A diff mode of the big view (D, eval set only) paints our solid red where there is material under
   a face that the part does not have, and shows the truth in violet where we lack it. A face toggle (C)

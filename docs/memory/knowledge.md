@@ -21,6 +21,22 @@ truth. What it holds:
   bounding-box min corner, in the frame of the views.
 - A cylinder counts as full when its faces sweep at least 98 % of a turn. Counterbores, grooves and
   stepped bores appear as several entries on the same axis.
+- **In the organisers' `facts.json` one hole entry can be two opposite blind holes** (practice 8,
+  read in the views 2026-11-12). Coaxial cylinder faces of one diameter are given as one centre
+  and one length, the length being the span from the outer end of one to the outer end of the
+  other. The 8 holes of diameter 7 along Z are listed as 40.2 long, the full height, and the top
+  and the bottom view both show a drilled cone bottom there, not white. The 4 holes of diameter
+  4.2 along X are listed as 66 long (x 7 to 73, pad face to pad face); the right and left views
+  show a bottom, and the isometric view shows it less than about 3 mm in. The bore of diameter
+  20 on the same span is two openings into the window, and white in both views. The depth of
+  each blind hole is nowhere in `facts.json` or the brief; the brief calls all of them "through".
+  Our eval tool (`tools/dataset/part_worker.py`) keeps every stretch of an axis as its own entry,
+  so the eval set has no such case. `holes.py` cuts the whole span: on practice 8 that makes
+  through holes of all 12, about 12 cm3 of the 121 cm3 part for the 8 large ones alone.
+- **A listed hole that is not white in the views along its axis is not by itself wrong**: on the
+  practice set that holds for 12 hole groups (blind bores of 5, 6, 7 among them). The cut is
+  wrong where it opens a line of sight through the part that both views along the axis show
+  closed; on the practice set that is only the two groups of part 8.
 
 **`description.md` in the practice set is written prose with information that is not in
 `facts.json`**: plate thicknesses, where a pocket or rib sits and how deep it is, which holes are
@@ -383,12 +399,23 @@ organisers' format:
 - **`Cutter.run(operation, shape, argument, timeout)`** runs any boolean in a spawned child process.
   The operation must be a module-level function and the argument picklable. Use it for every new
   geometric step.
-- **Export**: coplanar faces are merged, then the largest solid is written in millimetres.
-- **A failing case does not stop the run.** `scripts/main.py` catches any exception of a case and
-  writes the plain bounding box as its output instead. Inside the agent, a view direction or the
-  hole step that raises is skipped and the solid carved so far is kept. Only a case whose bounding
-  box cannot be read (no `facts.json` and no Envelope line) ends without a file. A hard crash of the
-  main process (a segfault inside OpenCascade outside a child cut) is still not survived.
+- **Export** (`export.checkpoint`): coplanar faces are merged on a copy, the largest solid is
+  written in millimetres to `/tmp`, read back, and renamed onto the output only if it is one valid
+  solid.
+- **`vh.tidy` changes the solid it is given** (2026-11-12, practice 8 after the holes: its volume
+  reads 122 459 mm3 before `tidy` and 122 976 after, on the same object, and the level-face step
+  then cuts nothing; practice 5 changed too). The solid it returns is right. A caller that goes on
+  with the original must hand `tidy` a `BRepBuilderAPI_Copy`; `export.checkpoint` does. The other
+  callers (`split.py`, `tools/eval_hull.py`) pass the solid itself and were not changed.
+- **A failing case does not stop the run.** Every case gets its bounding box before anything else
+  and keeps the file of its last good step whatever happens after (`state.md`). Inside the agent,
+  a view direction, the hole step or a later step that raises is skipped and the solid so far is
+  kept. Only a case whose bounding box cannot be read (no `facts.json` and no Envelope line) ends
+  without a file. After a hard crash of the main process (a segfault inside OpenCascade outside a
+  child cut) the files are there, but the cases not yet done stay as they were.
+- **A case's trace can be entered more than once**, with the same `CaseTrace` object and `more`
+  set while it will be entered again; `tracer.case(name)` a second time would start the step and
+  file numbers at 1 again.
 - **Tracing** (`trace.py`) never raises. It writes to `runs/` in the repo, to `/tmp` otherwise, and
   is off with `TRACE=0`. `role="stage"` on an attached `.stp` puts it in the dashboard's step strip.
 - **The dashboard measures the overlap itself** (`ui/static/step-worker.js`): 40 000 fixed sample
@@ -421,3 +448,82 @@ organisers' format:
 - After code freeze the organisers run the image on the practice inputs and compare with the
   committed outputs; a mismatch is reviewed by hand. Then they run it on the hidden parts.
 - At code freeze they need `<team>.env` with every variable the agent reads.
+
+## Research round of 2026-11-12 (14 research agents, scratch prototypes, nothing in the pipeline)
+
+Every number here is from scratch scripts on cached solids (`runs/_lines_cache`, set `eaab2b17…`,
+mostly after shading and before pockets), often on voxels. None is a pipeline run. The scripts are
+in the session scratchpad, not in the repo.
+
+- **README: "Position and orientation do not matter; size and handedness do"** (Outputs section).
+  The organisers' scorer registers the two solids; how is unknown. Our frame cannot cost us.
+- **The practice briefs hold almost no number that `facts.json` lacks**: of 417 numeric tokens in
+  the 9 briefs 360 are verbatim in `facts.json`, 51 derivable, 6 new (the two hole centres of
+  practice 5 that `more_not_listed` cut off, and angles). No depth of any feature that causes our
+  excess. The briefs are also wrong in places (practice 6 "solid"; practice 9 "exact mirror
+  images" with bores offset 25.4 mm; practice 1 recess at Y = 7.0, the view shows Y = 0).
+- **The renders hold no depth cue**: on practice 1, 3, 4, 7, 8 the tone of facing faces regressed
+  on image position and depth gives the same rms with and without depth (0.40 against 0.41 on
+  practice 7 front, 8 levels all at 181 to 185).
+- **Where the loss of the 24-part sample is** (share of lost IoU): eval 51 and 99 together 52 %;
+  blind flat-floored pockets open to one direction 25 %; recesses open to two directions 12 %;
+  fillets, chamfers and outline tolerance 8 %; under-cut 3 %; enclosed cavities 1 %. Parts filling
+  under 5 % of their box are 6 of 266, 2 of the 8 complex parts of the sample, and no practice part.
+- **Outside 51 and 99 the excess lies under flat floors square to a view**: with every facing
+  region at its true depth, eval 38, 236, 110, 74 reach IoU 0.98 to 0.99. Unused radii, angles and
+  arcs of `facts.json` address about 2 % of the excess.
+- **A line between two adjacent facing regions of a straight view is a depth step**: true for 175
+  of 179 pairs on 25 parts outside the sample; where our solid has the pair coplanar it is wrong
+  for 18 of 22. It does not say which of the two is too high.
+- **A floor shows as a line in a perpendicular view only if the recess is open to that side**
+  (eval 38: 8 of 11 wrong regions, 97 % of their excess; 0 of 16 blind pockets on 236, 110, 74).
+- **The true volume cannot choose where or which**: removing the deepest material until the volume
+  fits made 38, 236, 110 worse (0.643 to 0.468 on 38); assignments of candidate depths within 1 %
+  of the true volume number 1.6e11 on eval 38; and a combined step (flagged pairs, side-line
+  depths, volume closure, chosen by silhouette feasibility and volume) gained 0.037 on the sample
+  and 0.004 on 25 parts outside it (2 better, 5 worse, worst 0.787 to 0.638). Volume gives a depth
+  only when all the excess is known to lie under the chosen regions (236: 0.75 against 0.74 mm).
+- **Coplanar pairs with the local accept rule: safe, and small outside the sample** (scratch step
+  with real B-rep cuts; every member of a flagged pair tried at side-line, closure and cap depths;
+  accepted if the 8-view error without the observed-line term does not rise and the volume
+  improves; the shallowest accepted depth). Sampled IoU: 14 sample parts +0.063 (38: 0.645 to
+  0.990, 236: 0.749 to 0.978); the 25 parts outside it +0.004 (2 better, 3 worse, worst -0.028,
+  against -0.149 without the accept rule); 11 parts never looked at before, run once, +0.004 (1
+  better, none worse, no wrong cut). Wrong accepted cuts are floors hidden in all eight views
+  (error unchanged, so "not worse" passes), and right regions at a wrong depth. The observed-line
+  term cannot say which member of a pair moves. On practice 5, 7, 9 it found little and about half
+  of that looked wrong by eye (practice 9: a strip cut 496 mm deep).
+- **A cut raises IoU exactly when the share of true excess in it exceeds r / (1 + r)**, r being our
+  volume over the true one and our solid containing the part: 0.51 at r = 1.05, 0.67 at 2, 0.79 at
+  3.7. A cut of 5 % of the volume gains 0.045 at r = 1.05 and 0.004 at r = 3.7.
+- **The accept rule of the later steps lets most wrong cuts through**: of 451 systematic column
+  cuts on 22 eval parts (60 good, 307 bad by sampled IoU) "score may drop by 0.003" accepts 59 of
+  60 good and 175 of 307 bad. "The summed per-pixel error over the 8 views (tone against the table,
+  masks, unmatched lines both ways) does not rise and the volume ratio improves" accepts 55 and
+  30. That rule was chosen after seeing the data. It cannot choose a depth: for floors hidden from
+  both isometric cameras the error is the same at 1 and 1.5 times the true depth (13 of 30 regions).
+- **`verify.rasterise` is the cost of a check, not OpenCascade**: on eval 236 and 38 the boolean
+  takes 0.03 s, the tessellation 0.01 s, drawing 8 views 1.4 to 1.7 s. Filling large triangles
+  with `cv2.fillConvexPoly` drew the 8 views in 0.09 to 0.14 s on those two.
+- **Symmetry is common and worth little**: `solid AND mirror(solid)` on the real cached solids of
+  the 24 parts, 0.8712 to 0.8715. Repeated figures do not share a depth (3 of 16 groups) and pocket
+  floors are not levels the solid already has (1 of 41 regions).
+- **Shell signature** (practice solids after steps 1 to 4): practice 6 has 3.78 times the true
+  volume and 0.45 of the true area; 5, 7, 9 have 0.82 to 1.05 of the area, so their excess is open
+  pockets, not a hollow. No eval part has an enclosed void.
+- **Surface metrics agree with IoU on removing outside excess** (12 eval parts, Chamfer and F1 at
+  1 % of the diagonal), except eval 38, whose shading cuts raise IoU by 2 points and lower F1
+  (0.626 to 0.605). A closed void with the wall off by 2 mm scores worse than the filled part under
+  F1 and better under IoU.
+- **Time of the 9 practice parts** (run `20261112-012947-5078`, 391 s): shading 37 %, split 21.5 %,
+  level faces 16 %, pockets 15 %, hull, holes and export together 2 %. Running level faces a second
+  time after pockets changed no IoU on 8 eval parts.
+- **A model proposing typed cuts, judged locally: large on practice 5, 7, 9, unverified**
+  (2026-11-12, scratch `round4_model/`, agents standing in for the model, inputs only, told the
+  volume ratio). Our volume over the true one: 1.224 to 1.000, 1.936 to 1.297, 1.729 to 1.034.
+  One cut carries most of it (practice 7 top pocket, practice 9 crankcase hollow). No ground
+  truth, and the proposers sized their cuts to the excess they were told, so this is not an
+  overlap. The local accept rule took two cuts that broke the silhouette for a tone gain
+  (practice 9): the mask term must not rise on its own. Today's score rule accepted every cut on
+  practice 7 and went below the true volume on practice 5. The briefs of practice 5 and 9
+  describe the part wrongly; the views decided. Plan: `docs/plan-pipeline.md`.

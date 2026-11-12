@@ -75,6 +75,7 @@ class VisualHullAgent:
         self._iso = None  # an isometric silhouette whose scale is already confirmed, for _cut_direction
         self.keep_faces = False  # set by the split step: the export must not merge its faces again
         self.lines_found = None  # handed from the pockets step to the split step: the lines of an unchanged solid
+        self._sound: bool | None = None  # whether the solid so far reads back valid from its file, if asked
 
     def out_of_time(self) -> bool:
         return self.deadline is not None and time.time() > self.deadline
@@ -83,6 +84,16 @@ class VisualHullAgent:
         self.cutter.close()
 
     def generate_cad(self, prompt: str, views: list[Path], context: Path | None, output_path: Path) -> None:
+        """One case from start to end. scripts/main.py runs the same three calls, but for all cases
+        in turn: every hull first, then the later steps."""
+        case_dir = views[0].parent.parent if views else None
+        solid = self.carve(prompt, views)
+        self.checkpoint(solid, output_path)
+        solid = self.refine(solid, case_dir, views, output_path=output_path)
+        self.finish(solid, output_path)
+
+    def carve(self, prompt: str, views: list[Path]):
+        """Steps 1 and 2: the hull with the listed holes cut."""
         case_dir = views[0].parent.parent if views else None
         trace.plan(self.planned())
         solid = self.build_hull(prompt, views)
@@ -91,21 +102,30 @@ class VisualHullAgent:
                 solid = self.cut_holes(solid, case_dir)
             except Exception as error:  # the hull is still a valid answer
                 trace.log(f"cut_holes raised {error!r}; keeping the hull", level="error")
-        carved = solid
-        solid = self.refine(solid, case_dir, views)
+        return solid
+
+    def checkpoint(self, solid, output_path: Path | None) -> bool:
+        """Make `solid` the case's answer on disk, if its file reads back as one valid solid
+        (export.checkpoint). Remembers the outcome for `refine`."""
+        self._sound = export.checkpoint(solid, output_path, self.keep_faces)
+        if not self._sound:
+            trace.log("the solid does not survive being written and read; the file is left as it was", level="warning")
+        return self._sound
+
+    def state(self) -> dict:
+        """What a case needs back (`resume`) when its later steps run after other cases' hulls."""
+        return {"volumes": dict(self.volumes), "stage": self._stage, "sound": self._sound}
+
+    def resume(self, state: dict) -> None:
+        self.volumes, self._stage, self._sound = dict(state["volumes"]), state["stage"], state["sound"]
+
+    def finish(self, solid, output_path: Path) -> None:
+        """Closes the case in the trace. The file is already there: every step that changed the
+        solid wrote it."""
         with trace.step("export_step", kind="tool", input={"output_path": str(output_path)}) as step:
-            if not self.keep_faces:
-                solid = vh.tidy(solid)
-            # The file is what counts: a solid that is valid here can come back broken from the .stp.
-            # Then the solid before the later steps is written instead, if that one survives.
-            if not export.reads_back_valid(solid):
-                step.log("the solid does not survive being written and read; trying the one before the later steps", level="warning")
-                before = vh.tidy(carved)
-                if export.reads_back_valid(before):
-                    solid = before
-                    step.metric(fallback="solid before the later steps")
-            vh.write_step(solid, output_path)
             step.metric(volume_cm3=round(vh.volume(solid) / 1000, 3))
+            if not Path(output_path).is_file():
+                step.fail("no file was written for this case")
 
     def planned(self) -> list[dict]:
         """Every step a case goes through, in order; "off" says why one is switched off for this run."""
@@ -120,9 +140,14 @@ class VisualHullAgent:
             steps.append(step)
         return [*steps, {"name": "export_step"}]
 
-    def refine(self, solid, case_dir: Path | None, views: list[Path], skip: tuple[str, ...] = ()):
+    def refine(self, solid, case_dir: Path | None, views: list[Path], skip: tuple[str, ...] = (),
+               output_path: Path | None = None):
         """The steps after the holes, each in its own module with an `apply(agent, solid, case_dir,
-        views)`. A step that raises is skipped: the solid so far is still a valid answer."""
+        views)`. A step that raises is skipped: the solid so far is still a valid answer.
+
+        After every step that changed the solid its file is written and read back
+        (export.checkpoint; onto `output_path` if given, so a run that is killed keeps the steps
+        done so far). A step whose solid does not survive that is dropped, it alone."""
         self.keep_faces, self.lines_found = False, None
         names = [name for name in LATER_STEPS if name not in skip and name not in SKIP_STEPS]
         for index, name in enumerate(names):
@@ -132,10 +157,28 @@ class VisualHullAgent:
                 for late in names[index:]:
                     trace.skipped(STEP_NAMES.get(late, late), "the case had used its share of the run's time")
                 break
+            kept = (self.keep_faces, dict(self.volumes))
             try:
-                solid = module.apply(self, solid, case_dir, views)
+                result = module.apply(self, solid, case_dir, views)
             except Exception as error:
                 trace.log(f"{name} raised {error!r}; keeping the solid as it was", level="error")
+                self.keep_faces, self.volumes, self.lines_found = *kept, None
+                continue
+            if result is None or result is solid:
+                continue
+            if export.checkpoint(result, output_path, self.keep_faces):
+                solid, self._sound = result, True
+                continue
+            if self._sound is None:  # nobody has asked yet whether the solid before this step survives
+                self._sound = export.checkpoint(solid, None, kept[0])
+            if self._sound:
+                trace.log(f"the solid {name} made does not survive being written and read; the step is dropped",
+                          level="error")
+                self.keep_faces, self.volumes, self.lines_found = *kept, None
+            else:  # not this step's fault: go on with it, a later step may still give a file that reads
+                trace.log(f"neither the solid before {name} nor the one after it survives being written and "
+                          "read; the file is left as it was", level="warning")
+                solid = result
         return solid
 
     def _record(self, step, solid, label: str) -> None:
@@ -156,7 +199,7 @@ class VisualHullAgent:
 
     def build_hull(self, prompt: str, views: list[Path]):
         case_dir = views[0].parent.parent if views else None
-        self.volumes, self._stage = {}, 0
+        self.volumes, self._stage, self._sound, self.keep_faces = {}, 0, None, False
 
         with trace.step("bounding_box", kind="io") as step:
             x, y, z = vh.read_dimensions(case_dir, prompt)
