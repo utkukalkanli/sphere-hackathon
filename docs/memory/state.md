@@ -26,6 +26,7 @@ reasons in `decisions.md`.
 | isometric support | `iso_support.py`, `hull_agent._with_iso` | `HULL_ISO_EXCESS` (1.5), `HULL_ISO_MIN_GAIN` (1 %) | hull + holes IoU 0.8447 to 0.8541, kept on the 4 parts it ran on (99, 38, 171, 51), none lower |
 | holes, blind spans, skins | `holes.py`, `spans.py` | `HULL_HOLE_SPANS=0` | holes: IoU 0.824 to 0.834, cut on 14 of 24, none worse. Spans and drill points act on practice 8 only; skins on practice 9, 5 and eval 123 |
 | mouths (`open_mouths`) | `mouths.py` | `HULL_MOUTHS=0`, `HULL_MOUTH_FACES=0` | practice 9 whole pipeline 1.727 to 1.205 times the true volume; eval 123 and 171: of 334 sampled points removed none is in the truth |
+| seen mouths (`seen_mouths`) | `seen_mouths.py` | `HULL_SEEN_MOUTHS=0`, `HULL_SKIP=seen` | practice 5: six ports of 50 mm cut 35 mm deep, 1.219 to 1.124 times the true volume, surface 0.835 to 0.906 of the true one; no other practice part changes. On 48 eval parts (the 24 and 24 with stepped coaxial holes) one cut, 0.0 % of that part's volume. Whole practice run 11 min 38 s (2026-11-12) |
 | rounds (`cut_rounds`) | `rounds.py` | `HULL_SKIP=rounds`, `HULL_ROUNDS_DISC=0` | IoU 0.834 to 0.847 (simple 0.960 to 0.994); "disc": cuts 6 of 266 eval parts, none lower; practice 6 3.81 to 3.31 |
 | curved recesses (`cut_curved`) | `curved.py`, `tone.py`, `regions.py` | `HULL_SKIP=curved` | no cut on the 24; 5 of the 37 lathe-type eval parts, none worse (249: 0.725 to 0.981); practice 2 1.105 to 1.018 |
 | level faces (`level_faces`) | `depth.py` | `HULL_SKIP=depth`, `HULL_DEPTH_SUPPORT=0` | IoU 0.847 to 0.854; supported cuts 0.8668 to 0.8791 (38: 0.628 to 0.933; 99: 0.252 to 0.241, accepted); practice 6 3.31 to 2.77 |
@@ -84,6 +85,12 @@ What each step does:
 - **Pockets.** A figure of lines inside one flat face of ours and under it (closed, or ending on
   other lines and closed straight across) is a pocket outline. Depth: where half of the outline
   lands on isometric lines and 0.25 more than at a usual depth.
+- **Seen mouths.** A circle a straight view draws on a flat face of ours, with no edge of ours under it, that stands
+  over a thinner listed hole buried under that face: a cylinder of the circle's diameter is cut from the face to
+  the near end of that hole (the view gives the diameter, `facts.json` the depth). Only if the view shows a wall
+  just inside the circle (another tone than the face, or many tones), the opening is at least 0.3 diameters deep,
+  no other ring lies inside it, and the circle is not a listed hole's own. Kept if the volume stays above the
+  part's and the cut puts an edge under half of the circle's missed line.
 - **Hole count.** Counts the through-holes of the solid as it is written (genus from the topology, faces merged)
   against `through_holes_genus`. First takes a hair of material (0.2 mm) away at every pinch: an edge more than
   two faces share, or a point where two boundaries of one face touch; both count as holes that are not there.
