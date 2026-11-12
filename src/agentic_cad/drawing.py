@@ -25,6 +25,7 @@ Everything is in pixels of the view, (column, row), pixel centres at whole numbe
 from __future__ import annotations
 
 import math
+import os
 from dataclasses import dataclass, field
 
 import cv2
@@ -37,6 +38,15 @@ LINE_CONTRAST = verify.LINE_CONTRAST   # a line is this much darker than its sur
 FAINT_MIN = 6          # ... or, on a dark face, at least this much
 FAINT_SHARE = 0.10     # ... and this share of the tone around it, where it hangs on a clearer line
 CLEAR_SHARE = 0.22     # ... or this share by itself
+# A line too faint for a pixel to show it still shows over its length: the darkness along a
+# straight stretch, averaged, is what the line has and far more than the grain of a shaded face.
+ALONG = os.environ.get("HULL_FAINT_ALONG", "0") == "1"   # off: measured, no gain (knowledge.md)
+ALONG_PX = 21          # the stretch the darkness is averaged over
+ALONG_WAYS = 16        # directions it is tried in
+ALONG_MIN = 2.5        # grey levels the average must reach
+ALONG_SHARE = 0.04     # ... and this share of the tone around the line
+ALONG_OWN = 1.5        # ... with the pixel itself at least this much darker than its surroundings
+ALONG_CAP = 12.0       # a pixel counts for at most this: one dark pixel is not a stretch
 TONE_JUMP = 24         # neighbouring pixels this far apart in tone lie on two faces
 MIN_THIN_PX = 6        # a face without a core is kept from this many pixels
 MIN_ON_EDGE = 0.5      # share of a border between two areas that must lie on edge pixels, or they are one face
@@ -133,6 +143,22 @@ def jumps(image: np.ndarray) -> np.ndarray:
     return result
 
 
+def along(darker: np.ndarray, closed: np.ndarray) -> np.ndarray:
+    """The pixels of lines that only show over their length: slightly darker than their
+    surroundings, on a straight stretch that is so on average."""
+    capped = np.clip(darker, 0, ALONG_CAP).astype(np.float32)
+    best = np.zeros(capped.shape, np.float32)
+    half = ALONG_PX // 2
+    for index in range(ALONG_WAYS):
+        angle = math.pi * index / ALONG_WAYS
+        kernel = np.zeros((ALONG_PX, ALONG_PX), np.float32)
+        reach = (int(round(half * math.cos(angle))), int(round(half * math.sin(angle))))
+        cv2.line(kernel, (half - reach[0], half - reach[1]), (half + reach[0], half + reach[1]), 1.0, 1)
+        kernel /= kernel.sum()
+        best = np.maximum(best, cv2.filter2D(capped, -1, kernel, borderType=cv2.BORDER_CONSTANT))
+    return (best >= np.maximum(ALONG_MIN, ALONG_SHARE * closed)) & (darker >= ALONG_OWN)
+
+
 def edge_pixels(seen: verify.Observed) -> np.ndarray:
     """The pixels of the part that lie on an edge of the picture."""
     darker, closed = darkness(seen.image)
@@ -142,6 +168,9 @@ def edge_pixels(seen: verify.Observed) -> np.ndarray:
     hangs = np.zeros(count, bool)
     hangs[np.unique(labels[clear])] = True
     hangs[0] = False
+    found = hangs[labels]
+    if ALONG:
+        found |= along(darker, closed)
     tones = seen.image.max(axis=2).astype(np.int16)
     step = np.zeros(tones.shape, bool)   # the darker pixel of a jump: that is where the renderer's line would be
     for axis in (0, 1):
@@ -150,7 +179,7 @@ def edge_pixels(seen: verify.Observed) -> np.ndarray:
         difference = tones[first] - tones[second]
         step[first] |= difference <= -TONE_JUMP
         step[second] |= difference >= TONE_JUMP
-    return (hangs[labels] | step) & seen.mask
+    return (found | step) & seen.mask
 
 
 # -- 2. the faces --------------------------------------------------------------------------------------

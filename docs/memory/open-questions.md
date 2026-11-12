@@ -66,9 +66,12 @@ Remove a question when it is answered and record the answer in `decisions.md`, `
   to 456 s (cases in parallel). On a slower machine the case shares decide what is searched. The
   cuts on practice 7 and 8 have not been looked at; the same reading in the isometric views is
   untried (there a level solid across one tone is a step for 13 of 32).
-- **Which complex parts does the drawing fail on?** The user finds the lines bad on complex
-  parts; practice 4, 5, 8 and 9 look right to this session at picture size. Which case and view
-  is not known yet.
+- **What is wrong with the lines on complex parts?** (2026-11-12.) The user finds them bad
+  where lines are a few pixels apart or faint. Measured: faces narrower than 4 px are lost and
+  neither a larger picture nor fainter lines brings them back (`knowledge.md`); the information
+  is not in a 1024 px view. Untried: putting in what is known from elsewhere, such as circles
+  and fillets with the radii of `facts.json` and the edges our solid and the found planes
+  predict. Which case and view the user means is still not known.
 - **Which steps move onto the drawing?** (2026-11-12.) `drawing.py` gives closed faces and fitted
   edges; the sources, level faces and plane faces use it. `regions.py`, `lines.py`, shading, pockets,
   split and the verifier still read the line pixels. Each move changes what those steps

@@ -135,7 +135,8 @@ Not steps:
   `regions.py`, `lines.py`, shading, pockets, split and the verifier still work on the line
   pixels of `verify.observe`. Grades in `knowledge.md`.
 
-In the code and off: lines on dark faces by their share of the tone (`HULL_FAINT_LINES=1`), shared
+In the code and off: lines too faint for one pixel, found over their length (`HULL_FAINT_ALONG=1`), lines on dark faces
+by their share of the tone in the verifier's line map (`HULL_FAINT_LINES=1`), shared
 datums (`HULL_DATUMS=1`), edge tracing everywhere
 (`HULL_TRACE=edges`), thin-wall guard (`HULL_THIN_GUARD=1`), isometric support from 1.05
 (`HULL_ISO_EXCESS=1.05`). Unused inputs: the brief (except its Envelope line as a fallback, and

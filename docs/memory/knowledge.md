@@ -281,6 +281,22 @@ scripts behind them are in `runs/_research_scratch/sources/`.
   under 0.5). What is still lost is small: faces a few pixels wide have no core and join a
   neighbour (eval 123's threads, 146's chamfer strips), and the eval renderer's flat shading
   cuts curved faces into strips (eval 147: 10 % either way), which the organisers' does not.
+- **How well a face is separated follows its width** (research script `e12.py`, 22 eval parts;
+  width = 2 x area / perimeter; lost = best overlap under 0.5): under 2 px 99 % lost, 2 to 4 px
+  53 %, 4 to 8 px 18 %, 8 to 16 px 5 %, wider 11 %. Faces of 4 to 8 px are rarely lost and
+  rarely reach 0.9: a pixel of border is a sixth of such a face.
+- **Dividing the view enlarged 2, 3 or 4 times does not bring the narrow faces back** (2026-11-12;
+  edges thinned to their crests, cores grown over the enlarged picture): faces of 2 to 4 px lost
+  71 to 76 % against 53 %, all faces of 150 px or more separated 0.47 to 0.54 against 0.55, at
+  0.55 to 2.4 s a view against 0.17. Two lines a pixel wide and 2 to 3 px apart leave nothing of
+  the face between them in the picture. Not kept (`runs/_research_scratch/sources/
+  drawing_fine_attempt.py`).
+- **Lines too faint for one pixel, found over their length, change nothing** (`drawing.along`,
+  `HULL_FAINT_ALONG=1`: the darkness averaged over 21 px in 16 directions). True sharp edges
+  found 98.1 to 98.7 %, but edge pixels on a true edge 98.3 to 94.3 %: the eval renderer's flat
+  shading makes dark slivers on spline faces (eval 145, 99, 3). On practice views it adds a few
+  hundred pixels a view; the line pixels found before already cover the faint lines there.
+  Pipeline on the 24 parts 0.9076 to 0.9075.
 - **A circle seen at an angle is neither a line nor an arc**: fitted to 0.6 px it comes out as
   chords of about 30 px. Pieces that run on turning the same way (1.5 to 30 degrees) are one
   smooth curve.
