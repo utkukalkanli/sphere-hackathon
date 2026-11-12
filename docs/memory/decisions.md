@@ -103,6 +103,19 @@ kept beside its successor. Older wording: `git show bda2104:docs/memory/decision
 
 ## Evaluation
 
+- **The volume ratio does not decide between branches; the views do** (2026-11-12, user: `main`
+  looks more right than `nar`, for example on practice 5, though `nar` scores 0.829 against about
+  0.824). On practice 5 `nar` hollowed the whole of the two large back circles about 60 mm deep
+  and left the d51 bores inside them standing as bosses: the inverse of the part
+  (`tools/check_views.py`, iso_back_left_bottom tone off 13.9 % against 7.2 % on `main`). A cut
+  that removes real material can bring the volume closer, so a branch or step is judged by
+  `check_views` and by eye on the practice parts as well as by the volume.
+- **`uzum` is the working branch, cut from `main` (fdcc8c6), not a rewrite** (2026-11-12, user
+  asked for a new branch that does every step again, correctly, if that makes sense). `main`'s
+  steps are measured against ground truth (sampled IoU 0.8929 on the 24 eval parts); a rewrite
+  would throw that away. Steps from `nar`/`ananas` come in only where `check_views` shows they fix
+  something and break nothing. `uzum` has no upstream: a plain push must never reach `main`.
+
 - **Local score is the volume ratio `min/max`; `--iou` once a step can remove real material**
   (2026-11-11).
 - **Routine evals use the fixed 24-part cached sample; the 266 only on request** (2026-11-11,

@@ -9,6 +9,7 @@ import tempfile
 import time
 from pathlib import Path
 
+from agentic_cad import bowls
 from agentic_cad import holes as hl
 from agentic_cad import mouths
 from agentic_cad import spans
@@ -57,15 +58,15 @@ HOLES_TIMEOUT = float(os.environ.get("HULL_HOLES_TIMEOUT", 40))
 RETRY_BUDGET = float(os.environ.get("HULL_RETRY_BUDGET", 20))
 
 
-# Steps after the holes, in order; HULL_SKIP=rounds,curved,depth,model,shading,pockets,split switches some off.
+# Steps after the holes, in order; HULL_SKIP=bowls,rounds,curved,depth,model,shading,pockets,split switches some off.
 # "model" (propose.py) does nothing unless an endpoint is configured; it comes before the fine cuts,
 # because a large structural cut lowers the precision every later cut needs.
 # "split" moves no material and must stay last: a later cut or merge would undo it.
-LATER_STEPS = {"rounds": rounds, "curved": curved, "depth": depth, "model": propose, "shading": shading,
+LATER_STEPS = {"bowls": bowls, "rounds": rounds, "curved": curved, "depth": depth, "model": propose, "shading": shading,
                "pockets": pockets, "split": split}
 SKIP_STEPS = {name for name in os.environ.get("HULL_SKIP", "").split(",") if name}
 # The name each later step gives its trace step, for the plan the dashboard shows before anything has run
-STEP_NAMES = {"rounds": "cut_rounds", "curved": "cut_curved", "depth": "level_faces", "model": "model_cuts",
+STEP_NAMES = {"bowls": "cut_bowls", "rounds": "cut_rounds", "curved": "cut_curved", "depth": "level_faces", "model": "model_cuts",
               "shading": "shading_depth", "pockets": "cut_pockets", "split": "split_faces"}
 
 
