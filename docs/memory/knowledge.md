@@ -51,7 +51,7 @@ truth. What it holds:
   `cones_half_angle_deg` lists 48 faces at 59 degrees, the point of a 118 degree drill, which the
   brief calls chamfers. Two blind holes per listed span in the two groups is 16 + 8 = 24 holes,
   and the views draw each drilled bottom as two half faces: 48. A drill point adds 0.6 radii to
-  the hole below its cylinder. `spans.py` does not read the cones.
+  the hole below its cylinder. `spans.py` cuts that point when the count fits (`state.md`).
 - **A listed hole that is not white in the views along its axis is not by itself wrong**: on the
   practice set that holds for 12 hole groups (blind bores of 5, 6, 7 among them). The cut is
   wrong where it opens a line of sight through the part that both views along the axis show

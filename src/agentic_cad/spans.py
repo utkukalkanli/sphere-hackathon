@@ -8,7 +8,8 @@ cylinder opens a line of sight through the part where both views along the axis 
 Such a hole is replaced here by a blind hole from each end of the span. Nothing in the inputs gives
 its depth (the isometric views show the wall and its seam, not the bottom), so it is a guess: half
 of the way to where it would break through its wall or meet the hole coming from the other side,
-the same for all holes of one facts.json entry.
+the same for all holes of one facts.json entry. Where facts.json counts cones that fit the blind
+holes (one or two faces each), each hole also gets a drill point of that angle at its bottom.
 """
 
 from __future__ import annotations
@@ -90,7 +91,8 @@ def resolve(solid, holes: list[Cylinder], case_dir: Path | None) -> tuple[list[C
     if not ENABLED or not holes or case_dir is None:
         return holes, []
     try:
-        box = json.loads((case_dir / "facts.json").read_text())["bounding_box_mm"]
+        facts = json.loads((case_dir / "facts.json").read_text())
+        box = facts["bounding_box_mm"]
         dims = {k: float(box[k]) for k in "xyz"}
         observed = verify.observe(case_dir, dims)
     except Exception:
@@ -109,19 +111,39 @@ def resolve(solid, holes: list[Cylinder], case_dir: Path | None) -> tuple[list[C
     for number, ends in found.items():
         group = holes[number].group
         room[group] = min([room.get(group, np.inf)] + [limit for _, _, limit in ends])
+    angle = _drill_angle(facts, sum(len(ends) for ends in found.values()))
     result, notes = [], []
     for number, hole in enumerate(holes):
         if number not in found:
             result.append(hole)
             continue
         depth = GUESS_SHARE * room[hole.group]
+        tip = hole.radius / np.tan(np.radians(angle)) if angle else 0.0
+        if depth + tip > 0.95 * room[hole.group]:
+            tip = 0.0  # the point would come out on the other side
         for opening, inward, _ in found[number]:
-            # start a little outside the face, so the opening is cut cleanly
+            # start a little outside the face, so the opening is cut cleanly; the axis points inwards
             middle = opening + inward * (depth - 0.02) / 2
-            result.append(replace(hole, centre=tuple(map(float, middle)), length=float(depth + 0.02)))
+            result.append(replace(hole, centre=tuple(map(float, middle)), axis=tuple(map(float, inward)),
+                                  length=float(depth + 0.02), tip=float(tip)))
         notes.append({"diameter": 2 * hole.radius, "centre": hole.centre, "listed_length": hole.length,
-                      "blind_holes": len(found[number]), "depth": round(float(depth), 2)})
+                      "blind_holes": len(found[number]), "depth": round(float(depth), 2),
+                      "drill_point": round(float(tip), 2), "cones_confirm": bool(angle)})
     return result, notes
+
+
+def _drill_angle(facts: dict, blind: int) -> float | None:
+    """The half angle of the drill points, if facts.json counts cones that fit the blind holes: one
+    cone face per hole, or two (a cone is often two half faces). That count is also a second,
+    independent sign that the spans are blind holes. None if no cone entry fits."""
+    for angle, count in (facts.get("cones_half_angle_deg") or {}).items():
+        try:
+            angle, count = float(angle), int(count)
+        except (TypeError, ValueError):
+            continue
+        if blind and count in (blind, 2 * blind) and 30 <= angle <= 80:
+            return angle
+    return None
 
 
 def _ends(hole: Cylinder, axis: np.ndarray, intersector) -> list[tuple[np.ndarray, np.ndarray, float]] | None:

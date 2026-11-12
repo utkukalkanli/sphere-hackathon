@@ -18,8 +18,9 @@ from pathlib import Path
 import numpy as np
 from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut
 from OCP.BRepCheck import BRepCheck_Analyzer
-from OCP.BRepPrimAPI import BRepPrimAPI_MakeCylinder
-from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt
+from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeEdge, BRepBuilderAPI_MakeFace, BRepBuilderAPI_MakeWire
+from OCP.BRepPrimAPI import BRepPrimAPI_MakeCylinder, BRepPrimAPI_MakeRevol
+from OCP.gp import gp_Ax1, gp_Ax2, gp_Dir, gp_Pnt
 from OCP.TopoDS import TopoDS_Shape
 from OCP.collections import List_TopoDS_Shape
 
@@ -36,6 +37,7 @@ class Cylinder:
     length: float
     group: int = 0                       # index of the facts.json entry it came from
     keep: tuple["Cylinder", ...] = ()    # bosses standing inside this hole: not cut
+    tip: float = 0.0                     # height of a drill point beyond the end the axis points to
 
 
 def _axis(label) -> tuple[float, float, float] | None:
@@ -91,7 +93,24 @@ def read_holes(case_dir: Path | None) -> list[Cylinder]:
 def _solid(cylinder: Cylinder) -> TopoDS_Shape:
     start = np.array(cylinder.centre) - np.array(cylinder.axis) * cylinder.length / 2
     frame = gp_Ax2(gp_Pnt(*map(float, start)), gp_Dir(*map(float, cylinder.axis)))
+    if cylinder.tip > 0:
+        return _drilled(frame, cylinder.radius, cylinder.length, cylinder.tip)
     return BRepPrimAPI_MakeCylinder(frame, cylinder.radius, cylinder.length).Shape()
+
+
+def _drilled(frame: gp_Ax2, radius: float, length: float, tip: float) -> TopoDS_Shape:
+    """A cylinder that ends in a cone, as a drill leaves it: one solid, the half section revolved."""
+    origin, along, across = frame.Location(), frame.Direction(), frame.XDirection()
+
+    def point(r: float, z: float) -> gp_Pnt:
+        return gp_Pnt(*(origin.Coord(k) + along.Coord(k) * z + across.Coord(k) * r for k in (1, 2, 3)))
+
+    corners = [point(0, 0), point(radius, 0), point(radius, length), point(0, length + tip)]
+    wire = BRepBuilderAPI_MakeWire()
+    for first, second in zip(corners, corners[1:] + corners[:1]):
+        wire.Add(BRepBuilderAPI_MakeEdge(first, second).Edge())
+    face = BRepBuilderAPI_MakeFace(wire.Wire()).Face()
+    return BRepPrimAPI_MakeRevol(face, gp_Ax1(origin, along)).Shape()
 
 
 def cut_holes(shape: TopoDS_Shape, holes: list[Cylinder]) -> TopoDS_Shape | None:
