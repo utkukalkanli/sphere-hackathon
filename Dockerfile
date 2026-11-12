@@ -26,7 +26,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 ENV PATH="/app/.venv/bin:$PATH"
 
 # Step-by-step traces are a development aid for the dashboard; the submitted run does not need them
-ENV TRACE=0
+ENV TRACE=0 \
+    PYTHONUNBUFFERED=1
 
 # Agent settings, frozen with your commit (README: Configuration). After code freeze, the values in
 # your handed-over <team>.env replace these.

@@ -75,13 +75,43 @@ def write_fallback(test_case: TestCase, output_path: Path) -> bool:
         return False
 
 
+MEMORY_PER_CASE = 2.5 * 1024 ** 3   # bytes a case may need at its peak, with its boolean child (9 practice parts
+                                    # at 4 at a time peaked at 7.4 GB on the GPU box)
+
+
+def memory_available() -> float | None:
+    """Bytes this run may use: the container's limit (cgroup) or the machine's free memory, whichever
+    is less. None when neither can be read."""
+    found = []
+    for path in ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
+        try:
+            value = Path(path).read_text().strip()
+            if value.isdigit() and int(value) < 1 << 60:
+                found.append(float(value))
+        except OSError:
+            pass
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemAvailable:"):
+                found.append(float(line.split()[1]) * 1024)
+    except OSError:
+        pass
+    return min(found) if found else None
+
+
 def case_workers(count: int) -> int:
-    """How many test cases run at once: CASE_WORKERS, else up to 4 and at most one per core. Each
-    case also starts a child process for its booleans, so this is about twice as many processes
-    (more than 4 ran the Windows PC out of memory once)."""
+    """How many test cases run at once: CASE_WORKERS, else up to 4, at most one per core and at most
+    as many as the memory holds. Each case also starts a child process for its booleans, so this is
+    about twice as many processes. With too little memory a process is killed, and a killed boolean
+    child leaves its case waiting for good (seen in a container limited to 4 GB: after 20 minutes
+    four cases were still their bounding boxes)."""
     if os.environ.get("CASE_WORKERS"):
         return max(1, int(os.environ["CASE_WORKERS"]))
-    return max(1, min(4, os.cpu_count() or 1, count))
+    workers = min(4, os.cpu_count() or 1, count)
+    memory = memory_available()
+    if memory is not None:
+        workers = min(workers, int(memory // MEMORY_PER_CASE))
+    return max(1, workers)
 
 
 def size(test_case: TestCase) -> int:
@@ -205,6 +235,39 @@ def main(args):
                 process.terminate()   # SIGTERM: the worker exits and takes its boolean child with it
         finally:
             pool.shutdown(wait=not stopped, cancel_futures=True)
+
+        # 3. A worker that is killed (out of memory, most likely) breaks the pool, and every case that was
+        # running or waiting is left with its box or its last step. Those are run again, one at a time,
+        # each in a pool of its own, for as long as the run has time: a single case needs a quarter of
+        # the memory, and one that dies again costs only itself.
+        again = [job for job in jobs if results.get(job[0].name) not in ("ok", "stopped")] if not stopped else []
+        for number, job in enumerate(again):
+            # its share of the time: what is left, among the cases still to run again
+            with counter.get_lock():
+                counter.value = 0
+            job = (*job[:4], len(again) - number, 1)
+            left = HARD_STOP - (time.time() - started)
+            if left < 20:
+                print(f"no time left to run {job[0].name} again; its last file stays")
+                continue
+            print(f"{job[0].name} did not go through; running it again by itself ({left:.0f} s left)")
+            single = ProcessPoolExecutor(1, mp_context=multiprocessing.get_context("spawn"),
+                                         initializer=_init_worker, initargs=(counter,))
+            waited = True
+            try:
+                name, result = single.submit(run_case, job).result(timeout=left)
+                results[name] = result
+                print(f"{name}: {result}")
+            except TimeoutError:
+                waited = False
+                results[job[0].name] = "stopped"
+                for process in list(getattr(single, "_processes", {}).values()):
+                    process.terminate()
+            except Exception:
+                print(f"{job[0].name} FAILED again in its worker process:")
+                traceback.print_exc()
+            finally:
+                single.shutdown(wait=waited, cancel_futures=True)
 
     problems = {name: result for name, result in results.items() if result != "ok"}
     if problems:
