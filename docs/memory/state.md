@@ -22,6 +22,14 @@ reasons in `decisions.md`.
   Windows PC, 2026-11-12 18:47 (run `20261112-184700-3b53`): 699 s, all files valid, score 0.8463**:
   1 1.003, 2 1.018, 3 1.000, 4 1.028, 5 1.191, 6 2.766, 7 1.445, 8 1.063, 9 1.205. Only 7 (shading
   stopped, pockets skipped) and 9 (split) reached their share. Slowest case 9, 597 s.
+- **Eval sample, 24 parts, sampled IoU, `uzum` 8218a17's code minus the flat guard (= b4d6310), Windows
+  PC, 2026-11-12 20:56, 1764 s with 4 workers: 0.8760** (simple 0.9943, medium 0.9260, complex
+  0.7078), against `main`'s 0.8929 measured on the ARM laptop. The gap is mostly the machine: 51
+  (0.05 here, 0.14 there) and 99 (0.10, 0.44) lose their top/bottom cut to the 30 s timeout here.
+  `bowls` cut nothing on the 24. **`cavities` cut eval 3 from 1.08 to 1.00 times the true volume
+  and its IoU fell 0.917 to 0.880: real material** (and 51, already broken). Every other later-step
+  cut kept or raised the IoU (38 0.58 to 0.93, 75 0.68 to 0.93, 181 0.83 to 1.00, against the
+  cache of 2026-11-11 22:25 on this PC).
 - Before that, with `main`'s sequential `scripts/main.py` on this PC: 1076 s traced (score 0.8237;
   the dashboard-only `evidence` step cost 20 to 127 s a case) and **2096 s with `TRACE=0`** (score
   0.8299): practice 8, refined last with about 45 s left, wrote its file 18 minutes later; the
