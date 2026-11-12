@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 
 from agentic_cad import holes as hl
+from agentic_cad import iso_support
 from agentic_cad import outline_fit as of
 from agentic_cad import pockets
 from agentic_cad import curved
@@ -30,9 +31,15 @@ MIN_VOLUME_SHARE = 0.97
 TIGHT_VOLUME_SHARE = float(os.environ.get("HULL_TIGHT_SHARE", 0.90))
 # The isometric views are never carved with on their own. When the three straight cuts leave more
 # than this many times the true volume (facts.json), the box is carved again with the isometric
-# silhouette first, its scale confirmed on the hull of the straight cuts, and the result is kept only
-# if it still fills all three straight silhouettes. A large value switches it off.
+# silhouette first, its scale confirmed on the hull of the straight cuts. The result must still fill
+# all three straight silhouettes, and what it removes is judged against the lines of the 8 views,
+# as a whole or piece by piece (iso_support.py). A large value switches it off.
 ISO_EXCESS = float(os.environ.get("HULL_ISO_EXCESS", 1.5))
+# ... and it must take away at least this share of the true volume: less is not worth the slanted
+# faces it leaves (eval 74 and 123: twice the faces for 0.1 to 0.2 % of the volume)
+ISO_MIN_GAIN = float(os.environ.get("HULL_ISO_MIN_GAIN", 0.01))
+# HULL_ISO_PIECES=0: the result is taken or left as a whole, without asking the views
+ISO_PIECES = os.environ.get("HULL_ISO_PIECES", "1") != "0"
 # ... and only while the case has used less than this many seconds
 ISO_BUDGET = float(os.environ.get("HULL_ISO_BUDGET", 40))
 # Seconds one cut may take before it is abandoned and the previous solid kept. The whole run over all
@@ -213,8 +220,8 @@ class VisualHullAgent:
         the straight cuts it can take minutes). Kept only if every cut went through as cleanly as
         before, less is left, and the solid still fills the three straight silhouettes."""
         with trace.step("isometric_support", kind="code", description=(
-                "The straight cuts left much more than the true volume: the box is carved again with "
-                "the isometric silhouette first, and kept if it still matches the straight views")) as step:
+                "The straight cuts left more than the true volume: what the isometric silhouette would "
+                "also remove goes where the lines of the views agree, as a whole or piece by piece")) as step:
             try:
                 self._iso = vh.iso_silhouette(views, dims, solid)
                 if self._iso is None:
@@ -227,15 +234,25 @@ class VisualHullAgent:
                 straight = [s for s in again_silhouettes if s.name != "iso"]
                 worst = self._check(step, again, straight)
                 self.volumes = kept
-                if (len(again_troubled) > len(troubled) or len(straight) < len(silhouettes) or after >= before
-                        or (worst is not None and worst > vh.CHECK_AREA)):
+                if (len(again_troubled) > len(troubled) or len(straight) < len(silhouettes)
+                        or before - after < ISO_MIN_GAIN * target or (worst is not None and worst > vh.CHECK_AREA)):
                     step.log(f"not kept: {after / target:.3f} of the true volume against {before / target:.3f}, "
                              f"unclean cuts {again_troubled}, worst mismatch {worst}")
                     return solid, silhouettes
+                if ISO_PIECES:
+                    case_dir = views[0].parent.parent
+                    again = iso_support.choose(self, step, solid, again, case_dir, dims, target)
+                    if again is None:
+                        step.log("the views support none of it; keeping the hull of the straight cuts")
+                        return solid, silhouettes
+                    after = vh.volume(again)
+                    if before - after < ISO_MIN_GAIN * target:
+                        step.log("what the views support is too little to be worth its faces; keeping the hull")
+                        return solid, silhouettes
                 step.metric(volume_cm3=round(after / 1000, 3), removed_cm3=round((before - after) / 1000, 3),
                             vs_true_volume=round(after / target, 3))
                 self._record(step, again, "iso")
-                return again, again_silhouettes
+                return again, straight
             except Exception as error:
                 step.log(f"raised {error!r}; keeping the hull of the straight cuts", level="warning")
                 return solid, silhouettes

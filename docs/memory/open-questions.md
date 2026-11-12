@@ -73,6 +73,11 @@ Remove a question when it is answered, and record the answer in `decisions.md` o
   straight hull for the scale, the straight silhouettes as the check. Not used yet: the lines and
   tones of the views (the verifier), which could accept or refuse the cut per region instead of as a
   whole, and could allow it on parts under the 1.5 threshold.
+- **Should the isometric support run from 1.05 times the true volume instead of 1.5?** (2026-11-12,
+  put off by the user.) Hull + holes: IoU 0.8541 to 0.8574, none lower (`state.md`). Before it is
+  switched on: run the whole pipeline on the 24 parts and the practice set with
+  `HULL_ISO_EXCESS=1.05`, and look at practice 2 and 4, where it shaves the square sections the
+  rounds step looks for. The 1 % minimum gain and the piece-by-piece path are unmeasured too.
 - **How do we measure a step that reads the brief?** The practice briefs carry feature positions and
   depths that `facts.json` lacks, but the eval briefs are templates with nothing extra. Options: write
   richer briefs for part of the eval set with a model, or judge on the 9 practice parts by volume and

@@ -158,14 +158,19 @@ def main() -> None:
     outline = os.environ.get("HULL_OUTLINE", "arcs")
     datums = os.environ.get("HULL_DATUMS", "0") == "1"
     hull_key = digest(SRC / "visual_hull.py", SRC / "outline_fit.py", SRC / "datums.py", SRC / "hull_agent.py",
+                      SRC / "iso_support.py", SRC / "verify.py",
                       {"iso": options["iso"], "outline": outline, "datums": datums,
                        "trace": os.environ.get("HULL_TRACE", "centres"), "thin": os.environ.get("HULL_THIN_GUARD", "0"),
                         "thin_share": os.environ.get("HULL_THIN_SHARE", "0.01"), "tight": os.environ.get("HULL_TIGHT_SHARE", "0.90"),
-                        "iso_excess": os.environ.get("HULL_ISO_EXCESS", "1.5")})
+                        "iso_excess": os.environ.get("HULL_ISO_EXCESS", "1.5"),
+                        "iso_pieces": os.environ.get("HULL_ISO_PIECES", "1"),
+                        "iso_gain": os.environ.get("HULL_ISO_MIN_GAIN", "0.01")})
     result_key = digest(*sorted(SRC.glob("*.py")), Path(__file__), options, {"outline": outline, "datums": datums,
                         "trace": os.environ.get("HULL_TRACE", "centres"), "thin": os.environ.get("HULL_THIN_GUARD", "0"),
                         "thin_share": os.environ.get("HULL_THIN_SHARE", "0.01"), "tight": os.environ.get("HULL_TIGHT_SHARE", "0.90"),
-                        "iso_excess": os.environ.get("HULL_ISO_EXCESS", "1.5")})
+                        "iso_excess": os.environ.get("HULL_ISO_EXCESS", "1.5"),
+                        "iso_pieces": os.environ.get("HULL_ISO_PIECES", "1"),
+                        "iso_gain": os.environ.get("HULL_ISO_MIN_GAIN", "0.01")})
     CACHE.mkdir(parents=True, exist_ok=True)
     jobs = [{"name": n, "options": options, "hull_key": hull_key, "result_key": result_key,
              "cache": not args.no_cache} for n in names]

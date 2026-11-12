@@ -489,9 +489,10 @@ class Cutter:
     def __init__(self):
         self._pool = None
 
-    def run(self, operation, shape: TopoDS_Shape, argument, timeout: float) -> TopoDS_Shape | None:
+    def run(self, operation, shape: TopoDS_Shape, argument, timeout: float, whole: bool = False) -> TopoDS_Shape | None:
         """operation(shape, argument) -> solid or None, run in the child. `operation` must be a
-        module-level function and `argument` picklable. Raises TimeoutError after `timeout` seconds."""
+        module-level function and `argument` picklable. Raises TimeoutError after `timeout` seconds.
+        Returns the largest solid of the result, or with `whole` the result as it is."""
         if self._pool is None:
             self._pool = multiprocessing.get_context("spawn").Pool(1)
         with tempfile.TemporaryDirectory() as tmp:
@@ -503,7 +504,9 @@ class Cutter:
             except multiprocessing.TimeoutError:
                 self.close()
                 raise TimeoutError(f"took longer than {timeout:.0f} s") from None
-            return largest_solid(read_brep(result_path)) if done else None
+            if not done:
+                return None
+            return read_brep(result_path) if whole else largest_solid(read_brep(result_path))
 
     def cut(self, shape: TopoDS_Shape, silhouette: Silhouette, timeout: float) -> TopoDS_Shape | None:
         """Like `cut`, but raises TimeoutError when it takes longer than `timeout` seconds."""

@@ -337,7 +337,17 @@ parts over 1.5 times the true volume and was kept on all four: 99 (IoU 0.250 to 
 to 3919, 39 to 60 s), 38 (0.576 to 0.628, 10 to 15), 171 (0.738 to 0.751, 110 to 190), 51 (0.125 to
 0.128, 485 to 958, 11 to 30 s). The other 20 are identical. Practice, volume / true: part 6 3.81 to
 3.62, part 7 2.20 to 2.09, part 9 1.89 to 1.88 (faces 28 to 46, 172 to 238, 98 to 170); the other
-six identical. Not yet run through the later steps.
+six identical. In the whole-pipeline run below it was kept on the same four parts.
+
+Isometric support judged by the views (`src/agentic_cad/iso_support.py`, committed, on), hull +
+holes, 24 eval parts and practice, 2026-11-12 about 03:00 (laptop heavily loaded, times unreliable):
+at the 1.5 threshold the result is the same on all four parts (IoU 0.8541). With
+`HULL_ISO_EXCESS=1.05` it also runs on 7 more eval parts: 181 0.828 to 0.885, 3 0.917 to 0.934, 182
+0.871 to 0.875, none lower, mean 0.8574; but 74 and 123 get twice the faces for 0.1 to 0.2 % of the
+volume, and practice 2 and 4 lose 3 and 5 % of the true volume before the rounds step has seen their
+square sections. A minimum gain of 1 % of the true volume was added after that run
+(`HULL_ISO_MIN_GAIN`). The 1.05 threshold has not been run through the later steps; the default
+stays 1.5. Whether the piece-by-piece path ran on any part was not recorded in that run.
 
 Whole pipeline on the fixed 24 eval parts, `tools/eval_hull.py --iou`, 2026-11-12 about 02:35,
 working tree of all three sessions (commit 8268262 plus the uncommitted step 1 changes, the "disc"
