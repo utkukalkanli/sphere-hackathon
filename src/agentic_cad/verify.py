@@ -19,6 +19,7 @@ Frame: as in visual_hull, the solid has its bounding-box min corner at the origi
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -37,6 +38,10 @@ from agentic_cad.visual_hull import BACKGROUND_MIN, FRAME_MARGIN, find_view
 
 SIZE = 1024            # the views are 1024 px; candidates are drawn at the same size
 LINE_CONTRAST = 28     # a line is at least this much darker than its surroundings (0..255)
+FAINT_LINES = os.environ.get("HULL_FAINT_LINES", "0") == "1"   # also lines on dark faces, by their share of the face's tone (off: no gain measured)
+FAINT_MIN = 6          # ... at least this many levels darker
+FAINT_SHARE = 0.10     # ... and this share of the tone around them, where they hang on a line
+STRONG_SHARE = 0.22    # ... or this share by themselves
 TOLERANCE_PX = 2.5     # a line and an edge this close are the same
 CREASE_DEG = 18.0      # two faces meeting at a flatter angle do not make a sharp edge
 DEPTH_JUMP_PX = 3.0    # neighbouring pixels further apart in depth than this are an occlusion edge
@@ -56,13 +61,21 @@ CAMERAS = {
 ORTHO_VIEWS = ("front", "back", "left", "right", "top", "bottom")
 
 
+_camera_frames: dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
+
+
 def camera(name: str) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Unit vectors of the image's right and up direction and the direction towards the camera."""
-    towards, up = (np.array(v, dtype=float) for v in CAMERAS[name])
-    towards /= np.linalg.norm(towards)
-    right = np.cross(up, towards)
-    right /= np.linalg.norm(right)
-    return right, np.cross(towards, right), towards
+    """Unit vectors of the image's right and up direction and the direction towards the camera.
+    Worked out once per view (it is asked for tens of thousands of times a case); the caller gets
+    copies, so it may change them."""
+    frame = _camera_frames.get(name)
+    if frame is None:
+        towards, up = (np.array(v, dtype=float) for v in CAMERAS[name])
+        towards /= np.linalg.norm(towards)
+        right = np.cross(up, towards)
+        right /= np.linalg.norm(right)
+        frame = _camera_frames[name] = (right, np.cross(towards, right), towards)
+    return frame[0].copy(), frame[1].copy(), frame[2].copy()
 
 
 # -- what a view shows -----------------------------------------------------------------------------
@@ -93,7 +106,18 @@ def find_lines(image: np.ndarray, mask: np.ndarray) -> np.ndarray:
     dark the face it lies on, so it is found as what a small closing fills in."""
     bright = image.max(axis=2)  # the part is tan: its brightest channel separates it best from black
     closed = cv2.morphologyEx(bright, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
-    lines = (closed.astype(np.int16) - bright) >= LINE_CONTRAST
+    darker = closed.astype(np.int16) - bright
+    lines = darker >= LINE_CONTRAST
+    if FAINT_LINES:
+        # On a dark face the line is dark too and stands out by less (practice 7: a line of 59 on a
+        # face of 83). It is still a clear share of the face's own tone darker. Such pixels count
+        # where they continue a line: alone they are the grain of a shaded curved face.
+        faint = (darker >= np.maximum(FAINT_MIN, FAINT_SHARE * closed)).astype(np.uint8)
+        count, labels = cv2.connectedComponents(faint, connectivity=8)
+        strong = np.zeros(count, bool)
+        strong[np.unique(labels[lines | (darker >= np.maximum(FAINT_MIN, STRONG_SHARE * closed))])] = True
+        strong[0] = False
+        lines = strong[labels]
     # the outline of the part against the white background is a line too, whatever its contrast
     outline = cv2.morphologyEx(mask.astype(np.uint8), cv2.MORPH_GRADIENT, np.ones((3, 3), np.uint8)) > 0
     return (lines & cv2.dilate(mask.astype(np.uint8), np.ones((3, 3), np.uint8)).astype(bool)) | outline

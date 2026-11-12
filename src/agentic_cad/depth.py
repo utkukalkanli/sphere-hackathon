@@ -50,9 +50,10 @@ MIN_EDGE_ON = 0.9        # share of a face's edge-on stretch in a view at right 
 MIN_RECALL_GAIN = 0.01   # share of the views' lines a supported cut must newly explain to be kept on that alone
 MIN_SOLIDITY = 0.9       # a slanted face's area fills this share of its convex outline
 MIN_EDGE_PX = 12         # a slanted face hangs on a straight edge at least this long
-MIN_DROP_PX = 2.0        # ... and is cut only if that lowers the solid by this much on average
+MIN_DROP_PX = 2.0        # ... and is cut only if that lowers the solid by this much on average, square to the face
 MIN_STRETCH_PX = 10      # shorter stretches say nothing
 ONE_PLANE_DEG = 3.0      # our solid's surface over an area is one plane if its normals stay within this
+AREAS = os.environ.get("HULL_DEPTH_AREAS", "drawing")   # "drawing": the faces of drawing.py; "pixels": between line pixels
 SUPPORT = os.environ.get("HULL_DEPTH_SUPPORT", "1") != "0"   # also level faces our solid has no flat level under
 FACING = 0.9995          # cosine: our solid's face looks straight at the camera
 TIMEOUT = float(os.environ.get("HULL_DEPTH_TIMEOUT", 30))
@@ -75,7 +76,20 @@ def flat_areas(view: verify.Observed, facing: int | None = None) -> tuple[np.nda
     of the lines around it, and the labels of those that are flat faces looking at the camera.
     `facing` is the facing tone of all six views (regions.facing_tone): an area that has it evenly
     counts too. The real renders light a flat face a little unevenly, so that a face at the rim of
-    the image misses this view's commonest colour by more than TONE_MATCH (practice part 6, top)."""
+    the image misses this view's commonest colour by more than TONE_MATCH (practice part 6, top).
+
+    The areas are the faces of the view's drawing (drawing.py): closed, so a line that fades for a
+    pixel or two no longer lets two faces count as one. HULL_DEPTH_AREAS=pixels goes back to the
+    areas between the line pixels."""
+    if AREAS == "drawing":
+        from agentic_cad import drawing, sources
+        labels = drawing.read(view).labels
+        measured = sources._measured(view, labels)
+        if facing is None:
+            colour = facing_tone(view)
+            facing = None if colour is None else int(colour.max())
+        return labels, [label for label, area, _, middle, spread in measured
+                        if area >= MIN_AREA_PX and regions.kind_of(middle, spread, facing) == "facing"]
     tone = facing_tone(view)
     # the areas of regions.py: split at the lines, and also where the tone jumps without a line found
     free = (regions.segment(view)[0] > 0).astype(np.uint8)
@@ -351,9 +365,15 @@ def slanted_cuts(view: verify.Observed, labels: np.ndarray, levels: dict[int, fl
         shade = tones[rows, cols]
         if any(np.ptp(np.percentile(shade[owner == i], (8, 92))) > regions.FLAT_SPREAD for i in used if (owner == i).sum() >= 20):
             continue
-        height = np.max([base[i] + slopes[i] * reaches[i] for i in used], axis=0)
-        removes = float(np.clip(solid - height, 0, None).sum()) * pixel ** 2
-        if removes / (len(rows) * pixel ** 2) < MIN_DROP_PX * pixel:
+        heights = np.array([base[i] + slopes[i] * reaches[i] for i in used])
+        height = heights.max(axis=0)
+        # The drop is measured square to the new face, not along the view: the edge is known to a
+        # pixel, and on a face seen nearly edge-on a pixel across is many pixels of height. Measured
+        # along the view, a face our solid already has right was cut again a hair steeper (eval 1:
+        # a face at 81 degrees, a sliver off its corner and three faces more).
+        steep = np.array([slopes[i] for i in used])[heights.argmax(axis=0)]
+        drop = np.clip(solid - height, 0, None) / np.sqrt(1 + steep ** 2)
+        if float(drop.mean()) < MIN_DROP_PX * pixel:
             continue
         outlines = vh.trace_outlines(area.astype(np.uint8) * 255, to_mm, pixel)
         if not outlines:

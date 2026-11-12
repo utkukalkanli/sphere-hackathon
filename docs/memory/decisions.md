@@ -67,6 +67,46 @@ kept beside its successor. Older wording: `git show bda2104:docs/memory/decision
 - **Depths the solid itself implies are taken without the isometric view** (2026-11-12): a level
   face down to the solid's lowest point over it, a flat face to the steepest plane through a
   known edge. A line decides that an area is such a face, not a tone.
+- **A slanted face is cut only if that lowers the solid by 2 px measured square to the new
+  face** (2026-11-12, after the user saw the clipped corner on eval 1). Along the view, the pixel
+  of uncertainty in the edge it hangs on is 6.6 px on a face at 81 degrees, and a face that was
+  right was cut again a hair steeper.
+- **Lines on dark faces stay out of the line map** (2026-11-12, measurement): they raise the
+  share of true edges found from 92.1 to 94.0 % and leave the 24 parts where they were (volume
+  score 0.8972 to 0.8981, sampled IoU 0.8928 to 0.8920, 14 faces more a solid). Behind
+  `HULL_FAINT_LINES=1`.
+- **What the pictures say by themselves is read first, as a step of every case, by code in
+  `src/`** (2026-11-12, user: the sources must be a step at the start of every run, and nothing
+  may be made by hand and handed to the code). `read_sources` runs after the box; a failure
+  costs only the steps that use it. Pictures are written only when tracing.
+- **A view is divided into faces first; its edges are the borders of that division**
+  (2026-11-12, after the user found line pixels too rough to work on). Found edge pixels leave
+  gaps, and one gap joins two faces; borders of a division are closed by construction. They are
+  then fitted with lines and arcs to 0.6 px.
+- **Where a border is a meeting and where one face hides another is decided with our solid, not
+  from the picture alone** (2026-11-12, user: go on with the solid). The T-junctions alone are
+  right for 81 %; where our solid is level across a border of two facing faces, the T names the
+  deeper side right for 12 of 13.
+- **A recess found that way gets its depth by cutting and judging**, as the model's recesses do
+  (2026-11-12): the picture says where, nothing in it says how deep.
+- **Without a T both sides of the border are searched and the judge chooses** (2026-11-12, user).
+  Eval 38 0.9371 to 0.9926.
+- **A recess is looked for only where our solid is flat and square to the view under both
+  faces** (2026-11-12). The strip of a tyre's tread that faces the camera reads as a flat facing
+  face in the eval renders, and the judge kept columns 20 to 36 mm deep in it (eval 3, 0.9172 to
+  0.9126). Asking instead for one depth under each face cost eval 38 a right cut (0.9651).
+- **Level faces take their flat areas from the drawing** (2026-11-12, user). On the 24 parts
+  sampled IoU 0.8945 to 0.8957 and 295 to 288 faces a solid; eval 27 and 38 up, eval 99 no
+  longer cut by the step.
+- **The facing tone is the commonest flat tone near the table's tone for a face square to the
+  camera** (2026-11-12), not the commonest flat tone: on practice 9 the banks fill the views and
+  the commonest was a dark slanted face, so no plane was found there at all.
+- **A level counts as sure only from 10 000 px**: below that the level that stands out was wrong
+  for a quarter of the faces.
+- **Plane faces cut only where the isometric views give a sure plane, right after level faces**
+  (2026-11-12, user: "first only with the sure faces"). The solid must stand more than 4 px in
+  front of the plane: a level read off the pictures is right to 3 px, and at 1.5 px the step
+  shaved the top and bottom of practice 1 by 2 px (27 faces for 19).
 - **Eval 99 is left a little worse by those cuts** (2026-11-12, user: "leave it"). A threshold
   that spared it would have been tuned to the sample.
 - **Shading is one step after the hull** (2026-11-11): it needs the carved solid to measure
@@ -102,6 +142,10 @@ kept beside its successor. Older wording: `git show bda2104:docs/memory/decision
   and read back; a step that fails is dropped alone.
 - **Every boolean runs in a child process with a timeout** (2026-11-11). OpenCascade can hang
   for minutes and cannot be interrupted.
+- **Every case runs in a process of its own, several at once** (2026-11-12, user). The run used
+  one of the laptop's ten processors, and a crash took the cases after it along. The process
+  lives from the hull to the last step, so the solid never crosses a process boundary and the
+  result is the one the single process gave, load apart.
 - **One time budget for the run, 17 of the 20 minutes; steps are bounded by counts, not clocks**
   (2026-11-11, 2026-11-12). A clock per step makes the solid depend on the machine.
 
@@ -125,6 +169,10 @@ kept beside its successor. Older wording: `git show bda2104:docs/memory/decision
   steps and Diff. What a step does goes in a tooltip, not in text under the slider.
 - **Minimal: black background, little text, no rules or nested frames** (user, several times).
   The case list stays in number order.
+- **The sources of a view are a choice in the corner of its picture** (2026-11-12, after the user
+  called the left view buggy; not yet confirmed by him), drawn by the server for any case, not
+  only for a run. As a second slider its labels could not be clicked and it took height from
+  the picture.
 - **Every case shows the same stops, whether a step ran or not** (2026-11-12, user).
 - **A new step needs no UI change**: `with trace.step(...)` makes a stop. For the stop to exist
   before the step has run, add its trace name to `STEP_NAMES` in `hull_agent.py`; for old traces,

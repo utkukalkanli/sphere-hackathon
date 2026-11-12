@@ -146,15 +146,18 @@ def deeper(record: dict, factor: float) -> dict | None:
 def _column(record: dict, evidence) -> vh.Silhouette:
     """The column over a region of a straight view, from `depth` below the box face towards the camera."""
     view = record["view"]
-    found = evidence.regions().get(view)
-    if found is None:
-        raise ValueError(f"the {view} view could not be read")
-    labels, items = found
-    if not 1 <= record["region"] <= len(items):
-        raise ValueError(f"the {view} view has no region {record['region']}")
     seen, dims = evidence.observed[view], evidence.dims
-    area = (labels == items[record["region"] - 1].label).astype(np.uint8)
-    area = cv2.dilate(area, np.ones((2 * GROW_PX + 1, 2 * GROW_PX + 1), np.uint8)) * 255
+    if "area" in record:   # a face of the view's drawing: it already reaches to the middle of its lines
+        area = record["area"].astype(np.uint8) * 255
+    else:
+        found = evidence.regions().get(view)
+        if found is None:
+            raise ValueError(f"the {view} view could not be read")
+        labels, items = found
+        if not 1 <= record["region"] <= len(items):
+            raise ValueError(f"the {view} view has no region {record['region']}")
+        area = (labels == items[record["region"] - 1].label).astype(np.uint8)
+        area = cv2.dilate(area, np.ones((2 * GROW_PX + 1, 2 * GROW_PX + 1), np.uint8)) * 255
     right, up, towards = verify.camera(view)
     size = np.array([dims["x"], dims["y"], dims["z"]])
     centre, half = size / 2, seen.mask.shape[0] / 2
@@ -166,7 +169,7 @@ def _column(record: dict, evidence) -> vh.Silhouette:
     outlines = vh.trace_outlines(area, to_mm, seen.mm_per_px)
     if not outlines:
         raise ValueError("the region has no outline that can be cut")
-    return vh.Silhouette(name=f"region_{view}_{record['region']}", views=[view], mask=area, outlines=outlines,
+    return vh.Silhouette(name=f"region_{view}_{record.get('region', record.get('id'))}", views=[view], mask=area, outlines=outlines,
                          origin=centre + level * towards, right=right, up=up, direction=towards,
                          depth=2 * float(np.linalg.norm(centre)), info={"level": round(level, 3)})
 

@@ -23,8 +23,10 @@ Remove a question when it is answered and record the answer in `decisions.md`, `
 - **A kill in the first second or during a rename.** Before the boxes are written (0.7 to 1.1 s)
   there are fewer than 9 files; a `.test_case_<n>.stp.part` can be left behind in the
   milliseconds of a rename. What the organisers do with an extra file is not known.
-- **Should each case run in its own process?** A segfault in the main process leaves the cases
-  after it at their box or hull. Tracing lives in the main process.
+- **How many processors and how much memory does the organisers' machine have?** The README
+  gives only the GPU. Cases now run side by side on all processors but one; each process holds
+  OpenCascade and its case's pictures. On a machine with fewer real cores than it reports, cuts
+  time out that do not here. `HULL_WORKERS=1` is the old order.
 
 ## The model
 
@@ -49,6 +51,38 @@ Remove a question when it is answered and record the answer in `decisions.md`, `
   sees (eval 38 inside the channel before the supported cuts; deep or narrow pockets), small
   floors, floors only partly in sight (eval 236, 171), slanted faces with no neighbour of known
   depth (practice 9 banks), curved floors.
+- **Depth where the pictures alone do not give it** (2026-11-12, the user: depth matters most,
+  and knowing where a surface does not continue). The pictures give planes for the axis faces
+  whose level stands out and for a few slanted faces between two of them; nothing for curved
+  faces, small faces or a face behind a border. Whether a border is a meeting or a hiding edge
+  is what is missing, and the T-junctions alone do not settle it (81 %). Untried: our solid's
+  depth jump across a border; a hiding edge taken as certain where two faces of one axis lie
+  side by side or a border between two axis faces does not run along the third axis; why a
+  pocket floor's own edges score lower than its rim's (eval 110); a slanted face on one known
+  border with its angle from the tone; a depth map that is our solid's depth where tone and
+  lines confirm it; a monocular depth network only to choose between candidates.
+- **The time of the recess step.** (2026-11-12.) It is bounded by 6 faces or pairs a case, not by
+  a clock: eval 236 went from 26 to 203 s, 38 from 29 to 117 s, the nine practice parts from 228
+  to 456 s (cases in parallel). On a slower machine the case shares decide what is searched. The
+  cuts on practice 7 and 8 have not been looked at; the same reading in the isometric views is
+  untried (there a level solid across one tone is a step for 13 of 32).
+- **Which complex parts does the drawing fail on?** The user finds the lines bad on complex
+  parts; practice 4, 5, 8 and 9 look right to this session at picture size. Which case and view
+  is not known yet.
+- **Which steps move onto the drawing?** (2026-11-12.) `drawing.py` gives closed faces and fitted
+  edges; the sources, level faces and plane faces use it. `regions.py`, `lines.py`, shading, pockets,
+  split and the verifier still read the line pixels. Each move changes what those steps
+  cut and needs the 24 parts. Also open in the drawing itself: faces a few pixels wide, lines
+  that fade for more than 2 px (the gap stays open and the faces join), and whether the user
+  finds it sharp enough now (not yet seen by him in the dashboard).
+- **Plane faces beyond the sure ones.** (2026-11-12.) The step uses only faces of at least
+  10 000 px whose level stands out, and cuts on 2 of the 24 eval parts. Open: telling a floor's
+  own edge from the rim it is seen past (levels that stand out on areas with excess: 16 of 53
+  right); whether a monocular depth network helps to choose there; a check that the straight
+  view really sees the face (practice 9, `knowledge.md`), which only the volume guard does now;
+  on practice 9, whether its cut or the pockets cut it displaces is right.
+- **Eval 1 still has 14 faces of 7**: the silhouette step leaves the r 19 cylinder in four pieces
+  and two flats where the arc touches the box.
 - **Tones into geometry.** Agreed approach: classify regions by tone and fit primitives whose
   sizes are in `facts.json`. Open: how a region gets its depth when it touches no face of known
   depth; a slanted face the solid does not have (12 % of the slanted area is still called

@@ -257,6 +257,90 @@ Research round of 2026-11-12: scratch prototypes on cached solids, in
   carries most of it (practice 7 top pocket, practice 9 crankcase), the proposers were told the
   excess, and there is no ground truth.
 
+## Sources derived from the views
+
+`sources.py`, graded by `tools/check_sources.py` on the 24 eval parts (2026-11-12). The research
+scripts behind them are in `runs/_research_scratch/sources/`.
+
+- **Upscaling adds nothing; lines are missed by the threshold, not by the resolution.** A line
+  is 1 px wide and its darkness follows the face it lies on (practice 7: line 59 on a face of
+  83). `verify.find_lines` finds 92.1 % of the true sharp edges inside the eval views; with the
+  tone steps (`sources.steps`, jumps of 24 levels) 98.2 %, precision unchanged at 0.986. A
+  relative threshold with hysteresis alone gave 94.0 %. Not measured on the organisers' renderer.
+- **Under our excess the true surface is seen by no other camera for half of the columns, but
+  most flat floors are seen in part.** Without eval 51 and 99 (cached solid of 2026-11-12
+  03:45): 47 % of the excess columns have their true point in an isometric view, 17 % in a
+  perpendicular view, 50 % in none (eval 38 97 %, 110 84 %). Per flat floor: 84 % of the excess
+  lies under a floor of which an isometric camera sees at least 200 px; 16 % under floors nobody
+  sees (eval 38's back channel).
+- **Found edge pixels are not closed faces.** The share of true edge pixels found (98 %) says
+  nothing about gaps, and one gap joins two faces. Per true face seen in a view (4670 on the 24
+  parts, at least 150 px), the best overlap with one area: 0.9 or more for 35.5 % of the faces
+  with the areas between line pixels (`regions.segment`, grown over the lines; 82.9 % by area,
+  33 % under 0.5) and for 41.9 % with the faces of `drawing.partition` (88.3 % by area, 24 %
+  under 0.5). What is still lost is small: faces a few pixels wide have no core and join a
+  neighbour (eval 123's threads, 146's chamfer strips), and the eval renderer's flat shading
+  cuts curved faces into strips (eval 147: 10 % either way), which the organisers' does not.
+- **A circle seen at an angle is neither a line nor an arc**: fitted to 0.6 px it comes out as
+  chords of about 30 px. Pieces that run on turning the same way (1.5 to 30 degrees) are one
+  smooth curve.
+- **An isometric view gives axis faces by tone alone.** A flat face within 4 levels of the
+  table's tone for one of the three sides the camera sees is that side: 55 % of the iso pixels on
+  the drawing's faces (48 % on the areas between line pixels), 91.9 % of them right.
+- **Such a face gets its plane without our solid** (`sources._level`): on the drawing's faces 258
+  get a level, 184 within 3 px (98.3 % by area); "sure" (stands out and at least 10 000 px) 72
+  of 76, 99.0 % by area (73 of 75 on the areas between line pixels). What fails: small faces,
+  and a floor seen past the rim of its pocket, which lands on the rim's level (eval 110: five
+  pockets 100 px off). Taking the peak farthest from the camera made it worse. On the faces
+  where our solid has excess the levels that stand out were right for 16 of 53 (measured on the
+  earlier areas).
+- **Most inner borders of a view are edges where one face hides another, not where two meet**
+  (research script `e9.py`; truth: the two faces' true depths, carried on to the border, differ
+  by more than 3 px). All borders: 59 % in the isometric views, 48 % in the straight ones.
+  Borders of 15 px or more between two flat faces: 68 % isometric, 89 % straight (96 % of the
+  length).
+- **A T (two borders running straight through a meeting point, a third ending there) marks a
+  hiding edge only fairly well** (`drawing.occlusions`): between flat faces in the isometric
+  views 110 of 136 marked borders truly hide (81 % against the 68 % of all), the face in front
+  right for 94; it finds 68 % of the hiding length, and the unmarked rest still hides on half.
+  Over all borders 68 % right. In the straight views 56 of 57, where nearly everything hides.
+- **Our solid across a border** (research script `e11.py`, 22 eval parts, borders of 15 px or more
+  between flat faces, cached end-of-pipeline solid). Straight views: where our solid has a jump
+  the part has one too (85 of 86, the same face in front for 85 %); where our solid is level and
+  both sides have the facing tone the part has a step for 40 of 46, on average 100 px under our
+  surface; with a T, 13 of 13 are steps and the deeper side is named right for 12. Isometric
+  views: a jump of ours is a true step for 89 %; level and of one tone, a step for 13 of 32.
+- **A wrong level of an isometric face is nearer the camera than the true one** (eval 110: every
+  pocket floor lands 4 mm high, on the edge of its own pocket; that edge belongs to no flat face
+  beside it). Leaving out the levels of neighbouring parallel faces changed nothing; taking the
+  farthest of the peaks within 90 % of the best made one more sure level right (73 of 76); at 75 %
+  and 60 % it loses others.
+- **A plane cannot be carried to a neighbouring axis face across one border** (research script
+  `e8.py`, our levels as the start): 9 of 27 faces right. The border of two faces of different
+  axes looks the same whether they meet there or the far one lies behind (a floor and a back
+  wall against a top face's far edge and a wall behind it).
+- **A slanted flat face with borders to two faces of known plane gets its plane from the points
+  of those borders**, kept if they are planar to 1.5 px and the table's tone for that normal is
+  the face's (5 levels): 8 of 8 right, but only 2.3 % of the iso pixels on the 24 parts (eval 1,
+  109, 110, 235). Not in `src/`.
+- **Of the isometric pixels of the 24 parts 58 % are flat faces, 50 % axis faces**; the rest is
+  curved (and in the eval renders cut into strips). Our levels that stand out cover 39 %.
+- **The renderer can be told from the isometric views alone**: the table whose three side tones
+  explain more of their flat area (`sources.choose_table`). With it the grades above are the
+  same as with the table chosen on the ground truth.
+- **A monocular depth network is a coarse prior on the isometric views and useless on the
+  straight ones.** Depth Anything V2 after an affine fit per view: Small (0.2 s an image, laptop
+  CPU) median error 3.7 % of the depth range in the front iso view, 8.1 % in the back one, 64 %
+  and 43 % of the faces within 5 %; Large (1.6 s) 3.3 %, 74 %. Top view: correlation 0.18 (a
+  straight view of a vertical-walled pocket shows no wall).
+- **A face of an isometric view is not always seen by the straight view that looks at its
+  side** (practice 9: the inner wall of the crankcase, x = 19.8 facing +X, is seen through the
+  open front; the right view shows the block's closed end there). Its level came out right and
+  "sure", and the area it lands in is another face 488 mm in front of it. Only the volume guard
+  stopped that cut.
+- **On a face seen nearly edge-on a pixel across is many pixels of depth** (eval 1: a face at 81
+  degrees, 6.6 px a pixel). A drop measured along the view there is noise of the edge's position.
+
 ## How the code behaves
 
 Geometry (OpenCascade):
@@ -315,6 +399,23 @@ Dashboard:
   arguments overwrites `artifacts/outputs`.
 - The overlap is measured in the browser (`step-worker.js`): 40 000 points, ray test through
   the tessellation.
+- **The dashboard's waits were one worker doing everything in the order asked**: the ground
+  truth, then every step of the run, and only then the solid on screen and its overlap. It shows
+  on parts whose files take seconds to read (eval 99's truth is 11 MB), not on the practice set.
+- `verify.camera` is asked for 77 000 times while the sources of practice 7 are read
+  (`sources._scan`); it now works a view's frame out once and hands out copies (uncommitted,
+  2026-11-12). Under the profiler it looked like 4.6 of 14 s; timed plainly the source pictures
+  of practice 7 go from 13.7 to 12.0 s, practice 1 from 5.1 to 4.8 s, the same bytes.
+- **Most of a drawing's time is fitting lines and arcs to thousands of short runs**, and there
+  the cost is the call, not the arithmetic. `drawing._line_through` and `_circle_through` now
+  solve in closed form instead of `svd` and `lstsq` (uncommitted, 2026-11-12;
+  `outline_fit.fit_circle`, which the silhouette cuts use, is untouched and is the fallback for
+  points nearly on one line). The eight drawings, best of 3, alternating: practice 7 4.67 to
+  3.29 s, practice 9 2.92 to 2.19 s, practice 1 1.09 to 0.99 s. On the 9 practice parts and the
+  24 eval parts every view has the same faces, strokes and borders (79 580 strokes), no
+  coordinate, centre or radius more than 1.7e-8 px away; the source pictures of practice 1 and
+  7 are the same bytes. What is left: the same fits (2.6 of 4.9 s under the profiler),
+  `lines.thin`, the partition and the borders, about 0.4 s each on practice 7.
 - The 3D diff is drawn from depth textures, not computed by a boolean. In three.js two materials
   with the same `onBeforeCompile` source share a program unless `customProgramCacheKey` differs.
 - The section needs no cap geometry: clipped pixels showing the inside of the skin are the cut

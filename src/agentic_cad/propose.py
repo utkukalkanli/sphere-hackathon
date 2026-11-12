@@ -211,6 +211,167 @@ def proposals(step, case_dir: Path, evidence, solid: TopoDS_Shape, ratio: float 
 
 # -- applying ----------------------------------------------------------------------------------------
 
+def try_cuts(agent, step, solid: TopoDS_Shape, case_dir: Path, dims: dict, target: float | None, evidence,
+             pending: list[dict], label: str = "model") -> TopoDS_Shape:
+    """Tries proposed cuts on `solid`, the first in the list first, and returns the solid with
+    those the judge keeps. A "recess" has no depth: every depth of SCAN is cut and judged. Used
+    by the model step and by the steps that propose recesses themselves (recesses.py)."""
+    rater = judge.Judge(case_dir, dims, evidence.observed)
+    current, kept, report = solid, [], {}
+
+    size = np.array([dims[k] for k in "xyz"])
+    searched = [0]
+    gains: dict[str, float] = {}   # per recess searched, the judge's error of its best depth (negative: fits better)
+
+    def depths_for(base, op) -> list[dict]:
+        """A recess as region_floors at the depths to try: from our surface under the region down."""
+        if "area" in op:   # a face of the view's drawing, already known to look at the camera
+            drawing = evidence.drawings(base)[op["view"]]
+            under = drawing.depth[op["area"] & drawing.mask]
+            if not len(under):
+                raise ValueError("our solid has nothing under the area")
+            extent = float(abs(verify.camera(op["view"])[2]) @ size)
+            surface = extent / 2 - float(np.median(under))
+            return [{**op, "type": "region_floor", "depth": surface + share * (extent - surface)} for share in SCAN]
+        labels, items = evidence.regions()[op["view"]]
+        if not 1 <= op["region"] <= len(items):
+            raise ValueError(f"the {op['view']} view has no region {op['region']}")
+        if items[op["region"] - 1].kind != "facing":
+            # the column has a flat floor square to the view; under a curved or slanted region the
+            # part has no such floor (eval 3, a tyre: four such cuts were kept and all took real material)
+            raise ValueError(f"region {op['region']} is {items[op['region'] - 1].kind}, not a flat face square to the view")
+        drawing = evidence.drawings(base)[op["view"]]
+        under = drawing.depth[(labels == items[op["region"] - 1].label) & drawing.mask]
+        if not len(under):
+            raise ValueError("our solid has nothing under the region")
+        extent = float(abs(verify.camera(op["view"])[2]) @ size)
+        surface = extent / 2 - float(np.median(under))        # below the box face the view looks at
+        return [{**op, "type": "region_floor", "depth": surface + share * (extent - surface)} for share in SCAN]
+
+    def search(base, op, keep: bool = True):
+        """A recess of open depth: every depth of SCAN is cut and judged; the one the views fit best
+        is kept (of nearly equal ones the shallowest), if they fit strictly better than before.
+        With `keep` off the solid is handed back without being made the case's answer, and how much
+        better the views fit is noted in `gains`."""
+        if searched[0] >= MAX_RECESSES:
+            report[op["id"]] = "not tried: enough recesses searched for this case"
+            return None
+        searched[0] += 1
+        try:
+            variants = depths_for(base, op)
+        except ValueError as error:
+            report[op["id"]] = f"cannot be built: {error}"
+            return None
+        rated = []
+        for variant in variants:
+            # Every depth is tried. Stopping once two in a row were no better than the best so
+            # far was measured and lost most of the gain (eval 236: 0.990 to 0.801): the error
+            # does not fall evenly on the way down to the floor.
+            if agent.out_of_time():
+                break
+            try:
+                tool = ops.tool_for(variant, evidence)
+            except ValueError as error:
+                report[op["id"]] = f"cannot be built: {error}"
+                return None
+            carved = agent._guarded(step, base, target, lambda: agent.cutter.run(ops.cut, base, tool, CUT_TIMEOUT), quiet=True)
+            if carved is None or vh.volume(carved) >= vh.volume(base) * (1 - 1e-6):
+                continue
+            verdict = rater.rate(base, carved)
+            judge.note(agent, label, base, carved, bool(verdict.accepted and verdict.error < 0), verdict)
+            if verdict.accepted and verdict.error < 0:
+                rated.append((verdict.error, variant, carved, verdict))
+        if not rated:
+            report[op["id"]] = "no depth at which the views fit better"
+            return None
+        best = min(error for error, *_ in rated)
+        error, variant, carved, verdict = next(r for r in rated if r[0] <= best * (1 - SAME_ERROR))
+        gains[op["id"]] = error
+        if keep and not agent.save(carved):
+            report[op["id"]] = "the file does not read back as one valid solid"
+            return None
+        report[op["id"]] = f"kept at depth {variant['depth']:.2f} of {len(rated)} that fit ({verdict})"
+        return carved
+
+    def attempt(base, op):
+        """The op at the shallowest of its depths the judge accepts, or None."""
+        if op["type"] == "recess":
+            return search(base, op)
+        if op["type"] == "either":
+            # One of two faces is the deeper one and nothing says which: both are searched from the
+            # same solid, and the one the views fit better with is kept.
+            found = [(choice, search(base, choice, keep=False)) for choice in op["choices"]]
+            found = [(gains[choice["id"]], choice, carved) for choice, carved in found if carved is not None]
+            if not found:
+                report[op["id"]] = "; ".join(f"{choice['id']}: {report.get(choice['id'], 'not tried')}" for choice in op["choices"])
+                return None
+            _, choice, carved = min(found, key=lambda entry: entry[0])
+            if not agent.save(carved):
+                report[op["id"]] = "the file does not read back as one valid solid"
+                return None
+            report[op["id"]] = f"{choice['id']} of {len(found)} that fit: {report[choice['id']]}"
+            return carved
+        variants = [v for v in (ops.deeper(op, factor) for factor in DEPTHS) if v is not None] or [op]
+        for variant in variants:
+            if agent.out_of_time():
+                return None
+            try:
+                tool = ops.tool_for(variant, evidence)
+            except ValueError as error:
+                report[op["id"]] = f"cannot be built: {error}"
+                return None
+            carved = agent._guarded(step, base, target, lambda: agent.cutter.run(ops.cut, base, tool, CUT_TIMEOUT), quiet=True)
+            if carved is None or vh.volume(carved) >= vh.volume(base) * (1 - 1e-6):
+                report[op["id"]] = "no valid cut, nothing removed, or less than the part's volume left"
+                continue
+            verdict = rater.rate(base, carved)
+            judge.note(agent, label, base, carved, verdict.accepted, verdict)
+            if not verdict.accepted:
+                report[op["id"]] = f"{verdict.reason} ({verdict})"
+                continue
+            if verdict.error >= 0:   # a guess needs the views to speak for it, not only not against it
+                report[op["id"]] = f"no view shows it ({verdict})"
+                continue
+            if not agent.save(carved):
+                report[op["id"]] = "the file does not read back as one valid solid"
+                continue
+            report[op["id"]] = f"kept ({verdict})" + (f" at depth {variant['depth']:.2f}" if "depth" in variant else "")
+            return carved
+        return None
+
+    # Twice: a cut that showed nothing against the solid can show clearly once the recess above
+    # it is open (docs/plan-pipeline.md, practice 7)
+    for _ in range(2):
+        refused, before = [], len(kept)
+        for op in pending:
+            if agent.out_of_time():
+                step.log("out of time for this case; the remaining proposals are not tried", level="warning")
+                refused = []
+                break
+            carved = attempt(current, op)
+            if carved is None:
+                refused.append(op)
+            else:
+                current, kept = carved, kept + [op]
+        pending = refused
+        if not pending or len(kept) == before:
+            break
+    outcomes = [{**{k: v for k, v in op.items() if k not in ("area", "choices")}, "outcome": report.get(op["id"], "not tried")} for op in kept + pending]
+    step.attach("ops.json", outcomes)
+    if getattr(agent, "answers", None) is not None:
+        agent.answers.append(outcomes)
+    step.metric(kept=len(kept), refused=len(pending))
+    if not kept:
+        step.log("no proposed cut was kept")
+        return solid
+    step._status = None
+    after = vh.volume(current)   # the metrics so far are those of the last cut tried, kept or not
+    step.metric(volume_cm3=round(after / 1000, 3), removed_cm3=round((vh.volume(solid) - after) / 1000, 3),
+                **({"vs_true_volume": round(after / target, 3)} if target else {}))
+    agent._record(step, current, label)
+    return current
+
+
 def apply(agent, solid: TopoDS_Shape, case_dir: Path | None, views: list[Path]) -> TopoDS_Shape:
     """The pipeline step. Without an endpoint (and without HULL_PROPOSALS) it returns the solid untouched."""
     if case_dir is None or not enabled():
@@ -228,131 +389,4 @@ def apply(agent, solid: TopoDS_Shape, case_dir: Path | None, views: list[Path]) 
         if not pending:
             step.log("no cut was proposed")
             return solid
-        rater = judge.Judge(case_dir, dims, evidence.observed)
-        current, kept, report = solid, [], {}
-
-        size = np.array([dims[k] for k in "xyz"])
-        searched = [0]
-
-        def depths_for(base, op) -> list[dict]:
-            """A recess as region_floors at the depths to try: from our surface under the region down."""
-            labels, items = evidence.regions()[op["view"]]
-            if not 1 <= op["region"] <= len(items):
-                raise ValueError(f"the {op['view']} view has no region {op['region']}")
-            if items[op["region"] - 1].kind != "facing":
-                # the column has a flat floor square to the view; under a curved or slanted region the
-                # part has no such floor (eval 3, a tyre: four such cuts were kept and all took real material)
-                raise ValueError(f"region {op['region']} is {items[op['region'] - 1].kind}, not a flat face square to the view")
-            drawing = evidence.drawings(base)[op["view"]]
-            under = drawing.depth[(labels == items[op["region"] - 1].label) & drawing.mask]
-            if not len(under):
-                raise ValueError("our solid has nothing under the region")
-            extent = float(abs(verify.camera(op["view"])[2]) @ size)
-            surface = extent / 2 - float(np.median(under))        # below the box face the view looks at
-            return [{**op, "type": "region_floor", "depth": surface + share * (extent - surface)} for share in SCAN]
-
-        def search(base, op):
-            """A recess of open depth: every depth of SCAN is cut and judged; the one the views fit best
-            is kept (of nearly equal ones the shallowest), if they fit strictly better than before."""
-            if searched[0] >= MAX_RECESSES:
-                report[op["id"]] = "not tried: enough recesses searched for this case"
-                return None
-            searched[0] += 1
-            try:
-                variants = depths_for(base, op)
-            except ValueError as error:
-                report[op["id"]] = f"cannot be built: {error}"
-                return None
-            rated = []
-            for variant in variants:
-                # Every depth is tried. Stopping once two in a row were no better than the best so
-                # far was measured and lost most of the gain (eval 236: 0.990 to 0.801): the error
-                # does not fall evenly on the way down to the floor.
-                if agent.out_of_time():
-                    break
-                try:
-                    tool = ops.tool_for(variant, evidence)
-                except ValueError as error:
-                    report[op["id"]] = f"cannot be built: {error}"
-                    return None
-                carved = agent._guarded(step, base, target, lambda: agent.cutter.run(ops.cut, base, tool, CUT_TIMEOUT), quiet=True)
-                if carved is None or vh.volume(carved) >= vh.volume(base) * (1 - 1e-6):
-                    continue
-                verdict = rater.rate(base, carved)
-                judge.note(agent, "model", base, carved, bool(verdict.accepted and verdict.error < 0), verdict)
-                if verdict.accepted and verdict.error < 0:
-                    rated.append((verdict.error, variant, carved, verdict))
-            if not rated:
-                report[op["id"]] = "no depth at which the views fit better"
-                return None
-            best = min(error for error, *_ in rated)
-            error, variant, carved, verdict = next(r for r in rated if r[0] <= best * (1 - SAME_ERROR))
-            if not agent.save(carved):
-                report[op["id"]] = "the file does not read back as one valid solid"
-                return None
-            report[op["id"]] = f"kept at depth {variant['depth']:.2f} of {len(rated)} that fit ({verdict})"
-            return carved
-
-        def attempt(base, op):
-            """The op at the shallowest of its depths the judge accepts, or None."""
-            if op["type"] == "recess":
-                return search(base, op)
-            variants = [v for v in (ops.deeper(op, factor) for factor in DEPTHS) if v is not None] or [op]
-            for variant in variants:
-                if agent.out_of_time():
-                    return None
-                try:
-                    tool = ops.tool_for(variant, evidence)
-                except ValueError as error:
-                    report[op["id"]] = f"cannot be built: {error}"
-                    return None
-                carved = agent._guarded(step, base, target, lambda: agent.cutter.run(ops.cut, base, tool, CUT_TIMEOUT), quiet=True)
-                if carved is None or vh.volume(carved) >= vh.volume(base) * (1 - 1e-6):
-                    report[op["id"]] = "no valid cut, nothing removed, or less than the part's volume left"
-                    continue
-                verdict = rater.rate(base, carved)
-                judge.note(agent, "model", base, carved, verdict.accepted, verdict)
-                if not verdict.accepted:
-                    report[op["id"]] = f"{verdict.reason} ({verdict})"
-                    continue
-                if verdict.error >= 0:   # a guess needs the views to speak for it, not only not against it
-                    report[op["id"]] = f"no view shows it ({verdict})"
-                    continue
-                if not agent.save(carved):
-                    report[op["id"]] = "the file does not read back as one valid solid"
-                    continue
-                report[op["id"]] = f"kept ({verdict})" + (f" at depth {variant['depth']:.2f}" if "depth" in variant else "")
-                return carved
-            return None
-
-        # Twice: a cut that showed nothing against the solid can show clearly once the recess above
-        # it is open (docs/plan-pipeline.md, practice 7)
-        for _ in range(2):
-            refused, before = [], len(kept)
-            for op in pending:
-                if agent.out_of_time():
-                    step.log("out of time for this case; the remaining proposals are not tried", level="warning")
-                    refused = []
-                    break
-                carved = attempt(current, op)
-                if carved is None:
-                    refused.append(op)
-                else:
-                    current, kept = carved, kept + [op]
-            pending = refused
-            if not pending or len(kept) == before:
-                break
-        outcomes = [{**op, "outcome": report.get(op["id"], "not tried")} for op in kept + pending]
-        step.attach("ops.json", outcomes)
-        if getattr(agent, "answers", None) is not None:
-            agent.answers.append(outcomes)
-        step.metric(kept=len(kept), refused=len(pending))
-        if not kept:
-            step.log("no proposed cut was kept")
-            return solid
-        step._status = None
-        after = vh.volume(current)   # the metrics so far are those of the last cut tried, kept or not
-        step.metric(volume_cm3=round(after / 1000, 3), removed_cm3=round((vh.volume(solid) - after) / 1000, 3),
-                    **({"vs_true_volume": round(after / target, 3)} if target else {}))
-        agent._record(step, current, "model")
-        return current
+        return try_cuts(agent, step, solid, case_dir, dims, target, evidence, pending)

@@ -379,6 +379,95 @@ def run_pytest() -> dict:
 
 # -- http --------------------------------------------------------------------------------------
 
+_sources_guard = threading.Lock()
+_sources_locks: dict[str, threading.Lock] = {}   # one per case (and per view drawn alone): cases do not hold each other up
+_sources_slots = threading.Semaphore(2)          # ... but at most two whole cases are drawn at a time
+_sources_failed: dict[str, str] = {}             # what could not be drawn and why, until the code changes
+SOURCE_MODULES = ("sources", "drawing", "tone", "regions", "lines", "verify", "visual_hull")
+SKETCHES = ("lines", "faces")                    # the pictures a view gives alone, in about a second
+
+
+# argv: src, the case's inputs, the folder to write to, the tone table's name, and optionally one
+# view: then only its lines and faces are drawn. A file appears under its name only when complete.
+MAKE_SOURCES = """
+import os, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from agentic_cad import sources, tone, verify
+from agentic_cad import visual_hull as vh
+case_dir, folder, table_name = Path(sys.argv[2]), Path(sys.argv[3]), sys.argv[4]
+only = sys.argv[5] if len(sys.argv) > 5 else None
+dims = dict(zip("xyz", vh.read_dimensions(case_dir)))
+observed = verify.observe(case_dir, dims)
+if only:
+    made = {(only, what): png for what, png in sources.sketches(observed[only]).items()}
+else:
+    tables = tone.tables()
+    made = sources.pictures(observed, dims, tables.get(table_name) or tables.get(tone.DEFAULT))
+for (name, what), png in made.items():
+    part = folder / f".{name}_{what}.{os.getpid()}.part"
+    part.write_bytes(png)
+    part.replace(folder / f"{name}_{what}.png")
+(folder / (f"{only}.done" if only else "done")).write_text("")
+"""
+
+
+class SourceError(Exception):
+    pass
+
+
+def _draw_sources(folder: Path, dataset: str, case: str, view: str | None) -> None:
+    """Draws the pictures of a case into `folder` in a process of its own (so that a change to the
+    code shows without restarting the dashboard): all of them, or the lines and faces of one view."""
+    key = f"{folder}|{view or ''}"
+    with _sources_guard:
+        lock = _sources_locks.setdefault(key, threading.Lock())
+    with lock:
+        marker = folder / (f"{view}.done" if view else "done")
+        if marker.exists() or (folder / "done").exists():
+            return
+        if key in _sources_failed:
+            raise SourceError(_sources_failed[key])
+        folder.mkdir(parents=True, exist_ok=True)
+        command = [sys.executable, "-c", MAKE_SOURCES, str(ROOT / "src"), str(DATASETS[dataset]["inputs"] / case),
+                   str(folder), "eval" if dataset == "eval" else "organisers", *([view] if view else [])]
+        try:
+            if view:
+                proc = subprocess.run(command, env={**os.environ, "TRACE": "0"}, timeout=120, capture_output=True, text=True)
+            else:
+                with _sources_slots:
+                    proc = subprocess.run(command, env={**os.environ, "TRACE": "0"}, timeout=300, capture_output=True, text=True)
+            said = (proc.stderr or proc.stdout or "").strip().splitlines()
+            reason = None if proc.returncode == 0 else (said[-1] if said else f"exit code {proc.returncode}")
+        except subprocess.TimeoutExpired:
+            reason = "drawing the views took too long"
+        if reason or not marker.exists():
+            _sources_failed[key] = reason or "the pictures were not written"
+            raise SourceError(_sources_failed[key])
+
+
+def source_picture(dataset: str, case: str, view: str, kind: str) -> Path | None:
+    """One derived source of one view of a case (src/agentic_cad/sources.py) as a PNG, kept under
+    runs/_sources_cache until one of SOURCE_MODULES changes; the pictures of older code are then
+    deleted. The lines and faces of a view are drawn alone, in about a second; the normals and
+    depths need every view of the case (5 to 15 s), and all its pictures are drawn with them.
+    Raises SourceError, with the last line the process wrote, if they cannot be drawn."""
+    source_dir = ROOT / "src" / "agentic_cad"
+    stamp = str(int(max((source_dir / f"{name}.py").stat().st_mtime for name in SOURCE_MODULES)))
+    cache = RUNS / "_sources_cache"
+    folder = cache / stamp / dataset / case
+    wanted = folder / f"{view}_{kind}.png"
+    if wanted.exists():
+        return wanted
+    if not (DATASETS[dataset]["inputs"] / case / "images").is_dir():
+        return None
+    for old in cache.iterdir() if cache.is_dir() else []:
+        if old.is_dir() and old.name != stamp:
+            shutil.rmtree(old, ignore_errors=True)
+    _draw_sources(folder, dataset, case, view if kind in SKETCHES else None)
+    return wanted if wanted.exists() else None
+
+
 def safe_join(base: Path, relative: str) -> Path | None:
     target = (base / relative).resolve()
     return target if target.is_relative_to(base.resolve()) and target.is_file() else None
@@ -445,6 +534,14 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/description":
                 ds = DATASETS[query.get("dataset", ["practice"])[0]]
                 return self.send_file(safe_join(ds["inputs"], f"{query['case'][0]}/description.md"))
+            if path == "/api/source":
+                dataset, case, view, kind = (query[key][0] for key in ("dataset", "case", "view", "kind"))
+                if dataset not in DATASETS or not all(NAME_RE.match(value) for value in (case, view, kind)):
+                    return self.send_json({"error": "bad name"}, 400)
+                try:
+                    return self.send_file(source_picture(dataset, case, re.sub(r"^view_\d+_", "", view), kind))
+                except SourceError as error:
+                    return self.send_json({"error": str(error)}, 500)
             if path == "/api/events":
                 run, case = query["run"][0], query["case"][0]
                 if not (NAME_RE.match(run) and NAME_RE.match(case)):

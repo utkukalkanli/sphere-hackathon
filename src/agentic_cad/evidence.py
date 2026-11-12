@@ -7,7 +7,11 @@ itself. `Evidence` holds them for the case the agent is working on (`VisualHullA
 - `drawings(solid)`: the solid drawn from the cameras of the views, kept for the last few solids;
 - `regions()`: the areas between the lines of each straight view and their kind (regions.find);
 - `lines(solid)`: the lines of the views that the solid does not reproduce (lines.find);
-- `table(solid)`: the tone table of the renderer that made the views (tone.choose).
+- `table(solid)`: the tone table of the renderer that made the views (tone.choose);
+- `areas()`, `iso_faces()`, `iso_normals()`, `iso_depth()`: what the pictures say by themselves
+  (sources.py, on the drawing of each view, drawing.py): the faces of every view with their
+  kind, the faces of the isometric views that are square to an axis, with their normal and,
+  where it stands out, their plane. No solid is asked.
 
 `rows(solid)` is the table itself: one row per region, with what the solid has under it. Nothing
 here cuts, and no step decides by the flags yet: they are for ordering proposals and for a model to
@@ -26,7 +30,7 @@ import numpy as np
 from OCP.TopoDS import TopoDS_Shape
 
 from agentic_cad import lines as line_finder
-from agentic_cad import normals, regions, shading, tone, verify
+from agentic_cad import normals, regions, shading, sources, tone, verify
 
 KEPT = 4             # solids whose drawings and lines are remembered
 REACH_PX = 4         # a line pixel belongs to the region this near (lines are a few pixels wide)
@@ -39,6 +43,9 @@ class Evidence:
         self.case_dir, self.dims = case_dir, dims
         self.observed = verify.observe(case_dir, dims)
         self._regions = None
+        self._steps: dict = {}
+        self._iso_faces = None
+        self._areas = None
         self._table: list = []
         self._drawn: list[tuple] = []    # (solid, shading.Drawings)
         self._lines: list[tuple] = []    # (solid, {view: [lines.Piece]})
@@ -79,6 +86,37 @@ class Evidence:
             drawings = self.drawings(solid)
             self._table.append(tone.choose(self.observed, {name: drawings[name] for name in self.observed}))
         return self._table[0]
+
+    # -- what the pictures say by themselves -----------------------------------------------------
+
+    def steps(self) -> dict:
+        """sources.steps per view: face boundaries the renderer drew no dark line on."""
+        if not self._steps:
+            self._steps = {name: sources.steps(seen) for name, seen in self.observed.items()}
+        return self._steps
+
+    def areas(self) -> dict:
+        """sources.areas: per view the faces of its drawing (drawing.py) with their tone and kind."""
+        if self._areas is None:
+            self._areas = sources.areas(self.observed)
+        return self._areas
+
+    def iso_faces(self, solid: TopoDS_Shape | None = None) -> dict:
+        """sources.faces: per isometric view, the label image and the faces square to an axis. Read
+        off the views alone (`solid` is not looked at); found once for the case."""
+        if self._iso_faces is None:
+            self._iso_faces = sources.faces(self.observed, self.dims, None, self.areas())
+        return self._iso_faces
+
+    def iso_normals(self, solid: TopoDS_Shape | None = None) -> dict:
+        return sources.normals(self.observed, self.iso_faces())
+
+    def iso_depth(self, solid: TopoDS_Shape | None = None, sure: bool = True) -> dict:
+        return sources.depth(self.observed, self.dims, self.iso_faces(), sure)
+
+    def source_pictures(self, solid: TopoDS_Shape | None = None) -> dict[tuple[str, str], bytes]:
+        """sources.pictures: every source of every view as a PNG, keyed by (view, kind)."""
+        return sources.pictures(self.observed, self.dims)
 
     # -- the table -------------------------------------------------------------------------------
 

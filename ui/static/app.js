@@ -38,6 +38,7 @@ const S = {
   datasets: [], runs: [], cases: {}, now: 0,
   dataset: null, caseName: null, runId: null,  // runId '' = committed outputs / no run
   source: 'truth',  // what the right window shows: 'brief', 'facts', an input picture or 'truth'
+  derived: 'picture',  // ... and of a picture: itself, or a source read off it (lines, faces, normals, depth)
   sel: null,  // the step whose solid is shown; null = follow the latest
   diff: false,  // the big view shows the difference to the ground truth instead of the solid
 };
@@ -118,11 +119,12 @@ function outputOf(c) {
 // The renders come on a white sheet. Cut the sheet away (flood from the border) so the part sits
 // on the dark interface instead of in a glaring white square.
 const cutouts = new Map();
-function cutout(src) {
-  if (!cutouts.has(src)) {
-    cutouts.set(src, (async () => {
+function cutout(src, size = 768) {  // size: the longest side in pixels; the big picture is kept whole
+  const key = `${size}|${src}`;
+  if (!cutouts.has(key)) {
+    cutouts.set(key, (async () => {
       const bitmap = await createImageBitmap(await (await fetch(src)).blob());
-      const scale = Math.min(1, 768 / Math.max(bitmap.width, bitmap.height));
+      const scale = Math.min(1, size / Math.max(bitmap.width, bitmap.height));
       const w = Math.round(bitmap.width * scale), h = Math.round(bitmap.height * scale);
       const canvas = Object.assign(document.createElement('canvas'), { width: w, height: h });
       const ctx = canvas.getContext('2d', { willReadFrequently: true });
@@ -151,48 +153,77 @@ function cutout(src) {
       return URL.createObjectURL(await new Promise((resolve) => canvas.toBlob(resolve)));
     })().catch(() => src));
   }
-  return cutouts.get(src);
+  return cutouts.get(key);
 }
 
 function hydrateImages(root = document) {
   $$('img[data-cut]', root).forEach(async (img) => {
     const src = img.dataset.cut;
     if (img.dataset.done === src) return;
-    const url = await cutout(src);
+    const url = await cutout(src, Number(img.dataset.size) || 768);
     if (img.dataset.cut === src) { img.src = url; img.dataset.done = src; }
   });
 }
 
 // -- STEP loading -------------------------------------------------------------------------------
 
-let worker = null, jobs = new Map(), jobId = 0;
+// Reading a .stp and measuring an overlap happen in a few workers. What is on screen goes first
+// (rank 1, the newest request before older ones); the steps warmed up for scrubbing wait behind it,
+// the nearest to the chosen step first (rank -distance).
+const POOL = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 4) - 1));
+const crew = [], waiting = [];
+let asked = 0;
+function dispatch() {
+  while (waiting.length) {
+    let slot = crew.find((s) => !s.job);
+    if (!slot && crew.length < POOL) {
+      const made = slot = { worker: new Worker('/static/step-worker.js'), job: null };
+      const finish = (act) => { const job = made.job; made.job = null; if (job) act(job); dispatch(); };
+      made.worker.onmessage = ({ data }) => finish((job) => (data.ok ? job.resolve(data) : job.reject(new Error(data.error))));
+      made.worker.onerror = (event) => {  // the worker itself died: its job fails, another worker takes its place
+        made.worker.terminate();
+        crew.splice(crew.indexOf(made), 1);
+        finish((job) => job.reject(new Error(event.message || 'the worker failed')));
+      };
+      crew.push(slot);
+    }
+    if (!slot) return;
+    let best = 0;
+    waiting.forEach((job, i) => { const b = waiting[best]; if (job.rank > b.rank || (job.rank === b.rank && job.at > b.at)) best = i; });
+    const job = waiting.splice(best, 1)[0], taken = slot;
+    taken.job = job;
+    job.waiting = false;
+    Promise.resolve().then(job.make).then((message) => taken.worker.postMessage({ id: 0, ...message }, message.buffer ? [message.buffer] : []))
+      .catch((error) => { if (taken.job === job) taken.job = null; job.reject(error); dispatch(); });
+  }
+}
+function work(make, rank) {
+  const job = { make, rank, at: ++asked, waiting: true };
+  job.promise = new Promise((resolve, reject) => Object.assign(job, { resolve, reject }));
+  waiting.push(job);
+  dispatch();
+  return job;
+}
+
 const stepCache = new Map();
-function loadStep(url, key = url) {
-  if (stepCache.has(key)) return stepCache.get(key);
-  const promise = (async () => {
+function loadStep(url, key = url, rank = 1) {
+  const hit = stepCache.get(key);
+  if (hit) {  // asked again for the screen while it waits as a warm-up: move it to the front
+    if (hit.waiting && rank >= hit.rank) Object.assign(hit, { rank, at: ++asked });
+    return hit.promise;
+  }
+  const job = work(async () => {  // fetched only when a worker is free for it
     const response = await fetch(url, { cache: 'no-store' });
     if (!response.ok) throw new Error(`could not load file (${response.status})`);
     const buffer = await response.arrayBuffer();
     const head = new TextDecoder().decode(buffer.slice(0, 64)).trimStart();
     if (!head.startsWith('ISO-10303-21')) throw new Error('not a STEP file');
-    if (!worker) {
-      worker = new Worker('/static/step-worker.js');
-      worker.onmessage = ({ data }) => {
-        const job = jobs.get(data.id);
-        jobs.delete(data.id);
-        if (job) data.ok ? job.resolve(data) : job.reject(new Error(data.error));
-      };
-    }
-    return new Promise((resolve, reject) => {
-      const id = ++jobId;
-      jobs.set(id, { resolve, reject });
-      worker.postMessage({ id, buffer });
-    });
-  })();
-  stepCache.set(key, promise);
-  promise.catch(() => stepCache.delete(key));
+    return { buffer };
+  }, rank);
+  stepCache.set(key, job);
+  job.promise.catch(() => { if (stepCache.get(key) === job) stepCache.delete(key); });
   if (stepCache.size > 32) stepCache.delete(stepCache.keys().next().value);
-  return promise;
+  return job.promise;
 }
 
 // Show a .stp in a viewport. The previous solid stays up until the next one is ready, so stepping
@@ -402,6 +433,7 @@ function renderBar() {
     </label>
     <span class="spacer"></span>
     <span class="offline-note">Dashboard server is not responding</span>
+    ${working().length ? `<button data-active aria-pressed="${!activeShut}" title="The cases being run now (R)" aria-label="The cases being run now"><i class="dot"></i>${working().length}</button>` : ''}
     ${running && run.launched_by === 'ui' ? `<button data-action="stop">${ICON.stop}Stop</button>` : ''}
     <button class="primary" data-action="run" title="Run scripts/main.py on this case with tracing">${ICON.play}Run this case</button>`);
 }
@@ -426,6 +458,8 @@ function renderMain() {
             <button data-pic="2" title="Zoom in (click)" aria-label="Zoom in">${ICON.plus}</button>
             <button data-pic="0" title="Whole picture" aria-label="Whole picture">${ICON.fit}</button>
           </div>
+          <div class="seg" id="derived" role="radiogroup" aria-label="What is read off the picture" hidden></div>
+          <p class="note" id="big-note" hidden></p>
           <div id="doc"></div>
           <div class="hud" id="result-head"></div></div>
         <div id="sources"></div>
@@ -530,6 +564,88 @@ function sourceOf(c) {
   return list.includes('truth') ? 'truth' : list.includes(DEFAULT_VIEW) ? DEFAULT_VIEW : list.find(isPicture) || 'brief';
 }
 
+// What is read off a picture before any solid (src/agentic_cad/sources.py), drawn by the server
+const DERIVED = { picture: 'Picture', lines: 'Lines', faces: 'Faces', normals: 'Normals', depth: 'Depth' };
+const DERIVED_ABOUT = {
+  picture: 'The view as given',
+  lines: 'Every edge of the picture, redrawn as curves',
+  faces: 'Every area between the edges in a colour of its own',
+  normals: 'Normal of the faces the tone gives a direction; grey: the picture does not say',
+  depth: 'Depth of the faces whose plane was found, near warm; pale: not sure; grey: the picture does not say',
+};
+function derivedOf(name) {
+  if (!isPicture(name) || name === 'context') return [];
+  return ['picture', 'lines', 'faces', 'normals', 'depth'];
+}
+let peek = false;  // while the space bar is held: the picture as given, to compare with what was read off it
+const derivedAt = (name) => (!peek && derivedOf(name).includes(S.derived) ? S.derived : 'picture');
+function shownSrc(c, name) {
+  const kind = derivedAt(name);
+  return kind === 'picture' ? imageSrc(c, name) : `/api/source?dataset=${S.dataset}&case=${c.name}&view=${name}&kind=${kind}`;
+}
+function selectDerived(kind) {
+  const c = currentCase();
+  if (!c || !DERIVED[kind]) return;
+  S.derived = kind;
+  try { localStorage.setItem('derived', kind); } catch { /* private mode */ }
+  renderResult(c);
+}
+try { if (DERIVED[localStorage.getItem('derived')]) S.derived = localStorage.getItem('derived'); } catch { /* private mode */ }
+function moveDerived(offset) {
+  const c = currentCase(), list = c ? derivedOf(sourceOf(c)) : [];
+  if (list.length) selectDerived(list[(list.indexOf(derivedAt(sourceOf(c))) + offset + list.length) % list.length]);
+}
+function setPeek(on) {
+  const c = currentCase();
+  if (peek === on || !c) return;
+  peek = on;
+  renderResult(c);
+}
+
+// The pictures the server draws (lines, faces, normals, depth of a view). The first one of a case
+// takes seconds, since all of the case are drawn together; they are kept for the page's life.
+const drawn = new Map();
+function drawnPicture(src) {
+  if (!drawn.has(src)) {
+    drawn.set(src, (async () => {
+      const response = await fetch(src);
+      if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || response.statusText);
+      return URL.createObjectURL(await response.blob());
+    })());
+    drawn.get(src).catch(() => drawn.delete(src));
+  }
+  return drawn.get(src);
+}
+
+// The big picture of the left window. What was on screen stays, dimmed, until the next one is there.
+async function showBig(c, at) {
+  const img = $('#big'), note = $('#big-note'), kind = derivedAt(at), src = shownSrc(c, at);
+  if (img.dataset.cut === src) return;
+  if (img.dataset.view !== at) resetBig();  // another source of the same view keeps the zoom
+  Object.assign(img.dataset, { view: at, cut: src });
+  img.alt = `${DERIVED[kind]}, ${viewLabel(at)}`;
+  const current = () => img.isConnected && img.dataset.cut === src;
+  const say = (text, bad = false) => { note.hidden = !text; note.textContent = text; note.className = `note ${bad ? 'bad' : 'pulse'}`; };
+  say('');
+  const slow = setTimeout(() => { if (current()) { img.classList.add('stale'); say(kind === 'picture' ? '' : 'Reading the views…'); } }, 150);
+  try {
+    const url = await (kind === 'picture' ? cutout(src, 4096) : drawnPicture(src));
+    if (!current()) return;
+    img.src = url;
+    img.dataset.done = src;
+    img.classList.toggle('drawn', kind !== 'picture');
+    img.classList.remove('stale');
+    say('');
+    // someone who stays on it will ask for the others: fetch them meanwhile (the normals and depths
+    // have the server draw the whole case), so that the next choice is instant
+    if (kind !== 'picture') {
+      setTimeout(() => { if (current()) derivedOf(at).filter((k) => k !== 'picture' && k !== kind).forEach((k) => drawnPicture(src.replace(`kind=${kind}`, `kind=${k}`)).catch(() => {})); }, 1500);
+    }
+  } catch (error) {
+    if (current()) { img.classList.add('stale'); say(`Could not read the views: ${error.message}`, true); }
+  } finally { clearTimeout(slow); }
+}
+
 function selectSource(name, turn = true) {
   const c = currentCase();
   if (!c || !sourcesOf(c).includes(name)) return;
@@ -552,12 +668,20 @@ function renderResult(c) {
   setHTML($('#result-head'), `<h2>${at === 'truth' ? '<i class="sw truth"></i>' : ''}${esc(sourceLabel(at))}</h2>`);
   view.dataset.show = at === 'truth' ? 'model' : isPicture(at) ? 'image' : 'doc';
   if (c.truth) showModel($('#out'), c.truth.url, `${c.truth.url}?${c.truth.mtime}`, COLORS.truth);  // stays loaded behind the others
-  if (isPicture(at)) {
-    const img = $('#big'), src = imageSrc(c, at);
-    if (img.dataset.cut !== src) { resetBig(); img.dataset.cut = src; img.alt = `Reference render, ${viewLabel(at)}`; hydrateImages(view); }
-  } else if (at === 'brief') setHTML($('#doc'), `<article class="prose">${live.brief == null ? '' : markdown(live.brief)}</article>`);
+  if (isPicture(at)) showBig(c, at);
+  else if (at === 'brief') setHTML($('#doc'), `<article class="prose">${live.brief == null ? '' : markdown(live.brief)}</article>`);
   else if (at === 'facts') setHTML($('#doc'), factsHTML(c.facts));
   renderSources(c, list, at);
+  renderDerived(at);
+}
+
+// In the corner of a picture: what is read off it. Click, V for the next one, hold space for the picture itself.
+function renderDerived(at) {
+  const box = $('#derived'), list = derivedOf(at);
+  box.hidden = !list.length;
+  if (!list.length) return;
+  const chosen = derivedAt(at);
+  setHTML(box, list.map((kind) => `<button role="radio" data-derived="${kind}" aria-checked="${kind === chosen}" title="${esc(DERIVED_ABOUT[kind])}">${DERIVED[kind]}</button>`).join(''));
 }
 
 // The slider under the window: brief, facts, the pictures, the truth
@@ -569,7 +693,7 @@ function renderSources(c, list, at) {
       <div class="rail"></div>
       <input type="range" id="source" min="0" max="${list.length - 1}" step="1" aria-label="What the window shows">
       ${list.map((name, i) => `<button class="stop" data-source="${name}" title="${esc(sourceLabel(name))}${VIEWS[name] ? ` — turns the 3D views to this side (${VIEW_NAMES.indexOf(name) + 1})` : ''}">
-        <i class="dot"></i>${isPicture(name) ? `<img alt="${esc(viewLabel(name))}" src="${imageSrc(c, name)}" data-cut="${imageSrc(c, name)}">` : `<span class="name">${name === 'truth' ? 'Truth' : sourceLabel(name)}</span>`}</button>`).join('')}
+        <i class="dot"></i>${isPicture(name) ? `<img alt="${esc(viewLabel(name))}" data-size="96" data-cut="${imageSrc(c, name)}">` : `<span class="name">${name === 'truth' ? 'Truth' : sourceLabel(name)}</span>`}</button>`).join('')}
     </div>`;
     hydrateImages(box);
   }
@@ -666,11 +790,8 @@ const overlaps = new Map();
 function compare(key, ours, truth) {
   if (!overlaps.has(key)) {
     const solid = ({ meshes, measured }) => ({ meshes: meshes.map(({ position, index }) => ({ position, index })), min: measured.min, max: measured.max });
-    overlaps.set(key, new Promise((resolve, reject) => {
-      const id = ++jobId;
-      jobs.set(id, { resolve, reject });
-      worker.postMessage({ id, compare: { a: solid(ours), b: solid(truth) } });
-    }).then((data) => data.overlap));
+    overlaps.set(key, work(() => ({ compare: { a: solid(ours), b: solid(truth) } }), 1).promise.then((data) => data.overlap));
+    overlaps.get(key).catch(() => overlaps.delete(key));
     if (overlaps.size > 64) overlaps.delete(overlaps.keys().next().value);
   }
   return overlaps.get(key);
@@ -883,7 +1004,6 @@ function renderSteps(c) {
       });
       const last = lastRun;  // the exported file is the last step's solid, tidied
       if (last && output && !running && t.status === 'ok') Object.assign(last, { model: output, before: null });
-      if (!running) rows.forEach((r) => r.model && loadStep(r.model.url, r.model.key).catch(() => {}));  // warm up, so scrubbing is instant
     }
   } else if (!output) note = '<p class="note">No output yet. Run this case to see its steps.</p>';
   if (!rows.length && output) {
@@ -897,6 +1017,10 @@ function renderSteps(c) {
   const chosen = rows.find((r) => r.id === S.sel) || (running && [...rows].reverse().find((r) => r.changed)) || [...rows].reverse().find((r) => !r.id.startsWith('plan:')) || rows[rows.length - 1];
   live.rows = rows;
   live.chosen = chosen ? chosen.id : null;
+  if (run && !running) {  // warm up behind what is on screen, so scrubbing is instant: the nearest steps first
+    const at = rows.indexOf(chosen);
+    rows.forEach((r, i) => r.model && r !== chosen && loadStep(r.model.url, r.model.key, -Math.abs(i - at)).catch(() => {}));
+  }
   setHTML($('#steps-status'), status);
   const diff = S.diff && c.truth ? { url: c.truth.url, key: `${c.truth.url}?${c.truth.mtime}` } : null;
   const legend = '<i class="sw ours"></i>as the part · <i class="sw excess"></i>too much under this face · <i class="sw missing"></i>missing';
@@ -917,8 +1041,8 @@ function renderSteps(c) {
 // The stops every case has, in order. A trace brings its own plan (hull_agent.planned); names it
 // lacks (runs traced before a step was planned, or before there was a plan) are put in from here,
 // so every case of every run shows the same stops.
-const STOPS = ['bounding_box', 'cut_front_back', 'cut_right_left', 'cut_top_bottom', 'cut_iso', 'isometric_support', 'check_views',
-  'cut_holes', 'open_mouths', 'evidence', 'cut_rounds', 'cut_curved', 'level_faces', 'model_cuts', 'shading_depth', 'cut_pockets',
+const STOPS = ['bounding_box', 'read_sources', 'cut_front_back', 'cut_right_left', 'cut_top_bottom', 'cut_iso', 'isometric_support', 'check_views',
+  'cut_holes', 'open_mouths', 'evidence', 'cut_rounds', 'cut_curved', 'level_faces', 'plane_faces', 'open_recesses', 'model_cuts', 'shading_depth', 'cut_pockets',
   'split_faces', 'export_step'];
 function fullPlan(given) {
   const plan = given.slice();
@@ -941,6 +1065,7 @@ const ABOUT = [
   [/^cut_holes$/, () => 'Cuts the cylindrical holes listed in facts.json'],
   [/^open_mouths$/, () => 'Opens listed holes whose mouth a view draws under our surface'],
   [/^isometric_support$/, () => 'Cuts with the isometric silhouette too, where the straight cuts left far too much'],
+  [/^read_sources$/, () => 'Reads the drawing of every view, and the faces and planes the isometric views give'],
   [/^evidence$/, () => 'Numbers the areas of the views and what the solid has under each'],
   [/^model_cuts$/, () => 'Cuts a model proposes, each kept only if the views fit better'],
   [/^cut_rounds$/, () => 'Makes square sections round along boss and bore axes'],
@@ -948,6 +1073,8 @@ const ABOUT = [
   [/^cut_pockets$/, () => 'Cuts pockets whose outline the views draw under our surface'],
   [/^split_faces$/, () => 'Splits a face where the views draw a line across it'],
   [/^level_faces$/, () => 'Cuts each flat face down to its lowest level'],
+  [/^plane_faces$/, () => 'Cuts flat faces down to the plane the isometric views give them'],
+  [/^open_recesses$/, () => 'Searches the depth of faces a view draws a step at where our solid is level'],
   [/^shading_depth$/, () => 'Takes pocket depths from the shading of the isometric views'],
   [/^export_step$/, () => 'Merges coplanar faces and writes the .stp'],
 ];
@@ -1110,11 +1237,43 @@ function renderScores() {
 }
 let shownFor = null;
 
+// -- running ------------------------------------------------------------------------------------
+// One panel over the right of the big view, there while anything runs, whoever started it: the cases
+// of the runs in progress with the step they are in and the time since they began; the finished ones
+// dimmed, with the time they took. A click goes to that case in that run.
+let activeShut = false;
+const working = () => S.runs.filter((r) => r.status === 'running').flatMap((r) => r.cases.filter((c) => c.status === 'running'));
+const stopwatch = (seconds) => (seconds == null || !isFinite(seconds) ? '' : `${Math.floor(Math.max(seconds, 0) / 60)}:${String(Math.floor(Math.max(seconds, 0) % 60)).padStart(2, '0')}`);
+function toggleActive() {
+  activeShut = !activeShut;
+  render();
+}
+function renderActive() {
+  const panel = $('#active');
+  const runs = S.runs.filter((r) => r.status === 'running' && r.cases.length);
+  panel.hidden = activeShut || !runs.length;
+  if (panel.hidden) return;
+  setHTML(panel, runs.map((r) => r.cases.map((c) => {
+    const on = c.status === 'running';
+    return `<button data-live="${esc(r.id)}/${esc(c.name)}" class="${on ? '' : 'done'}" aria-current="${r.id === S.runId && c.name === S.caseName}" title="${esc(clock(r.started_at))}">
+      <i class="${on ? 'dot' : ''}"></i><b>${c.name.replace(/^test_case_/, '')}</b><span>${esc(on ? words(c.current || 'waiting') : c.status === 'error' ? 'failed' : '')}</span><em>${stopwatch((on ? S.now : c.ended_at) - c.started_at)}</em></button>`;
+  }).join('')).join('<hr>'));
+}
+function gotoLive(runId, name) {
+  const run = S.runs.find((r) => r.id === runId);
+  if (!run) return;
+  if (run.dataset) S.dataset = run.dataset;
+  hideTip();
+  Object.assign(S, { caseName: name, runId, sel: null });
+  render();
+}
+
 function render() {
   normalise();
   writeHash();
   renderBar();
   renderScores();
+  renderActive();
   renderMenu();
   renderMain();
 }
@@ -1138,6 +1297,7 @@ document.addEventListener('click', async (event) => {
   const d = target.dataset;
   if (d.move) return moveCase(Number(d.move));
   if (d.source) return selectSource(d.source);
+  if (d.derived) return selectDerived(d.derived);
   if (d.zoom) return zoomBy(Number(d.zoom));
   if (d.pic) return picTool(Number(d.pic));
   if (d.fit !== undefined) return fit();
@@ -1146,6 +1306,8 @@ document.addEventListener('click', async (event) => {
   if (d.faces !== undefined) return toggleFaces();
   if (d.cut !== undefined) return cycleSection();
   if (d.scores !== undefined) return toggleScores();
+  if (d.active !== undefined) return toggleActive();
+  if (d.live) return gotoLive(d.live.slice(0, d.live.lastIndexOf('/')), d.live.slice(d.live.lastIndexOf('/') + 1));
   if (d.menu) return openMenu(d.menu);
   if (d.pick !== undefined) return pick(d.pick);
   if (d.goto) return selectCase(d.goto);
@@ -1257,12 +1419,16 @@ document.addEventListener('keydown', (event) => {
   const act = {
     ArrowRight: () => moveStep(1), ArrowLeft: () => moveStep(-1), ']': () => moveStep(1), '[': () => moveStep(-1),
     ArrowDown: () => moveCase(1), ArrowUp: () => moveCase(-1),
-    '+': () => zoomBy(1.25), '=': () => zoomBy(1.25), '-': () => zoomBy(0.8), f: fit, 0: fit, t: toggleOrbit, g: toggleGhost, d: toggleDiff, c: toggleFaces, x: cycleSection, s: toggleScores,
+    '+': () => zoomBy(1.25), '=': () => zoomBy(1.25), '-': () => zoomBy(0.8), f: fit, 0: fit, t: toggleOrbit, g: toggleGhost, d: toggleDiff, c: toggleFaces, x: cycleSection, s: toggleScores, r: toggleActive,
+    v: () => moveDerived(1), V: () => moveDerived(-1), ' ': () => setPeek(true),
   }[event.key] || (/^[1-8]$/.test(event.key) && (() => selectSource(VIEW_NAMES[Number(event.key) - 1])));
   if (!act) return;
   event.preventDefault();
   act();
 });
+
+document.addEventListener('keyup', (event) => { if (event.key === ' ') setPeek(false); });
+window.addEventListener('blur', () => setPeek(false));
 
 window.addEventListener('hashchange', async () => { readHash(); await ensureCases(); render(); });
 

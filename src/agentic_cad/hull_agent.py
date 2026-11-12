@@ -14,8 +14,10 @@ from agentic_cad import mouths
 from agentic_cad import spans
 from agentic_cad import iso_support
 from agentic_cad import outline_fit as of
+from agentic_cad import planes
 from agentic_cad import pockets
 from agentic_cad import propose
+from agentic_cad import recesses
 from OCP.BRepBuilderAPI import BRepBuilderAPI_Copy
 
 from agentic_cad import curved
@@ -57,15 +59,15 @@ HOLES_TIMEOUT = float(os.environ.get("HULL_HOLES_TIMEOUT", 40))
 RETRY_BUDGET = float(os.environ.get("HULL_RETRY_BUDGET", 20))
 
 
-# Steps after the holes, in order; HULL_SKIP=rounds,curved,depth,model,shading,pockets,split switches some off.
+# Steps after the holes, in order; HULL_SKIP=rounds,curved,depth,planes,recesses,model,shading,pockets,split switches some off.
 # "model" (propose.py) does nothing unless an endpoint is configured; it comes before the fine cuts,
 # because a large structural cut lowers the precision every later cut needs.
 # "split" moves no material and must stay last: a later cut or merge would undo it.
-LATER_STEPS = {"rounds": rounds, "curved": curved, "depth": depth, "model": propose, "shading": shading,
+LATER_STEPS = {"rounds": rounds, "curved": curved, "depth": depth, "planes": planes, "recesses": recesses, "model": propose, "shading": shading,
                "pockets": pockets, "split": split}
 SKIP_STEPS = {name for name in os.environ.get("HULL_SKIP", "").split(",") if name}
 # The name each later step gives its trace step, for the plan the dashboard shows before anything has run
-STEP_NAMES = {"rounds": "cut_rounds", "curved": "cut_curved", "depth": "level_faces", "model": "model_cuts",
+STEP_NAMES = {"rounds": "cut_rounds", "curved": "cut_curved", "depth": "level_faces", "planes": "plane_faces", "recesses": "open_recesses", "model": "model_cuts",
               "shading": "shading_depth", "pockets": "cut_pockets", "split": "split_faces"}
 
 
@@ -110,6 +112,32 @@ class VisualHullAgent:
                             coplanar=sum(1 for row in rows if row["coplanar_with"]))
             except Exception as error:
                 step.log(f"raised {error!r}; the steps do not need it", level="warning")
+
+    def _read_sources(self, case_dir: Path | None) -> None:
+        """The first thing done with a case: what its pictures say by themselves (sources.py), for
+        every later step to use. The drawing of each view (faces and edges), the faces of the
+        isometric views that are square to an axis, and their planes. Nothing is cut here, and a
+        failure costs only the steps that would have used it."""
+        if case_dir is None:
+            return
+        with trace.step("read_sources", kind="io", description=(
+                "The drawing of every view, and the faces and planes the isometric views give")) as step:
+            try:
+                from agentic_cad import drawing
+                table = self.evidence(case_dir)
+                sketches = {view: drawing.read(seen) for view, seen in table.observed.items()}
+                faces = [face for _, listed in table.iso_faces().values() for face in listed]
+                strokes = [stroke for sketch in sketches.values() for stroke in sketch.strokes]
+                step.metric(faces=sum(sketch.faces for sketch in sketches.values()),
+                            lines=sum(1 for stroke in strokes if stroke.kind == "line"),
+                            arcs=sum(1 for stroke in strokes if stroke.kind in ("arc", "circle")),
+                            axis_faces=len(faces), planes=sum(1 for face in faces if face.sure))
+                if trace.current_case().dir is not None:   # pictures only for the dashboard
+                    step.attach("iso_faces.json", [face.summary() for face in faces])
+                    for (view, kind), picture in table.source_pictures().items():
+                        step.attach(f"source_{view}_{kind}.png", picture)
+            except Exception as error:
+                step.log(f"raised {error!r}; the steps that use the sources will do without", level="warning")
 
     def out_of_time(self) -> bool:
         return self.deadline is not None and time.time() > self.deadline
@@ -176,7 +204,7 @@ class VisualHullAgent:
 
     def planned(self) -> list[dict]:
         """Every step a case goes through, in order; "off" says why one is switched off for this run."""
-        steps = [{"name": "bounding_box"}, *({"name": f"cut_{name}"} for name in vh.ORTHO)]
+        steps = [{"name": "bounding_box"}, {"name": "read_sources"}, *({"name": f"cut_{name}"} for name in vh.ORTHO)]
         steps.append({"name": "cut_iso"} if self.use_iso else {"name": "cut_iso", "off": "the isometric cut is switched off"})
         steps.append({"name": "isometric_support", "off": "the isometric cut runs as a cut of its own"} if self.use_iso
                      else {"name": "isometric_support"})
@@ -272,6 +300,7 @@ class VisualHullAgent:
                              "true_volume_mm3": target})
             self._record(step, solid, "box")
 
+        self._read_sources(case_dir)
         names = [*vh.ORTHO, *(["iso"] if self.use_iso else [])]
         started = time.time()
         box = solid

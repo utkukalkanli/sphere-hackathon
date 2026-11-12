@@ -253,6 +253,10 @@ class CaseTrace:
         else:
             self.log(f"output {path} was not written", level="error")
 
+    def abandon(self, error: str) -> None:
+        """End the case from another process than the one that traced it, because that one died."""
+        self._emit({"t": "case_end", "status": "error", "error": error})
+
     def __enter__(self) -> "CaseTrace":
         self._tokens.append((_current_case.set(self), _current_step.set(None)))
         if not self._started:
