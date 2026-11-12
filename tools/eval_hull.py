@@ -96,6 +96,7 @@ def evaluate(job: dict) -> dict:
     from OCP.TopAbs import TopAbs_FACE
     from OCP.TopExp import TopExp_Explorer
 
+    from agentic_cad import mouths
     from agentic_cad import visual_hull as vh
     from agentic_cad.hull_agent import VisualHullAgent
 
@@ -120,6 +121,7 @@ def evaluate(job: dict) -> dict:
             volumes_path.write_text(json.dumps(agent.volumes))
         if options["holes"]:
             solid = agent.cut_holes(solid, case)
+            solid = mouths.apply(agent, solid, case)  # as VisualHullAgent.carve does
         solid = agent.refine(solid, case, views, skip=tuple(options["skip"]))
         faces, explorer = 0, TopExp_Explorer(solid if agent.keep_faces else vh.tidy(solid), TopAbs_FACE)
         while explorer.More():
