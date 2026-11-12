@@ -11,8 +11,10 @@ cuts it away and never touches the part.
 Only plain statements are taken. A clause that is negated ("not symmetric", "no plane or rotational
 symmetry") or hedged ("roughly", "for the main circular features", "in its outer profile", "the
 overall envelope") is ignored, and so is a claim whose plane or axis is not the middle of the
-bounding box (a symmetric part's box is symmetric about the same plane). Every intersection is kept
-only if the solid keeps the part's volume and the verifier does not rate it lower.
+bounding box (a symmetric part's box is symmetric about the same plane). A stated symmetry is
+applied even if the verifier then rates the solid lower (decisions.md: what the brief and facts.json
+state is always applied); an intersection is refused only if it fails or leaves less than the
+part's volume from facts.json. The verifier's score is still measured and logged.
 """
 
 from __future__ import annotations
@@ -39,7 +41,6 @@ from agentic_cad.export import file_valid
 AXES = "xyz"
 MIN_SHARE = 0.99        # the result must keep this share of the true volume (a correct one keeps all of it)
 MIN_REMOVED = 0.002     # an intersection that removes less than this share of the true volume is not kept
-SCORE_SLACK = 0.003     # the verifier's score may drop by this much and the result still pass
 CENTRE_TOLERANCE = 0.01  # a stated plane or axis this close (share of the box) to the box's middle is taken
 REVOLUTION_FOLDS = 16   # a body of revolution is cut as a 16-fold symmetric one
 TIMEOUT = float(os.environ.get("HULL_BRIEF_TIMEOUT", 30))
@@ -275,12 +276,9 @@ def apply(agent, solid: TopoDS_Shape, case_dir: Path | None, views: list[Path],
                                 "removed_mm3": round(removed, 1)})
                 continue
             after = verify.check(carved, case_dir, observed).score
-            if after < score - SCORE_SLACK:
-                step.log(f"{claim.summary()}: the verifier rates the result lower ({score:.3f} to {after:.3f}); not kept",
-                         level="warning")
-                results.append({"claim": claim.summary(), "result": "verifier lower", "removed_mm3": round(removed, 1),
-                                "score": [round(score, 4), round(after, 4)]})
-                continue
+            if after < score:   # kept anyway: the brief states it (decisions.md)
+                step.log(f"{claim.summary()}: the verifier rates the result lower ({score:.3f} to {after:.3f}); "
+                         "kept because the brief states it", level="warning")
             step.log(f"{claim.summary()}: removed {removed / 1000:.2f} cm3 our solid had on one side only")
             results.append({"claim": claim.summary(), "result": "kept", "removed_mm3": round(removed, 1),
                             "score": [round(score, 4), round(after, 4)]})

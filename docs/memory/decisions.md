@@ -12,8 +12,8 @@ the entry and say what changed.
   worse; such a drop is read as an error elsewhere that was being cancelled (see "A change is
   judged where it acts"). What still refuses it: a solid that is not one valid solid, and a
   contradiction with the documents themselves (for example the true volume of `facts.json`).
-  Statements the brief hedges or negates are still not read as facts. Code that still gates such
-  changes on the verifier (`brief.py`'s symmetry step) has to follow this; not yet changed.
+  Statements the brief hedges or negates are still not read as facts. `brief.py`'s symmetry step
+  follows this since the same afternoon.
 - **A model may be used in a step where it is needed** (2026-11-12, user; replaces "no model or
   agent in any step for now" of 2026-11-11). Deterministic steps stay the default. A step may call
   a model (LLM or VLM) where the deterministic code cannot get the information, for example
