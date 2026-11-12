@@ -18,13 +18,15 @@ reasons in `decisions.md`.
   medium 0.9260, complex 0.7584); practice parts 1, 2, 3, 4 within 3 % of the true volume, 8 at
   1.06, 5 at 1.19 (with `bowls`), 9 at 1.2, 7 at 1.42 (with `cavities`), 6 at 2.8, each case run
   alone. The eval sample has not been run with `bowls` or `cavities`.
-- **All 9 practice parts at once on the Windows PC (`uzum` b0cbc4a, 4 workers, 2026-11-12 17:43):
-  1076 s, all files valid, score 0.8237**: 1 1.066, 2 1.018, 3 1.000, 4 1.055, 5 1.195, 6 2.766,
-  7 1.552, 8 1.071, 9 1.302. Every case ran out of its share of the time: 1, 8 and 9 skipped every
-  step after the holes, the rest skipped the model step and later (7 lost shading). The biggest
-  costs: `evidence` 20 to 127 s a case, `open_mouths` 89 s on 9. Practice 1 starts last (fewest
-  faces) and gets almost no time. `main` has not been run whole on this PC, so how much of this is
-  the machine is unknown.
+- **All 9 practice parts, cases in parallel (4 workers, hard stop 18.5 min), `TRACE_EVIDENCE=0`,
+  Windows PC, 2026-11-12 18:47 (run `20261112-184700-3b53`): 699 s, all files valid, score 0.8463**:
+  1 1.003, 2 1.018, 3 1.000, 4 1.028, 5 1.191, 6 2.766, 7 1.445, 8 1.063, 9 1.205. Only 7 (shading
+  stopped, pockets skipped) and 9 (split) reached their share. Slowest case 9, 597 s.
+- Before that, with `main`'s sequential `scripts/main.py` on this PC: 1076 s traced (score 0.8237;
+  the dashboard-only `evidence` step cost 20 to 127 s a case) and **2096 s with `TRACE=0`** (score
+  0.8299): practice 8, refined last with about 45 s left, wrote its file 18 minutes later; the
+  cause was not found (alone it takes 260 s, no step over 126 s). `main` (the submission) has the
+  same sequential entrypoint without a hard stop.
 
 ## Pipeline, in run order
 

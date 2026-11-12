@@ -103,6 +103,13 @@ kept beside its successor. Older wording: `git show bda2104:docs/memory/decision
 
 ## Evaluation
 
+- **`uzum` runs the cases in parallel with a hard stop: `nar`'s `scripts/main.py`** (2026-11-12,
+  after the user asked for the full run). `main`'s entrypoint is sequential and has no hard stop;
+  on the Windows PC it took 2096 s with `TRACE=0`. With up to 4 workers and every worker stopped at
+  18.5 minutes: 699 s, score 0.8463.
+- **`TRACE_EVIDENCE=0` for timing runs** (2026-11-12). The `evidence` step is for the dashboard and
+  runs only while tracing, so a traced run is slower than the image; with the switch it is not.
+
 - **The volume ratio does not decide between branches; the views do** (2026-11-12, user: `main`
   looks more right than `nar`, for example on practice 5, though `nar` scores 0.829 against about
   0.824). On practice 5 `nar` hollowed the whole of the two large back circles about 60 mm deep

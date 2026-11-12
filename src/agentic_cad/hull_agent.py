@@ -65,6 +65,9 @@ RETRY_BUDGET = float(os.environ.get("HULL_RETRY_BUDGET", 20))
 # "split" moves no material and must stay last: a later cut or merge would undo it.
 LATER_STEPS = {"bowls": bowls, "rounds": rounds, "curved": curved, "cavities": cavities, "depth": depth, "model": propose, "shading": shading,
                "pockets": pockets, "split": split}
+# The "evidence" step is for the dashboard only and runs only while tracing; TRACE_EVIDENCE=0 leaves it
+# out, so a traced run takes the time the image (TRACE=0) takes.
+SHOW_EVIDENCE = os.environ.get("TRACE_EVIDENCE", "1") != "0"
 SKIP_STEPS = {name for name in os.environ.get("HULL_SKIP", "").split(",") if name}
 # The name each later step gives its trace step, for the plan the dashboard shows before anything has run
 STEP_NAMES = {"bowls": "cut_bowls", "rounds": "cut_rounds", "curved": "cut_curved", "cavities": "cut_cavities", "depth": "level_faces", "model": "model_cuts",
@@ -98,7 +101,7 @@ class VisualHullAgent:
     def _show_evidence(self, solid, case_dir: Path | None) -> None:
         """For the dashboard only: the regions of the views with what the solid has under them, as a
         table and as marked views. On a copy of the solid, so that nothing here can reach a step."""
-        if case_dir is None or trace.current_case().dir is None:
+        if case_dir is None or trace.current_case().dir is None or not SHOW_EVIDENCE:
             return
         with trace.step("evidence", kind="io", description=(
                 "The areas between the lines of each view, numbered, with what the solid has under them")) as step:
