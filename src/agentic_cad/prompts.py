@@ -399,3 +399,53 @@ def view_parts(views: list[Path], image_px: int) -> list[dict]:
         parts.append({"type": "text", "text": f"View: {VIEW_CAPTIONS.get(name, name)}"})
         parts.append(image_part(path, image_px))
     return parts
+
+
+# -- flow engine: the holes of the brief as data --------------------------------------------------------
+
+_HOLE = {
+    "type": "object",
+    "properties": {
+        "label": {"type": "string", "maxLength": 80},
+        "diameter": {"type": "number"},
+        "axis": {"enum": ["x", "y", "z", "other"]},
+        "length": {"type": "number"},
+        "through": {"type": "boolean"},
+        "centres": {"type": "array", "maxItems": 40,
+                    "items": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3}},
+    },
+    "required": ["label", "diameter", "axis", "length", "through", "centres"],
+    "additionalProperties": False,
+}
+HOLES_SCHEMA = {"type": "object", "properties": {"holes": {"type": "array", "items": _HOLE, "maxItems": 40}},
+                "required": ["holes"], "additionalProperties": False}
+HOLES_RESPONSE_FORMAT = {"type": "json_schema",
+                         "json_schema": {"name": "brief_holes", "schema": HOLES_SCHEMA, "strict": True}}
+
+HOLES_SYSTEM_PROMPT = """You read the design brief of one mechanical part and list every round hole, bore, \
+counterbore and cylindrical recess it locates, as JSON. You copy numbers from the brief; you do not design.
+
+Coordinates are in mm from the minimum corner of the part's bounding box (X, Y, Z), as in the brief.
+
+One entry per group of identical holes (same diameter, same axis, same length):
+- "label": a few words from the brief.
+- "diameter": in mm.
+- "axis": "x", "y" or "z" for a hole parallel to that axis; "other" for an inclined hole.
+- "length": how long the cylinder is, in mm: the depth of a blind hole or counterbore, the stated length of a \
+bore. For a hole that goes through the whole part with no length stated, use the envelope size along its axis.
+- "through": true only when the brief says the hole goes through (through, through-hole, passes completely \
+through). Blind holes, counterbores, recesses and pockets are false.
+- "centres": one [x, y, z] per hole: the MIDDLE of the cylinder. When the brief gives all three coordinates of \
+a hole, copy them unchanged. When it gives only two (the position on the face), work out the third, the one \
+along the axis:
+  * through the whole part: half the envelope size along the axis;
+  * blind from the face at 0: length / 2; blind from the opposite face: envelope size - length / 2;
+  * a counterbore or step sits at the end of its hole, on the side the brief names.
+
+Leave out anything that is not a round hole (slots, pockets, fillets, chamfers, bosses, shafts) and any hole \
+whose position the brief does not give. If the brief locates no hole, return {"holes": []}."""
+
+
+def holes_message(description: str, facts: dict) -> str:
+    return (f"# Envelope\n{envelope_text(facts)}\n\n# Design brief\n{description.strip()}\n\n"
+            "Return the JSON object now.")

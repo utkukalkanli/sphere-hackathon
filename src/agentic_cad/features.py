@@ -277,8 +277,9 @@ def compile_script(features: list[dict], min_volume: float = 0.0, max_holes: int
         try:
             cutter = expression(feature)
             placements = copies(feature)
-            through = feature.get("type") == "cylinder" and feature.get("through") is True
-            ends = _segment(feature) if through else None
+            closed = feature.get("type") == "cylinder" and feature.get("closed") is True   # flow engine only
+            through = feature.get("type") == "cylinder" and feature.get("through") is True and not closed
+            ends = _segment(feature) if through or closed else None
         except FeatureError as exc:
             lines.append(f"feature_log.append({f'{name} -> rejected: {exc}'!r})")
             continue
@@ -288,7 +289,11 @@ def compile_script(features: list[dict], min_volume: float = 0.0, max_holes: int
         cuts += len(placements)
         for number, placement in enumerate(placements):
             which = name if len(placements) == 1 else f"{name} [copy {number + 1} of {len(placements)}]"
-            if through:
+            if closed:
+                start, end = (_placed(point, placement) for point in ends)
+                lines.append(f"body = cut_closed(body, {float(feature['diameter']):g}, {_t(start)}, {_t(end)}, "
+                             f"{which!r}, feature_log, {limits})")
+            elif through:
                 start, end = (_placed(point, placement) for point in ends)
                 lines.append(f"body = cut_through(body, {float(feature['diameter']):g}, {_t(start)}, {_t(end)}, "
                              f"{which!r}, feature_log, {limits})")

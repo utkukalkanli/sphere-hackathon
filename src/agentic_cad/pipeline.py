@@ -30,6 +30,7 @@ from agentic_cad.trace import CaseTrace
 
 STOP_MARGIN_S = 40          # do not start a round with less time than this left
 OUTLINE_SLACK = 0.01        # a carved solid may lose this much silhouette match against its base
+TURNED_SLACK = 0.003        # outline match (orthographic and iso) within this counts as equal between two hulls
 MIN_GAIN = 0.002            # volume error must shrink by at least this for a candidate to replace the best
 _builds = threading.BoundedSemaphore(max(2, (os.cpu_count() or 4) - 1))   # CAD kernels running at once
 
@@ -71,8 +72,53 @@ class Case:
 
 # -- stages 1 and 2 ---------------------------------------------------------------------------------
 
+def _iso(attempt: Attempt) -> float | None:
+    values = list((attempt.report.get("iso_iou") or {}).values())
+    return sum(values) / len(values) if values else None
+
+
+def _turned_is_better(turned: Attempt, flat: Attempt, target_volume: float) -> bool:
+    """Whether the revolved hull replaces the hull of flat extrusions. Both match the three outlines, so the
+    iso views and the volume decide. On the local eval set (30 parts the detection fires on) the revolved hull
+    has the higher volume IoU against the ground truth wherever its iso outline is clearly better, and where
+    the iso outlines are equal only when it also removes most of the excess volume."""
+    if not _usable(turned) or turned.evaluation.rank < flat.evaluation.rank - TURNED_SLACK:
+        return False
+    volume, flat_volume = turned.report.get("volume") or 0.0, flat.report.get("volume") or 0.0
+    if target_volume and volume < 0.97 * target_volume:      # a hull holds the whole part
+        return False
+    iso, flat_iso = _iso(turned), _iso(flat)
+    if iso is None or flat_iso is None:
+        return False
+    if iso > flat_iso + TURNED_SLACK:
+        return True
+    excess, flat_excess = volume - target_volume, flat_volume - target_volume
+    return bool(target_volume) and iso >= flat_iso - TURNED_SLACK and flat_excess > 0 and excess <= 0.5 * flat_excess
+
+
 def build_hull(case: Case, views: dict[str, Path]) -> Attempt | None:
-    """The best silhouette hull that builds: all three views if possible, else fewer."""
+    """The best silhouette hull that builds: the three outlines intersected, or revolved when they show a
+    turned part and the iso views agree; fewer outlines if the intersection fails."""
+    flat = flat_hull(case, views)
+    box = case.facts.get("bounding_box_mm") or {}
+    if flat is None or not all(k in box for k in "xyz"):
+        return flat
+    try:
+        candidates = hull.revolve_candidates(views, hull.view_outlines(views, box), box)
+    except Exception as exc:
+        case.trace.log(f"turned-part detection failed: {type(exc).__name__}: {exc}", "warn")
+        return flat
+    best = flat
+    for label, script in candidates:
+        turned = case.build(f"hull {label}", script)
+        if _turned_is_better(turned, best, float(case.facts.get("volume_mm3") or 0.0)):
+            case.trace.log(f"turned part: the {label} hull replaces the hull of flat extrusions")
+            best = turned
+    return best
+
+
+def flat_hull(case: Case, views: dict[str, Path]) -> Attempt | None:
+    """The outlines extruded and intersected: all three views if possible, else fewer."""
     box = case.facts.get("bounding_box_mm") or {}
     if not all(k in box for k in "xyz"):
         return None
@@ -166,7 +212,7 @@ def carve(case: Case, base: Attempt, bores: list[str], description: str, views: 
     failures: list[str] = []
     idle = 0
     for round_no in range(1, s.max_steps + 1):
-        if case.best.evaluation.accepted:
+        if case.best.evaluation.accepted and not _holes_off(case.best, max_holes):
             return "accepted"
         if case.remaining() < STOP_MARGIN_S:
             return "time"
@@ -262,7 +308,8 @@ def run_case(settings: Settings, name: str, case_dir: Path, description: str, vi
              context: Path | None, output_path: Path, deadline: float, trace: CaseTrace) -> dict:
     """Same contract as CadAgent.generate_cad: always writes output_path when anything valid exists."""
     work = trace.dir if trace.enabled else Path(tempfile.mkdtemp(prefix=f"{name}_"))
-    case = Case(settings, case_dir, load_facts(case_dir, description), output_path, deadline, trace, work)
+    case = Case(settings, case_dir, load_facts(case_dir, description, settings.use_facts), output_path, deadline,
+                trace, work)
     by_name = {prompts.view_name(path): path for path in views}
     trace.start()
     status, error, stop, stage = "ok", None, None, "block"

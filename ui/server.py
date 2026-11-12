@@ -48,6 +48,20 @@ DATASETS = {
 }
 FILE_ROOTS = {"artifacts": ARTIFACTS, "eval": EVAL, "runs": RUNS}
 
+# Engine presets of the "Run this case" button: environment overrides on top of .env and the server's own
+# environment. "default" changes nothing, so the run uses whatever those two say (config.py: hull, script mode).
+ENGINES = {
+    "default": {"label": "Default (.env)", "env": {}},
+    "hull-nollm": {"label": "Hull, no model", "env": {"AGENT_ENGINE": "hull", "AGENT_LLM_STAGE": "0"}},
+    "hull-script": {"label": "Hull + script carving",
+                    "env": {"AGENT_ENGINE": "hull", "AGENT_LLM_STAGE": "1", "AGENT_CARVE_MODE": "script"}},
+    "hull-features": {"label": "Hull + JSON features",
+                      "env": {"AGENT_ENGINE": "hull", "AGENT_LLM_STAGE": "1", "AGENT_CARVE_MODE": "features",
+                              "AGENT_CARVE_MIN_EXCESS": "0"}},
+    "graph": {"label": "Graph (LangGraph + VLM)", "env": {"AGENT_ENGINE": "graph"}},
+    "legacy": {"label": "Legacy loop", "env": {"AGENT_ENGINE": "legacy"}},
+}
+
 NAME_RE = re.compile(r"^[A-Za-z0-9_-][A-Za-z0-9._-]*$")
 PROCS: dict[str, subprocess.Popen] = {}
 _summary_cache: dict[str, tuple[tuple, dict]] = {}
@@ -262,7 +276,7 @@ def load_dotenv() -> dict[str, str]:
     return values
 
 
-def start_run(only: list[str], target: str, dataset: str = "practice") -> dict:
+def start_run(only: list[str], target: str, dataset: str = "practice", engine: str = "default") -> dict:
     run_id = datetime.now().strftime("%Y%m%d-%H%M%S") + "-ui"
     run_dir = RUNS / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -275,13 +289,17 @@ def start_run(only: list[str], target: str, dataset: str = "practice") -> dict:
     if only:
         command += ["--only", *only]
     env = {**load_dotenv(), **os.environ, "TRACE_RUN_ID": run_id, "TRACE_DIR": str(RUNS), "TRACE": "1",
-           "PYTHONUNBUFFERED": "1"}
+           "PYTHONUNBUFFERED": "1", **ENGINES[engine]["env"]}
+    if engine == "graph" and not env.get("VLM_BASE_URL"):
+        # one multimodal server does both jobs unless a separate vision model is configured
+        env["VLM_BASE_URL"] = env.get("OPENAI_BASE_URL") or "http://localhost:8000/v1"
     log = open(run_dir / "stdout.log", "wb")
     proc = subprocess.Popen(command, cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT)
     PROCS[run_id] = proc
     (run_dir / "run.json").write_text(json.dumps({
         "id": run_id, "status": "running", "started_at": time.time(), "pid": proc.pid, "launched_by": "ui",
         "argv": command[1:], "only": only, "target": target, "dataset": dataset,
+        "engine": engine,
     }))
     return {"id": run_id}
 
@@ -396,6 +414,7 @@ class Handler(BaseHTTPRequestHandler):
                                       cache="/inputs/" in path or "/ground_truth/" in path)
             if path == "/api/state":
                 return self.send_json({"datasets": list_datasets(), "runs": list_runs(), "root": str(ROOT),
+                                       "engines": [{"id": k, "label": v["label"]} for k, v in ENGINES.items()],
                                        "now": time.time()})
             if path == "/api/cases":
                 return self.send_json({"cases": list_cases(query["dataset"][0])})
@@ -455,7 +474,10 @@ class Handler(BaseHTTPRequestHandler):
                 dataset = body.get("dataset", "practice")
                 if dataset not in DATASETS:
                     return self.send_json({"error": "unknown dataset"}, 400)
-                return self.send_json(start_run(only, body.get("target", "run"), dataset))
+                engine = body.get("engine") or "default"
+                if engine not in ENGINES:
+                    return self.send_json({"error": "unknown engine"}, 400)
+                return self.send_json(start_run(only, body.get("target", "run"), dataset, engine))
             if path == "/api/stop":
                 proc = PROCS.get(run)
                 if proc and proc.poll() is None:

@@ -43,7 +43,9 @@ class Settings:
     prompt_image_px: int    # reference views are downscaled to this before being sent
     mask_px: int            # resolution of the silhouette comparison
     tile_px: int            # tile size in the comparison images
-    engine: str             # "hull" (silhouette hull + facts + LLM carving), "graph" (LangGraph tool-calling
+    use_facts: bool         # flow engine: read facts.json when the case has one (hidden parts have none)
+    engine: str             # "hull" (silhouette hull + facts + LLM carving), "flow" (fixed LangGraph nodes, works
+                            # from the brief alone), "graph" (LangGraph tool-calling
                             # agent) or "legacy" (fixed generate/correct loop)
     llm_stage: bool         # hull engine: let the model carve the hull (off = deterministic stages only)
     candidates: int         # hull engine: scripts requested in parallel per round
@@ -76,6 +78,7 @@ class Settings:
             prompt_image_px=_int("AGENT_PROMPT_IMAGE_PX", 448),
             mask_px=_int("AGENT_MASK_PX", 512),
             tile_px=_int("AGENT_TILE_PX", 320),
+            use_facts=_flag("AGENT_USE_FACTS", True),
             engine=(os.environ.get("AGENT_ENGINE") or "hull").strip().lower(),
             llm_stage=_flag("AGENT_LLM_STAGE", True),
             candidates=_int("AGENT_CANDIDATES", 4),

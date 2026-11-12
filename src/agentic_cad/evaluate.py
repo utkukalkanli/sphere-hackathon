@@ -40,9 +40,13 @@ class Evaluation:
         return out
 
 
+_DASHES = {ord(c): "-" for c in "\u2010\u2011\u2012\u2013\u2014"}   # the briefs use non-breaking hyphens
+
+
 def facts_from_description(text: str) -> dict:
     """Fallback when a case has no facts.json: envelope and volume as written in the brief."""
     facts: dict = {}
+    text = text.translate(_DASHES)
     num = r"(\d+(?:\.\d+)?)"
     m = re.search(rf"Envelope:\**\s*{num}\s*[x×]\s*{num}\s*[x×]\s*{num}\s*mm", text)
     if m:
@@ -50,6 +54,9 @@ def facts_from_description(text: str) -> dict:
     m = re.search(rf"volume\s*{num}\s*cm", text)
     if m:
         facts["volume_mm3"] = float(m.group(1)) * 1000.0
+    m = re.search(r"(\d+|no)\s*through[\s-]*(?:passages?|holes?)", text, re.IGNORECASE)
+    if m:
+        facts["through_holes_genus"] = 0 if m.group(1).lower() == "no" else int(m.group(1))
     return facts
 
 

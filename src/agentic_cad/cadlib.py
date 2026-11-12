@@ -253,9 +253,43 @@ def cut_through(body, d, p0, p1, label, log, min_volume=0.0, max_holes=None) -> 
                        min_volume, max_holes)
 
 
+def cut_closed(body, d, p0, p1, label, log, min_volume=0.0, max_holes=None, depth_in_d=1.25) -> cq.Workplane:
+    """A round hole that the reference views show closed when looking along it. If the cylinder p0 -> p1 covers
+    all the material on its axis it would be a straight passage, which the views rule out: such a hole was
+    drilled from the faces, so it is cut blind from both ends, `depth_in_d` diameters deep. Otherwise the
+    hole is cut as given."""
+    from OCP.gp import gp_Dir, gp_Lin, gp_Pnt
+    from OCP.IntCurvesFace import IntCurvesFace_ShapeIntersector
+
+    a, b = cq.Vector(*p0), cq.Vector(*p1)
+    length, step = (b - a).Length, (b - a).normalized()
+    first = last = None
+    try:
+        solid = body.val().Solids()[0]
+        probe = IntCurvesFace_ShapeIntersector()
+        probe.Load(solid.wrapped, 1e-6)
+        probe.Perform(gp_Lin(gp_Pnt(*a.toTuple()), gp_Dir(*step.toTuple())), -1e7, 1e7)
+        crossings = sorted(probe.WParameter(i) for i in range(1, probe.NbPnt() + 1))
+        inside = [(t0, t1) for t0, t1 in zip(crossings, crossings[1:])
+                  if t1 - t0 > 1e-6 and solid.isInside(a + step * ((t0 + t1) / 2))]
+        if inside:
+            first, last = inside[0][0], inside[-1][1]
+    except Exception:
+        pass
+    if first is None or first < -0.05 or last > length + 0.05:      # the hole ends inside material: blind as given
+        return cut_feature(body, lambda: cyl_between(d, p0, p1), label, log, min_volume, max_holes)
+    depth = min(depth_in_d * d, 0.4 * (last - first))
+    for t0, t1, end in ((first - 1.0, first + depth, "near end"), (last - depth, last + 1.0, "far end")):
+        s, e = (a + step * t0).toTuple(), (a + step * t1).toTuple()
+        body = cut_feature(body, lambda s=s, e=e: cyl_between(d, s, e),
+                           f"{label} (closed in the views: drilled {depth:.1f} deep from the {end})", log,
+                           min_volume, max_holes)
+    return body
+
+
 HELPERS = {f.__name__: f for f in (box, cyl, tube, cone, cyl_between, cone_between, tube_between, sphere, prism,
                                    revolve, arc_points, polar_points, try_fillet, try_chamfer, try_cut, cut_feature,
-                                   cut_through)}
+                                   cut_through, cut_closed)}
 
 HELPER_DOC = """\
 box(x0, y0, z0, x1, y1, z1)                 axis-aligned box between two corners

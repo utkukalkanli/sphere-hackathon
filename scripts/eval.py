@@ -41,7 +41,10 @@ RUNS = REPO_ROOT / "runs"
 BUILD_STEPS = ("build attempt", "attempt ", "hull ", "facts bores", "round ")   # trace steps that build a solid
 PAIR_TIMEOUT_S = 180   # a comparison that hangs must not stall the eval
 WEIGHTS = {"iou": 0.30, "surface": 0.30, "dims": 0.20, "holes": 0.20}   # docs/scoring.md
-SURFACE_THRESHOLDS = (0.005, 0.01, 0.02, 0.05, 0.10)   # fractions of the part size
+# The readings of the slide below (part size = mean extent, both directions must hold, worst extent, ratio of
+# hole counts) are the ones that reproduce the deck's calibration table best on 15 eval parts:
+# tools/scorer_calibration (mean error 0.033 against 0.054 for the first reading; the bounding box stays 0.15 high).
+SURFACE_THRESHOLDS = tuple(0.005 * 20 ** (i / 7) for i in range(8))   # 0.5 % to 10 % of the part size
 SURFACE_SAMPLES = 20000       # points whose distance to the other surface is measured
 SURFACE_REFERENCE = 400000    # points standing in for that other surface: dense enough that their spacing is
                               # well under the smallest threshold, or a part would not even match itself
@@ -118,12 +121,14 @@ def _sample_surface(solid, count: int, tolerance: float, seed: int):
 
 
 def surface_match(a, b) -> float:
-    """How much of each surface lies on the other one: at every threshold, the F-score of the share of output
-    points within that distance of the truth surface (precision) and the reverse (recall); mean over thresholds."""
+    """How much of each surface lies on the other one: at every threshold, the smaller of the share of output
+    points within that distance of the truth surface and the reverse; mean over thresholds. The part size the
+    thresholds are fractions of is the mean extent of the truth's bounding box."""
     import numpy as np
     from scipy.spatial import cKDTree
 
-    size = b.BoundingBox().DiagonalLength
+    box = b.BoundingBox()
+    size = (box.xlen + box.ylen + box.zlen) / 3
     tolerance = size * SURFACE_THRESHOLDS[0] / 10
     a_to_b = cKDTree(_sample_surface(b, SURFACE_REFERENCE, tolerance, seed=1)).query(
         _sample_surface(a, SURFACE_SAMPLES, tolerance, seed=0))[0]
@@ -133,13 +138,13 @@ def surface_match(a, b) -> float:
     for fraction in SURFACE_THRESHOLDS:
         precision = float(np.mean(a_to_b <= fraction * size))
         recall = float(np.mean(b_to_a <= fraction * size))
-        scores.append(2 * precision * recall / (precision + recall) if precision + recall else 0.0)
+        scores.append(min(precision, recall))
     return float(np.mean(scores))
 
 
 def dimension_score(box: list[float], truth_box: list[float]) -> float:
-    """Mean over the three extents (compared largest with largest, so a rotated part is not punished here) of a
-    curve through the two points on the slide: 2 % off loses 10 %, 20 % off loses everything."""
+    """The worst of the three extents (compared largest with largest, so a rotated part is not punished here) on
+    a curve through the two points on the slide: 2 % off loses 10 %, 20 % off loses everything."""
     def one(value: float, truth: float) -> float:
         if not truth:
             return 0.0
@@ -148,7 +153,7 @@ def dimension_score(box: list[float], truth_box: list[float]) -> float:
             return 1.0 - 5.0 * err
         return max(0.0, 0.9 * (0.20 - err) / 0.18)
 
-    return sum(one(x, y) for x, y in zip(sorted(box), sorted(truth_box))) / 3
+    return min(one(x, y) for x, y in zip(sorted(box), sorted(truth_box)))
 
 
 def genus(solid) -> int:
@@ -160,8 +165,8 @@ def genus(solid) -> int:
 
 
 def hole_score(count: int, truth: int) -> float:
-    """1 when the count is right; every missing or extra through-hole costs one share of the truth's holes."""
-    return max(0.0, 1.0 - abs(count - truth) / max(truth, 1))
+    """1 when the count is right, else the smaller count over the larger: 0 as soon as one side has no hole."""
+    return 1.0 if count == truth else min(count, truth) / max(count, truth)
 
 
 def _occupancy(solid, origin, cell: float, shape: tuple[int, int, int]):
@@ -373,7 +378,7 @@ def main() -> int:
     parser.add_argument("--only", nargs="*", help="case names, e.g. test_case_12")
     parser.add_argument("--limit", type=int)
     parser.add_argument("--offset", type=int, default=0)
-    parser.add_argument("--engine", default=os.environ.get("AGENT_ENGINE") or "hull", choices=["hull", "graph", "legacy"])
+    parser.add_argument("--engine", default=os.environ.get("AGENT_ENGINE") or "hull", choices=["hull", "flow", "graph", "legacy"])
     parser.add_argument("--no-llm", action="store_true", help="hull engine: deterministic stages only")
     parser.add_argument("--budget", type=float, help="AGENT_TIME_BUDGET_S for the whole run (default: 120 s per case)")
     parser.add_argument("--run-id", help="name of the run directory under runs/ (default: eval_<timestamp>)")

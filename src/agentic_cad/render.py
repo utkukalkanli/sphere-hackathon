@@ -80,6 +80,36 @@ def silhouette_iou(verts, tris, view, ref_mask: np.ndarray, target_bbox) -> floa
     return float(np.logical_and(cand, ref_mask).sum() / union) if union else None
 
 
+def _fitted(mask: np.ndarray, size: int) -> np.ndarray | None:
+    ys, xs = np.where(mask)
+    if not len(xs) or xs.max() == xs.min() or ys.max() == ys.min():
+        return None
+    box = Image.fromarray(mask[ys.min():ys.max() + 1, xs.min():xs.max() + 1].astype(np.uint8) * 255)
+    return np.asarray(box.resize((size, size), Image.BILINEAR)) > 127
+
+
+def outline_iou(verts, tris, view, ref_mask: np.ndarray, size: int = 256) -> float | None:
+    """IoU between the candidate's outline and a reference view, each stretched to fill its own pixel box.
+
+    For the iso views, where the mm->px scale of the reference is not known: the reference is an orthographic
+    picture along the same direction, so the two outlines differ in shape only where the solids do. It says
+    nothing about size, which the orthographic views already pin down."""
+    _, direction, up_hint, _ = view
+    _, right, up = view_basis(direction, up_hint)
+    u, v = verts @ right, verts @ up
+    span = max(u.max() - u.min(), v.max() - v.min(), 1e-9)
+    canvas = 3 * size
+    scale = canvas * 0.9 / span
+    px = canvas / 2 + (u - (u.max() + u.min()) / 2) * scale
+    py = canvas / 2 - (v - (v.max() + v.min()) / 2) * scale
+    cand = _fitted(_draw_mask(np.stack([px, py], axis=1)[tris], canvas), size)
+    ref = _fitted(ref_mask, size)
+    if cand is None or ref is None:
+        return None
+    union = np.logical_or(cand, ref).sum()
+    return float(np.logical_and(cand, ref).sum() / union) if union else None
+
+
 def shaded_tile(verts, tris, view, size: int) -> Image.Image:
     """Flat-shaded orthographic picture of the mesh, painter's algorithm, fitted to the tile."""
     _, direction, up_hint, _ = view

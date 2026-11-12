@@ -24,9 +24,13 @@ score = 0.30 · volume + 0.30 · surface + 0.20 · dimensions + 0.20 · holes
 - 40 % of the score (dimensions + holes) is exact bookkeeping: the bounding box must match `facts.json`, and the
   number of through-holes must equal `through_holes_genus`. A missing or an extra through-hole costs the same.
 - Volume overlap and surface match reward putting material in the right place, not matching the volume number.
-- `scripts/eval.py` computes all four terms and the weighted score, but the organisers' scorer is not in this
-  repository yet, so the curves are our reading of the slide: surface is an F-score of sampled surface points
-  averaged over thresholds of 0.5, 1, 2, 5 and 10 % of the bounding-box diagonal; dimensions is a line through
-  (0 %, 1), (2 %, 0.9) and (20 %, 0) per extent, averaged; holes loses one share of the truth's hole count per
-  missing or extra hole. The pair is compared in the output's own frame, without the rotation alignment the
-  organisers apply.
+- `scripts/eval.py` computes all four terms and the weighted score. The organisers' scorer is not in this
+  repository, so the curves are our reading of the slide, chosen as the one that reproduces the deck's
+  calibration table best (`tools/scorer_calibration`, 15 eval parts, 2026-11-12): surface is the smaller of
+  the two shares of sampled surface points that lie within a threshold of the other surface, averaged over
+  8 thresholds from 0.5 to 10 % of the mean bounding-box extent; dimensions is the worst extent on a line
+  through (0 %, 1), (2 %, 0.9) and (20 %, 0); holes is 1 for the right count, else the smaller count over the
+  larger. Medians, ours against the deck: 2 % too large 0.89 / 0.90, 5 % too long 0.87 / 0.88, 10 % too large
+  0.60 / 0.62, convex hull 0.53 / 0.51, a different part 0.02 / 0.04, bounding box 0.47 / 0.32 (still too
+  kind there). The pair is compared in the output's own frame, without the rotation alignment the organisers
+  apply.

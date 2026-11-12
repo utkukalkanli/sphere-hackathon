@@ -108,16 +108,19 @@ def tessellate(solid):
 
     bb = solid.BoundingBox()
     tolerance = max(bb.DiagonalLength / 1500, 0.01)
+    # 0.1 rad between facets keeps the outline of a round face within 0.13 % of its radius; at 0.35 a cylinder
+    # is drawn up to 1.5 % too narrow, which costs a turned part more silhouette match than a real error does
+    angular = 0.1
     for _ in range(4):
-        verts, tris = solid.tessellate(tolerance, 0.35)
+        verts, tris = solid.tessellate(tolerance, angular)
         if len(tris) <= MAX_TRIANGLES:
             break
-        tolerance *= 2.5
+        tolerance, angular = tolerance * 2.5, min(0.35, angular * 1.9)
     return np.array([v.toTuple() for v in verts], dtype=float), np.array(tris, dtype=int)
 
 
 def run(script: Path, out_dir: Path, case_dir: Path | None, stem: str, image_size: int, tile: int,
-        base: Path | None = None) -> dict:
+        base: Path | None = None, bbox: list[float] | None = None) -> dict:
     started = time.time()
     report: dict = {"ok": False, "error": None, "notes": []}
     try:
@@ -169,8 +172,8 @@ def run(script: Path, out_dir: Path, case_dir: Path | None, stem: str, image_siz
                             refs[name] = path
                             break
             facts_path = case_dir / "facts.json" if case_dir else None
-            target_bbox = None
-            if facts_path and facts_path.is_file():
+            target_bbox = list(bbox) if bbox else None   # the caller's envelope (read from the brief) wins
+            if target_bbox is None and facts_path and facts_path.is_file():
                 box = json.loads(facts_path.read_text()).get("bounding_box_mm") or {}
                 if all(k in box for k in "xyz"):
                     target_bbox = [float(box["x"]), float(box["y"]), float(box["z"])]
@@ -183,6 +186,14 @@ def run(script: Path, out_dir: Path, case_dir: Path | None, stem: str, image_siz
                         if value is not None:
                             iou[view[0]] = round(value, 4)
                 report["iou"] = iou
+            iso = {}
+            for view in render.VIEWS:      # not part of the rank: only used to choose between hulls
+                if view[0] in refs and not view[3]:
+                    value = render.outline_iou(verts, tris, view, render.reference_mask(refs[view[0]], 2 * image_size))
+                    if value is not None:
+                        iso[view[0]] = round(value, 4)
+            if iso:
+                report["iso_iou"] = iso
             if refs and tile:
                 report["sheets"] = [p.name for p in render.comparison_sheets(verts, tris, refs, tile, out_dir, stem)]
         except Exception as exc:  # rendering is feedback only: never lose a good solid over it
@@ -205,9 +216,11 @@ def main() -> int:
     parser.add_argument("--image-size", type=int, default=384)
     parser.add_argument("--tile", type=int, default=320)
     parser.add_argument("--base", type=Path, default=None, help="STEP file made available to the script as `base`")
+    parser.add_argument("--bbox", default=None, help="target envelope 'x,y,z' in mm; default: the case's facts.json")
     args = parser.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
-    report = run(args.script, args.out_dir, args.case_dir, args.stem, args.image_size, args.tile, args.base)
+    bbox = [float(v) for v in args.bbox.split(",")] if args.bbox else None
+    report = run(args.script, args.out_dir, args.case_dir, args.stem, args.image_size, args.tile, args.base, bbox)
     (args.out_dir / f"{args.stem}.json").write_text(json.dumps(report, indent=1))
     return 0
 

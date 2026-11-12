@@ -31,7 +31,7 @@ class Attempt:
 
 
 def run_script(script: Path, out_dir: Path, stem: str, case_dir: Path | None, settings: Settings,
-               timeout: float, base: Path | None = None) -> dict:
+               timeout: float, base: Path | None = None, bbox: list[float] | None = None) -> dict:
     """Execute a generated script in a separate process (agentic_cad.runner) and read its report."""
     command = [sys.executable, "-m", "agentic_cad.runner", str(script), str(out_dir), "--stem", stem,
                "--image-size", str(settings.mask_px), "--tile", str(settings.tile_px if settings.feedback_images else 0)]
@@ -39,6 +39,8 @@ def run_script(script: Path, out_dir: Path, stem: str, case_dir: Path | None, se
         command += ["--case-dir", str(case_dir)]
     if base is not None:
         command += ["--base", str(base)]
+    if bbox:
+        command += ["--bbox", ",".join(f"{v:g}" for v in bbox)]
     env = {**os.environ, "PYTHONPATH": os.pathsep.join(filter(None, [str(SRC_DIR), os.environ.get("PYTHONPATH")]))}
     report_path = out_dir / f"{stem}.json"
     report_path.unlink(missing_ok=True)
@@ -75,6 +77,9 @@ class CadAgent:
         s = self.settings
         if s.engine == "hull":
             from agentic_cad.pipeline import run_case
+            return run_case(s, name, case_dir, description, views, context, output_path, deadline, trace)
+        if s.engine == "flow":
+            from agentic_cad.flow import run_case
             return run_case(s, name, case_dir, description, views, context, output_path, deadline, trace)
         if s.engine == "graph":
             from agentic_cad.graph import run_case
@@ -175,7 +180,9 @@ def make_attempt(number: int, code: str, work: Path, case_dir: Path, facts: dict
     script = work / f"{stem}.py"
     script.write_text(code)
     step.artifact(script)
-    report = run_script(script, work, stem, case_dir, settings, timeout, base)
+    box = facts.get("bounding_box_mm") or {}
+    bbox = [float(box[k]) for k in "xyz"] if all(k in box for k in "xyz") else None
+    report = run_script(script, work, stem, case_dir, settings, timeout, base, bbox)
     evaluation = evaluate(report, facts)
     step_path = work / report["step"] if report.get("ok") and report.get("step") else None
     if step_path is not None:
@@ -201,12 +208,14 @@ def publish(attempt: Attempt, output_path: Path, step) -> None:
              f"score {attempt.evaluation.score:.3f})")
 
 
-def load_facts(case_dir: Path, description: str) -> dict:
+def load_facts(case_dir: Path, description: str, use_file: bool = True) -> dict:
+    """facts.json when the case has one (the practice sets do, hidden parts do not), else what the brief states.
+    Whatever the file leaves out is filled in from the brief."""
     facts: dict = {}
     facts_path = case_dir / "facts.json"
-    if facts_path.is_file():
+    if use_file and facts_path.is_file():
         try:
             facts = json.loads(facts_path.read_text())
         except json.JSONDecodeError:
             pass
-    return facts or facts_from_description(description)
+    return {**facts_from_description(description), **facts}

@@ -33,6 +33,7 @@ const S = {
   dataset: null, caseName: null, runId: null,  // runId '' = committed outputs / no run
   image: DEFAULT_VIEW,
   sel: null,  // the step whose solid is shown; null = follow the latest
+  engines: [], engine: 'default',  // presets offered by the server, and the one the next run uses
   diff: false,  // the big view shows the difference to the ground truth instead of the solid
 };
 const traces = new Map();  // "<run>/<case>" -> { events, loading, loaded, failed }
@@ -251,6 +252,7 @@ function toggleDiff() {
   renderSteps(c);
 }
 try { S.diff = localStorage.getItem('diff') === 'on'; } catch { /* private mode */ }
+try { S.engine = localStorage.getItem('engine') || 'default'; } catch { /* private mode */ }
 
 function toggleFaces() {
   setFaces(!faces());
@@ -325,12 +327,17 @@ function renderBar() {
       <select id="run-select">
         <option value="">${ds && ds.committed ? 'Committed outputs' : 'None'}</option>
         ${datasetRuns().map((r) => `<option value="${esc(r.id)}" ${r.id === S.runId ? 'selected' : ''}>
-          ${esc(`${clock(r.started_at)} · ${r.cases.length} case${r.cases.length === 1 ? '' : 's'} · ${r.status}`)}</option>`).join('')}
+          ${esc(`${clock(r.started_at)} · ${r.cases.length} case${r.cases.length === 1 ? '' : 's'} · ${r.status}${r.engine && r.engine !== 'default' ? ` · ${r.engine}` : ''}`)}</option>`).join('')}
       </select>
     </label>
     <span class="spacer"></span>
     <span class="offline-note">Dashboard server is not responding</span>
     ${running && run.launched_by === 'ui' ? `<button data-action="stop">${ICON.stop}Stop</button>` : ''}
+    <label class="field"><span>Engine</span>
+      <select id="engine-select" title="Engine the next run uses">
+        ${S.engines.map((e) => `<option value="${esc(e.id)}" ${e.id === S.engine ? 'selected' : ''}>${esc(e.label)}</option>`).join('')}
+      </select>
+    </label>
     <button class="primary" data-action="run" title="Run scripts/main.py on this case with tracing">${ICON.play}Run this case</button>`);
 }
 
@@ -854,7 +861,7 @@ document.addEventListener('click', async (event) => {
   if (d.sel) return selectStep(d.sel);
   if (d.action === 'run') {
     try {
-      const { id } = await api('/api/run', { dataset: S.dataset, only: [S.caseName], target: 'run' });
+      const { id } = await api('/api/run', { dataset: S.dataset, only: [S.caseName], target: 'run', engine: S.engine });
       started = id;
       Object.assign(S, { runId: id, sel: null });
       await poll();
@@ -875,6 +882,10 @@ document.addEventListener('input', (event) => {
 document.addEventListener('change', (event) => {
   const el = event.target;
   if (el.id === 'case-select') { const [ds, name] = el.value.split('/'); selectCase(name, ds); }
+  else if (el.id === 'engine-select') {
+    S.engine = el.value;
+    try { localStorage.setItem('engine', S.engine); } catch { /* private mode */ }
+  }
   else if (el.id === 'run-select') {
     Object.assign(S, { runId: el.value, sel: null });
     const run = currentRun();  // a run of other cases: go to its first case
@@ -908,7 +919,8 @@ async function poll() {
   try {
     const state = await api('/api/state');
     const wasRunning = S.runs.filter((r) => r.status === 'running').map((r) => r.id);
-    Object.assign(S, { datasets: state.datasets, runs: state.runs, now: state.now });
+    Object.assign(S, { datasets: state.datasets, runs: state.runs, now: state.now, engines: state.engines || [] });
+    if (!S.engines.some((e) => e.id === S.engine)) S.engine = 'default';
     normalise();
     await ensureCases(wasRunning.some((id) => (S.runs.find((r) => r.id === id) || {}).status !== 'running'));
     render();

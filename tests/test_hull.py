@@ -110,3 +110,62 @@ def test_deterministic_stages_write_a_hull_with_the_located_bore(case_dir, tmp_p
     assert abs(summary["volume_err"]) < 0.03
     solid = cq.importers.importStep(str(output)).val()
     assert len(solid.Solids()) == 1 and solid.isValid()
+
+
+FILES_8 = {"front": "view_0_front.png", "back": "view_1_back.png", "left": "view_2_left.png",
+           "right": "view_3_right.png", "top": "view_4_top.png", "bottom": "view_5_bottom.png",
+           "iso_front_right_top": "view_6_iso_front_right_top.png",
+           "iso_back_left_bottom": "view_7_iso_back_left_bottom.png"}
+
+
+def write_case(root: Path, body: cq.Workplane, box: dict) -> Path:
+    (root / "images").mkdir(parents=True)
+    solid = body.val()
+    verts, tris = tessellate(solid)
+    for view in render.VIEWS:
+        render.shaded_tile(verts, tris, view, 768).save(root / "images" / FILES_8[view[0]])
+    (root / "facts.json").write_text(json.dumps({"bounding_box_mm": box, "volume_mm3": solid.Volume(),
+                                                 "surface_area_mm2": solid.Area()}))
+    return root
+
+
+def hull_stage(case: Path, tmp_path: Path, monkeypatch) -> dict:
+    monkeypatch.setenv("AGENT_LLM_STAGE", "0")
+    monkeypatch.setenv("AGENT_FEEDBACK_IMAGES", "0")
+    monkeypatch.delenv("TRACE", raising=False)
+    output = tmp_path / "out" / f"{case.name}.stp"
+    summary = pipeline.run_case(Settings.from_env(), case.name, case, "# Part\n",
+                                sorted((case / "images").glob("view_*.png")), None, output,
+                                time.time() + 120, Tracer().case(case.name))
+    assert summary["written"] and summary["status"] == "ok"
+    return {**summary, "solid": cq.importers.importStep(str(output)).val()}
+
+
+def test_a_turned_part_gets_a_revolved_hull(tmp_path, monkeypatch):
+    """Flange, cone and cap about Z with a bore through: three flat extrusions make a square pyramid of it."""
+    profile = [(0, 0), (0, 30), (8, 30), (8, 24), (40, 12), (40, 16), (50, 16), (50, 0)]
+    body = cadlib.revolve("z", profile, 30, 30).cut(cadlib.cyl("z", 8, -1, 51, 30, 30))
+    box = {"x": 60.0, "y": 60.0, "z": 50.0}
+    case = write_case(tmp_path / "test_case_2", body, box)
+    views = {name: case / "images" / FILES_8[name] for name in hull.HULL_VIEWS}
+    assert [label for label, _ in hull.revolve_candidates(views, hull.view_outlines(views, box), box)] == ["revolve z"]
+    result = hull_stage(case, tmp_path, monkeypatch)
+    assert abs(result["volume_err"]) < 0.03             # the flat hull is 20 % too heavy
+    assert result["solid"].isValid() and cadlib.through_holes(result["solid"]) == 1
+    assert any(face.geomType() == "CONE" for face in result["solid"].Faces())
+
+
+def test_a_square_boss_on_a_round_flange_keeps_the_flat_hull(tmp_path, monkeypatch):
+    """Round from above and the same symmetric outline from the front and the right, but not turned: the iso
+    views show the corners of the boss, which a revolved hull would cut off."""
+    body = cadlib.cyl("z", 60, 0, 10, 30, 30).union(cadlib.box(12, 12, 10, 48, 48, 40))
+    box = {"x": 60.0, "y": 60.0, "z": 40.0}
+    case = write_case(tmp_path / "test_case_3", body, box)
+    views = {name: case / "images" / FILES_8[name] for name in hull.HULL_VIEWS}
+    assert hull.revolve_candidates(views, hull.view_outlines(views, box), box)     # the three views cannot tell
+    result = hull_stage(case, tmp_path, monkeypatch)
+    assert abs(result["volume_err"]) < 0.03
+    assert not any(face.geomType() == "CONE" for face in result["solid"].Faces())
+    truth = body.val()
+    union = result["solid"].fuse(truth).Volume()
+    assert (result["solid"].Volume() + truth.Volume() - union) / union > 0.95

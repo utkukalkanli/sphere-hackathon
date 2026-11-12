@@ -139,6 +139,125 @@ def hull_candidates(outlines: dict[str, list], bbox: dict) -> list[tuple[str, st
     return out
 
 
+# -- hull of a turned part --------------------------------------------------------------------------
+
+# axis of revolution -> (view that looks along it, the two views that show it in profile with the screen
+# direction the axis runs along in each: "u" = to the right, "v" = up)
+REVOLVE_VIEWS = {
+    "z": ("top", (("front", "v"), ("right", "v"))),
+    "y": ("front", (("top", "v"), ("right", "u"))),
+    "x": ("right", (("front", "u"), ("top", "u"))),
+}
+DISC_IOU = 0.985        # the outline seen along the axis must fill its inscribed circle this well
+ROUND_TOL = 0.015       # extents across the axis may differ by this much, relative
+PROFILE_TOL = 0.02      # the four half-profiles may differ by this fraction of the diameter (95th percentile)
+PROFILE_SAMPLES = 1024
+
+
+def _cropped(mask: np.ndarray) -> np.ndarray | None:
+    ys, xs = np.where(mask)
+    if not len(xs) or xs.max() == xs.min() or ys.max() == ys.min():
+        return None
+    return mask[ys.min():ys.max() + 1, xs.min():xs.max() + 1]
+
+
+def _is_disc(mask: np.ndarray) -> bool:
+    """True when the outline of a view (openings filled) is the circle inscribed in its pixel box."""
+    import cv2
+
+    contours, _ = cv2.findContours(mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    filled = np.zeros(mask.shape, dtype=np.uint8)
+    cv2.drawContours(filled, contours, -1, 1, thickness=cv2.FILLED)
+    h, w = mask.shape
+    yy, xx = np.mgrid[0:h, 0:w]
+    disc = ((xx - (w - 1) / 2) / (w / 2)) ** 2 + ((yy - (h - 1) / 2) / (h / 2)) ** 2 <= 1.0
+    union = np.logical_or(disc, filled > 0).sum()
+    return bool(union) and np.logical_and(disc, filled > 0).sum() / union >= DISC_IOU
+
+
+def _half_profiles(mask: np.ndarray, along: str, across_mm: float) -> tuple[np.ndarray, np.ndarray]:
+    """Distance in mm from the centre line to the outline on either side of it, at PROFILE_SAMPLES positions
+    from the low to the high end of the axis, which runs up ("v") or to the right ("u") in this view."""
+    m = mask[::-1].T if along == "v" else mask      # rows: across the axis; columns: along it, low to high
+    m = m if along == "v" else m[::-1]
+    n_across, n_along = m.shape
+    scale = across_mm / (n_across - 1)
+    any_ = m.any(axis=0)
+    low = np.where(any_, m.argmax(axis=0), (n_across - 1) / 2)
+    high = np.where(any_, n_across - 1 - m[::-1].argmax(axis=0), (n_across - 1) / 2)
+    centre = (n_across - 1) / 2
+    at = np.linspace(0, n_along - 1, PROFILE_SAMPLES)
+    columns = np.arange(n_along)
+    return (np.interp(at, columns, (centre - low) * scale), np.interp(at, columns, (high - centre) * scale))
+
+
+def revolve_profile(views: dict[str, Path], bbox: dict, axis: str, tol_px: float = 0.75):
+    """(position along `axis`, radius) polygon of the solid of revolution whose outlines are the views', or
+    None when the views do not show one: the view along the axis must be a disc and the two views across it
+    must show the same outline, symmetric about the axis."""
+    import cv2
+
+    end_view, side_views = REVOLVE_VIEWS[axis]
+    others = [k for k in "xyz" if k != axis]
+    try:
+        length, d1, d2 = float(bbox[axis]), float(bbox[others[0]]), float(bbox[others[1]])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if min(length, d1, d2) <= 0 or abs(d1 - d2) > ROUND_TOL * max(d1, d2):
+        return None
+    paths = [views.get(name) for name in (end_view, side_views[0][0], side_views[1][0])]
+    if any(path is None or not Path(path).is_file() for path in paths):
+        return None
+    masks = [_cropped(view_mask(Path(path))) for path in paths]
+    if any(mask is None for mask in masks) or not _is_disc(masks[0]):
+        return None
+    diameter = (d1 + d2) / 2
+    halves = []
+    for mask, (_, along) in zip(masks[1:], side_views):
+        halves += _half_profiles(mask, along, diameter)
+    halves = np.array(halves)
+    if np.percentile(halves.max(axis=0) - halves.min(axis=0), 95) > PROFILE_TOL * diameter:
+        return None
+    radius = np.clip(halves.mean(axis=0), 0.0, diameter / 2)
+    if radius.min() <= 0:
+        return None
+    position = np.linspace(0.0, length, PROFILE_SAMPLES)
+    px = length / (max(masks[1].shape) - 1)          # about one pixel in mm
+    curve = np.stack([position, radius], axis=1).astype(np.float32).reshape(-1, 1, 2)
+    points = cv2.approxPolyDP(curve, tol_px * px, False).reshape(-1, 2)
+    profile = [(0.0, 0.0)] + [(round(float(a), 3), round(float(r), 3)) for a, r in points] + [(length, 0.0)]
+    return profile if len(profile) >= 4 else None
+
+
+def revolve_script(profile: list, outlines: dict[str, list], bbox: dict, axis: str) -> str:
+    """Script of the revolved hull: the profile turned about the axis through the middle of the envelope, with
+    every opening that an outline shows cut through it."""
+    x, y, z = (float(bbox[k]) for k in "xyz")
+    c1, c2 = (float(bbox[k]) / 2 for k in "xyz" if k != axis)
+    lines = [f"# hull of a turned part: the outline is a circle along {axis.upper()} and the same symmetric profile "
+             "in the two other views, so the profile is revolved instead of intersecting flat extrusions",
+             f"X, Y, Z = {x:g}, {y:g}, {z:g}",
+             f"result = revolve('{axis}', {_pts(profile)}, {c1:g}, {c2:g})"]
+    for name, polygons in outlines.items():
+        plane, _, _, along = HULL_VIEWS[name]
+        for _, holes in polygons:
+            for hole in holes:
+                lines.append(f"result = result.cut(prism('{plane}', {_pts(hole)}, -1, {along.upper()} + 1))"
+                             f"   # opening in the {name} view")
+    return "\n".join(lines) + "\n"
+
+
+def revolve_candidates(views: dict[str, Path], outlines: dict[str, list], bbox: dict,
+                       tol_px: float = 0.75) -> list[tuple[str, str]]:
+    """(label, script) for every principal axis the views show the part to be turned about."""
+    out = []
+    for axis in "zyx":
+        profile = revolve_profile(views, bbox, axis, tol_px)
+        if profile:
+            out.append((f"revolve {axis}", revolve_script(profile, outlines, bbox, axis)))
+    return out
+
+
 # -- features straight from the facts sheet --------------------------------------------------------
 
 def _axis_vector(axis: str):
@@ -187,3 +306,55 @@ def bore_cuts(facts: dict) -> list[tuple[str, str]]:
                 p1 = tuple(round(c + half * a, 3) for c, a in zip((cx, cy, cz), axis))
                 cuts.append((label, f"cyl_between({diameter:g}, {p0}, {p1})"))
     return cuts
+
+
+# -- is a hole see-through? ---------------------------------------------------------------------------
+
+# axis of the hole -> views that look along it: (view name, axis shown to the right, +1 if it grows to the
+# right else -1, axis shown up, +1 if it grows upwards else -1)
+_ALONG = {
+    "x": [("right", "y", 1, "z", 1), ("left", "y", -1, "z", 1)],
+    "y": [("front", "x", 1, "z", 1), ("back", "x", -1, "z", 1)],
+    "z": [("top", "x", 1, "y", 1), ("bottom", "x", 1, "y", -1)],
+}
+
+
+def daylight(views: dict[str, Path], bbox: dict, axis: str, centre, diameter: float, part: float = 0.6) -> float | None:
+    """Largest share of background pixels, over the views that look along `axis`, inside the disc of
+    `part` x diameter round the hole's centre. None when no such view exists."""
+    axis = str(axis).lower()
+    answers = []
+    for name, right, right_sign, up, up_sign in _ALONG.get(axis, []):
+        path = views.get(name)
+        if path is None or not Path(path).is_file():
+            continue
+        mask = view_mask(Path(path))
+        ys, xs = np.where(mask)
+        if not len(xs):
+            continue
+        x0, x1, y0, y1 = xs.min(), xs.max() + 1, ys.min(), ys.max() + 1
+        width, height = float(bbox[right]), float(bbox[up])
+        if width <= 0 or height <= 0:
+            continue
+        u, v = float(centre["xyz".index(right)]), float(centre["xyz".index(up)])
+        fu = u / width if right_sign > 0 else 1.0 - u / width
+        fv = v / height if up_sign > 0 else 1.0 - v / height
+        px, py = x0 + fu * (x1 - x0), y1 - fv * (y1 - y0)
+        radius = max(1.5, 0.5 * part * diameter * ((x1 - x0) / width + (y1 - y0) / height) / 2)
+        yy, xx = np.ogrid[:mask.shape[0], :mask.shape[1]]
+        disc = (xx - px) ** 2 + (yy - py) ** 2 <= radius ** 2
+        if not disc.any():
+            continue
+        answers.append(float((~mask[disc]).mean()))
+    return max(answers) if answers else None
+
+
+def see_through(views: dict[str, Path], bbox: dict, axis: str, centre, diameter: float) -> bool | None:
+    """Whether the reference views show daylight through a hole along a principal axis: True when the middle of
+    the hole is background in a view that looks along it, False when it is part, None when no such view exists.
+
+    A drilled hole that the brief calls "through" but that ends in a drill point (or is covered by material
+    further along) is part-coloured in the view; cutting it through the whole part would open a passage the
+    part does not have."""
+    share = daylight(views, bbox, axis, centre, diameter)
+    return None if share is None else share >= 0.6
