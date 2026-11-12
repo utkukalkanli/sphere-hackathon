@@ -13,3 +13,7 @@ datasets/.venv/
 
 # Pipeline traces for the dashboard (ui/)
 runs/
+
+# Editor and local tool settings
+.idea/
+.impeccable/
