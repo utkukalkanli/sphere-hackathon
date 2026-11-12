@@ -1,22 +1,33 @@
 #!/usr/bin/env bash
-# Starts the LLM + VLM vLLM servers on the Brev GPU box, each in its own tmux session.
+# Starts the vLLM server(s) on the Brev GPU box, each in its own tmux session.
+#
+# Default: one multimodal model (Gemma 4 31B FP8) on the whole GPU; it reads the views itself,
+# so no separate vision model runs. Set VLM_MODEL to serve a second model next to it, and lower
+# LLM_GPU_UTIL so both fit, e.g. the earlier Qwen pair:
+#   LLM_MODEL=Qwen/Qwen3-30B-A3B-FP8 LLM_GPU_UTIL=0.55 \
+#   LLM_EXTRA_ARGS="--enable-auto-tool-choice --tool-call-parser hermes" \
+#   VLM_MODEL=Qwen/Qwen2.5-VL-7B-Instruct scripts/serve_models.sh
 #
 #   scripts/serve_models.sh            # start (no-op for servers already running)
-#   scripts/serve_models.sh status     # show health of both servers
-#   scripts/serve_models.sh stop       # stop both servers
+#   scripts/serve_models.sh status     # show health of the servers
+#   scripts/serve_models.sh stop       # stop the servers
 #   scripts/serve_models.sh restart
 #
-# Both servers expose an OpenAI-compatible API:
+# Each server exposes an OpenAI-compatible API:
 #   LLM  http://localhost:${LLM_PORT}/v1
-#   VLM  http://localhost:${VLM_PORT}/v1
+#   VLM  http://localhost:${VLM_PORT}/v1   (only when VLM_MODEL is set)
 # Override any setting below via env vars, e.g. LLM_MODEL=... scripts/serve_models.sh
 set -euo pipefail
 
-LLM_MODEL="${LLM_MODEL:-Qwen/Qwen3-30B-A3B-FP8}"
+# The BF16 google/gemma-4-31B-it takes 59 GB and leaves too little KV cache for a 32K context
+# on one H100 80 GB; the FP8 build (32 GB) fits.
+LLM_MODEL="${LLM_MODEL:-RedHatAI/gemma-4-31B-it-FP8-block}"
 LLM_PORT="${LLM_PORT:-8000}"
-LLM_GPU_UTIL="${LLM_GPU_UTIL:-0.55}"
+LLM_GPU_UTIL="${LLM_GPU_UTIL:-0.90}"
+# Extra `vllm serve` flags for the LLM, as one shell-quoted string.
+LLM_EXTRA_ARGS="${LLM_EXTRA_ARGS-"--limit-mm-per-prompt '{\"image\": 10, \"video\": 0}'"}"
 
-VLM_MODEL="${VLM_MODEL:-Qwen/Qwen2.5-VL-7B-Instruct}"
+VLM_MODEL="${VLM_MODEL:-}" # empty = no second server
 VLM_PORT="${VLM_PORT:-8001}"
 VLM_GPU_UTIL="${VLM_GPU_UTIL:-0.33}"
 
@@ -58,15 +69,15 @@ wait_ready() { # name port
   echo " ready"
 }
 
-start_one() { # name port model gpu_util [extra vllm args...]
-  local name=$1 port=$2 model=$3 util=$4; shift 4
+start_one() { # name port model gpu_util [extra vllm args, one shell-quoted string]
+  local name=$1 port=$2 model=$3 util=$4 extra=${5:-}
   if is_healthy "$port"; then
     echo "$name already running on :$port"
     return
   fi
   tmux kill-session -t "$name" 2>/dev/null || true
   tmux new-session -d -s "$name" \
-    "vllm serve $model --port $port --gpu-memory-utilization $util --max-model-len $MAX_MODEL_LEN $* 2>&1 | tee $LOG_DIR/$name.log"
+    "vllm serve $model --port $port --gpu-memory-utilization $util --max-model-len $MAX_MODEL_LEN $extra 2>&1 | tee $LOG_DIR/$name.log"
   wait_ready "$name" "$port"
 }
 
@@ -74,9 +85,10 @@ start() {
   ensure_deps
   # Start sequentially: vLLM sizes its KV cache by profiling free GPU memory,
   # and two servers profiling at once miscount each other's usage.
-  start_one llm "$LLM_PORT" "$LLM_MODEL" "$LLM_GPU_UTIL" \
-    --enable-auto-tool-choice --tool-call-parser hermes
-  start_one vlm "$VLM_PORT" "$VLM_MODEL" "$VLM_GPU_UTIL"
+  start_one llm "$LLM_PORT" "$LLM_MODEL" "$LLM_GPU_UTIL" "$LLM_EXTRA_ARGS"
+  if [[ -n "$VLM_MODEL" ]]; then
+    start_one vlm "$VLM_PORT" "$VLM_MODEL" "$VLM_GPU_UTIL"
+  fi
   status
 }
 
@@ -89,6 +101,7 @@ stop() {
 status() {
   for pair in "llm:$LLM_PORT:$LLM_MODEL" "vlm:$VLM_PORT:$VLM_MODEL"; do
     IFS=: read -r name port model <<<"$pair"
+    [[ -n "$model" ]] || continue
     if is_healthy "$port"; then s=UP; else s=DOWN; fi
     printf '%-4s %-5s http://localhost:%s/v1  %s\n' "$name" "$s" "$port" "$model"
   done
