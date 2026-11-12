@@ -15,6 +15,7 @@ from agentic_cad import spans
 from agentic_cad import iso_support
 from agentic_cad import outline_fit as of
 from agentic_cad import pockets
+from agentic_cad import propose
 from OCP.BRepBuilderAPI import BRepBuilderAPI_Copy
 
 from agentic_cad import curved
@@ -56,14 +57,16 @@ HOLES_TIMEOUT = float(os.environ.get("HULL_HOLES_TIMEOUT", 40))
 RETRY_BUDGET = float(os.environ.get("HULL_RETRY_BUDGET", 20))
 
 
-# Steps after the holes, in order; HULL_SKIP=rounds,curved,depth,shading,pockets,split switches some off.
+# Steps after the holes, in order; HULL_SKIP=rounds,curved,depth,model,shading,pockets,split switches some off.
+# "model" (propose.py) does nothing unless an endpoint is configured; it comes before the fine cuts,
+# because a large structural cut lowers the precision every later cut needs.
 # "split" moves no material and must stay last: a later cut or merge would undo it.
-LATER_STEPS = {"rounds": rounds, "curved": curved, "depth": depth, "shading": shading, "pockets": pockets,
-               "split": split}
+LATER_STEPS = {"rounds": rounds, "curved": curved, "depth": depth, "model": propose, "shading": shading,
+               "pockets": pockets, "split": split}
 SKIP_STEPS = {name for name in os.environ.get("HULL_SKIP", "").split(",") if name}
 # The name each later step gives its trace step, for the plan the dashboard shows before anything has run
-STEP_NAMES = {"rounds": "cut_rounds", "curved": "cut_curved", "depth": "level_faces", "shading": "shading_depth",
-              "pockets": "cut_pockets", "split": "split_faces"}
+STEP_NAMES = {"rounds": "cut_rounds", "curved": "cut_curved", "depth": "level_faces", "model": "model_cuts",
+              "shading": "shading_depth", "pockets": "cut_pockets", "split": "split_faces"}
 
 
 class VisualHullAgent:
@@ -81,6 +84,7 @@ class VisualHullAgent:
         self.keep_faces = False  # set by the split step: the export must not merge its faces again
         self.lines_found = None  # handed from the pockets step to the split step: the lines of an unchanged solid
         self._evidence = None  # what the inputs of the case in hand say (evidence.py)
+        self._output_path: Path | None = None  # where `refine` writes the case's answer, for `save`
         self._sound: bool | None = None  # whether the solid so far reads back valid from its file, if asked
 
     def evidence(self, case_dir: Path, dims: dict | None = None) -> "evidence_table.Evidence":
@@ -146,6 +150,15 @@ class VisualHullAgent:
             trace.log("the solid does not survive being written and read; the file is left as it was", level="warning")
         return self._sound
 
+    def save(self, solid) -> bool:
+        """For a step that accepts several cuts one after another: make `solid` the case's answer now
+        (export.checkpoint, onto the file `refine` was given). False: its file does not read back as
+        one valid solid, and the step should drop that cut."""
+        saved = export.checkpoint(solid, self._output_path, self.keep_faces)
+        if saved:
+            self._sound = True
+        return saved
+
     def state(self) -> dict:
         """What a case needs back (`resume`) when its later steps run after other cases' hulls."""
         return {"volumes": dict(self.volumes), "stage": self._stage, "sound": self._sound}
@@ -165,13 +178,23 @@ class VisualHullAgent:
         """Every step a case goes through, in order; "off" says why one is switched off for this run."""
         steps = [{"name": "bounding_box"}, *({"name": f"cut_{name}"} for name in vh.ORTHO)]
         steps.append({"name": "cut_iso"} if self.use_iso else {"name": "cut_iso", "off": "the isometric cut is switched off"})
+        steps.append({"name": "isometric_support", "off": "the isometric cut runs as a cut of its own"} if self.use_iso
+                     else {"name": "isometric_support"})
         steps.append({"name": "check_views"})
         steps.append({"name": "cut_holes"} if self.use_holes else {"name": "cut_holes", "off": "the hole step is switched off"})
+        if not self.use_holes:
+            steps.append({"name": "open_mouths", "off": "the hole step is switched off"})
+        elif not mouths.ENABLED:
+            steps.append({"name": "open_mouths", "off": "switched off with HULL_MOUTHS=0"})
+        else:
+            steps.append({"name": "open_mouths"})
         steps.append({"name": "evidence"})
         for name in LATER_STEPS:
             step = {"name": STEP_NAMES.get(name, name)}
             if name in SKIP_STEPS:
                 step["off"] = f"switched off with HULL_SKIP={name}"
+            elif name == "model" and not propose.enabled():
+                step["off"] = "no model endpoint is configured (OPENAI_BASE_URL, OPENAI_MODEL)"
             steps.append(step)
         return [*steps, {"name": "export_step"}]
 
@@ -184,6 +207,7 @@ class VisualHullAgent:
         (export.checkpoint; onto `output_path` if given, so a run that is killed keeps the steps
         done so far). A step whose solid does not survive that is dropped, it alone."""
         self.keep_faces, self.lines_found = False, None
+        self._output_path = output_path
         self._show_evidence(solid, case_dir)
         names = [name for name in LATER_STEPS if name not in skip and name not in SKIP_STEPS]
         for index, name in enumerate(names):
@@ -270,8 +294,13 @@ class VisualHullAgent:
                 step.log("every direction cut cleanly in this order; using this solid")
                 break
 
-        if (not self.use_iso and target and vh.volume(solid) > ISO_EXCESS * target and not self.out_of_time()
-                and time.time() - started < ISO_BUDGET):
+        if self.use_iso:
+            pass
+        elif not target or vh.volume(solid) <= ISO_EXCESS * target:
+            trace.skipped("isometric_support", f"the straight cuts left no more than {ISO_EXCESS:g} times the true volume")
+        elif self.out_of_time() or time.time() - started >= ISO_BUDGET:
+            trace.skipped("isometric_support", "the case had no time left for it")
+        else:
             solid, silhouettes = self._with_iso(box, solid, silhouettes, troubled, names, views, dims, target)
 
         with trace.step("check_views", kind="check") as step:

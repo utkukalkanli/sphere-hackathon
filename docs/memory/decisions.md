@@ -112,6 +112,11 @@ the entry and say what changed.
   pixels. If a cut with the fitted outline fails or goes below the true volume, that direction is
   cut again with the traced pixels.
 
+- **A model's cut needs the views to speak for it** (2026-11-12, plan phase 3). The steps' own
+  cuts are kept when the verifier does not object; a model's are guesses, so they go through the
+  local judge and must lower its error, not only leave it alone. A cut that no view sees stays out
+  even when it is right. The step is off until an endpoint is configured and the test on parts
+  with ground truth has been run.
 - **The later steps keep the verifier's score as their accept rule; the local rule is a switch**
   (2026-11-12, measurement: `state.md`, plan phase 1). On the cuts these steps propose the score
   rule kept no wrong cut that could be graded, and the local rule refused more than half of the
@@ -166,6 +171,11 @@ the entry and say what changed.
   description under each stop comes from a list in `ui/static/app.js` (`ABOUT`); a new step adds a
   line there or passes `description="..."` to `trace.step`. For the step to show on the slider
   before it has run, its trace name also goes into `STEP_NAMES` in `hull_agent.py` (2026-11-12).
+  For it to be a stop in runs traced before it existed too, its name goes into `STOPS` in
+  `ui/static/app.js`.
+- **Every case shows the same stops, whether a step ran or not** (2026-11-12, user: the steps
+  differed from case to case). A stop is a planned step; one that did not run is drawn as off,
+  skipped or not run, and steps outside the plan are folded into the stop they happened in.
 - **Tracing is off in the Docker image** (`ENV TRACE=0`) (2026-11-11). It is a development aid and
   the container may only write to the output directory and `/tmp`.
 

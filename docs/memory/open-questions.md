@@ -103,6 +103,15 @@ Remove a question when it is answered, and record the answer in `decisions.md` o
   nothing uses the flags: cuts from coplanar pairs gained 0.004 outside the parts they were
   developed on. They are meant for ordering proposals and as a model's input (plan phase 3). Not
   measured: how right the flags are against the ground truth.
+- **Does a served model's proposal raise the overlap?** (2026-11-12, plan phase 3 step 0.) The
+  step is built and off (`state.md`). Before it is switched on: an endpoint (`OPENAI_BASE_URL`,
+  `OPENAI_API_KEY`, `OPENAI_MODEL`), a hard set with ground truth (`tools/find_hard.py`, needs the
+  user's go: hull and holes on all 266 parts), and the test itself: mean IoU up and no part down by
+  more than 0.01, once with and once without telling the model the excess. Also unmeasured: how
+  long one request takes, and whether the model uses region_floor or free boxes.
+- **Is 0.2 % of a view's part the right outline tolerance for the judge?** (2026-11-12.) It is
+  step 1's tolerance, taken over so as not to pick a number on the practice parts. It was needed
+  for cuts of 8 to 46 px on practice 7 and 9, and lets 156 px through on practice 5.
 - **`context.png` is not used.** Is there anything in it worth using? It is absent for some parts.
 - **How deep is a blind hole that `facts.json` lists only as a span?** (2026-11-12, practice 8,
   `knowledge.md`.) `spans.py` cuts a blind hole from each end to half of the room it has (5.05 mm

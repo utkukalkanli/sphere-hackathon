@@ -14,9 +14,12 @@ eight views. Four errors per view:
 
 Pixels the cut does not reach have the same errors before and after, so the change of each sum is
 the judgement of the cut where it acts. A cut is accepted when the candidate is one valid solid,
-keeps the part's volume (MIN_VOLUME_SHARE of facts.json), tone + mask + shp does not rise, and mask
-alone does not rise (a large gain in tone must not buy a broken outline). rec is reported and not
-used: a line that the candidate still lacks says nothing about which side of it has to move.
+keeps the part's volume (MIN_VOLUME_SHARE of facts.json), tone + mask + shp does not rise, and the
+outline does not get worse in any view (a large gain in tone must not buy a broken outline): there
+mask may rise by no more than the share of the view's part that step 1 allows a silhouette cut to
+be off (vh.CHECK_AREA), which is what a boolean and the drawing differ by along an outline. rec is
+reported and not used: a line that the candidate still lacks says nothing about which side of it
+has to move.
 
 Whether the whole part's volume comes closer to the true one is reported and not asked: a right cut
 can move the total away from it when an error elsewhere was cancelling the excess
@@ -143,17 +146,19 @@ class Judge:
             return Verdict(False, "less than the part's volume would be left", **ratios)
         old, new = self.maps(base), self.maps(candidate)
         change = {"tone": 0.0, "mask": 0.0, "shp": 0.0, "rec": 0.0}
-        changed = 0
+        changed, outline_worse = 0, False
         for name in old:
             b, a = old[name], new[name]
             for key in change:
                 change[key] += float(a[key].sum(dtype=np.float64)) - float(b[key].sum(dtype=np.float64))
+            allowed = vh.CHECK_AREA * float(self.observed[name].mask.sum())
+            outline_worse |= float(a["mask"].sum()) - float(b["mask"].sum()) > allowed
             with np.errstate(invalid="ignore"):
                 moved = np.abs(np.where(a["drawn"] & b["drawn"], a["depth"] - b["depth"], 0.0)) > 0.5 * b["mm_per_px"]
             changed += int(((a["drawn"] != b["drawn"]) | moved).sum())
         verdict = Verdict(True, "", changed=changed, **change, **ratios)
-        if verdict.mask > SLACK:
-            verdict.accepted, verdict.reason = False, "the outline fits the views worse"
+        if outline_worse:
+            verdict.accepted, verdict.reason = False, "the outline fits a view worse"
         elif verdict.error > SLACK:
             verdict.accepted, verdict.reason = False, "the views fit worse where the cut is"
         return verdict

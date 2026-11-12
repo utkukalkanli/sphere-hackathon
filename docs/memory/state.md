@@ -132,6 +132,41 @@ Plan phase 2 (2026-11-12, uncommitted on `feat/phase0-safe-runs`): one evidence 
   faces per solid. Lowest: 51 (0.14), 99 (0.44), 171 (0.76), 236 (0.80), 110 (0.86). The last
   whole-pipeline run before that gave 0.885 and 0.882.
 
+Plan phase 3, the part that needs no model (2026-11-12, uncommitted on `feat/phase0-safe-runs`):
+
+- `src/agentic_cad/ops.py`: cuts as typed records (box, cylinder, prism, halfspace, and
+  region_floor: the column over a numbered region of the evidence table, down to a depth below
+  the box face). `src/agentic_cad/propose.py`: the step "model" in `LATER_STEPS`, after level
+  faces and before shading. One request per case to `OPENAI_BASE_URL` / `OPENAI_MODEL` (the six
+  straight views with their regions numbered, the two isometric views, `facts.json`, the brief, the
+  region table, the volume ratio unless `HULL_MODEL_TELL_VOLUME=0`); the answer is a list of
+  records. Each is cut, most confident first, and kept only if the local judge accepts it, the
+  views fit strictly better with it, and the file reads back (`agent.save`, a checkpoint per kept
+  cut). Refused ones are tried once more after the pass. A region_floor is tried at 0.5, 0.75, 1
+  and 1.25 times its depth and the shallowest accepted is kept.
+- **No endpoint is configured anywhere, so no model has been asked.** Without the variables the
+  step returns the solid untouched: the whole pipeline on the 23 eval parts and the 9 practice
+  parts gives the same volume after every step and the same faces as phase 2 (32 of 32).
+  `HULL_PROPOSALS=<dir>` reads `<dir>/test_case_<n>.json` instead of asking, for tests and replays.
+- Replay of the proposals of the research round (three large models standing in, written for
+  solids that have changed since; `runs/_research_scratch/round4_model/proposal_<n>.json`) through
+  `scripts/main.py`, our volume over the true one at the end of the pipeline, without and with the
+  step: practice 5 1.225 to 0.990 (18 of 18 kept), practice 7 1.913 to 1.316 (7 of 13), practice 9
+  1.205 to 1.123 (2 of 6). 28 to 57 s for the step. **This says the step runs, not that the cuts
+  are right**: there is no ground truth, the proposers were told the excess, and practice 5 ends
+  1 % under the true volume.
+- Two changes to the judge came out of the first replay. The outline may now get worse by up to
+  0.2 % of the view's part per view (`vh.CHECK_AREA`, the tolerance step 1 gives a silhouette
+  cut): with "not one pixel" the large pocket of practice 7 was refused for 8 px. And a model's
+  cut must make the views fit strictly better: two cuts that changed no pixel in any view had been
+  kept. The comparison of the rules in phase 1 was made with the strict outline rule.
+- Not built: the depth that closes the gap to the true volume when one proposal is left; depths
+  for boxes and prisms (only region_floor has one). Not done: the plan's step 0 (the served model
+  on parts with ground truth, with and without being told the excess), and the hard set of phase
+  4: `tools/find_hard.py` is written and has not been run (it runs hull and holes on all 266
+  parts; the results of 259 parts the plan counted on are not in `runs/_eval_cache`, which holds
+  24 parts).
+
 ## Git
 
 - `main`: template, eval set and the first dashboard. It has no `artifacts/outputs`, so **nothing
@@ -634,8 +669,12 @@ faces), commit 6847e04 plus the other session's uncommitted working tree, aftern
   typing a number or a name filters, each case row shows its score. The run list holds only the runs of the case on screen, each with that case's volume score at the end of the run (user, 2026-11-12; not yet looked at in a browser). The slider shows every step of
   the case from the start (2026-11-12, user): the agent writes its plan as the first trace event
   (`trace.plan`, `VisualHullAgent.planned`), and a step that has not run is drawn dimmed as pending,
-  off (`HULL_SKIP`, isometric cut), skipped (out of time) or not run; the running one pulses. Runs
-  traced before this have no plan and show only the steps that ran. Not yet looked at in a browser. The dark
+  off (`HULL_SKIP`, isometric cut), skipped (out of time) or not run; the running one pulses. Every case of every run shows
+  the same 18 stops (user, 2026-11-12): the plan now also lists `isometric_support` and `open_mouths`, the
+  dashboard fills in the stops an older trace's plan lacks (`STOPS` in `ui/static/app.js`), and a step outside
+  the plan (a retry, the cuts repeated inside the isometric support or a check) is folded into the stop it
+  happened in, its details under that stop's. Checked in headless Chrome on practice 1, 6, 7, 9 and on a
+  run traced before plans existed (practice 8): 18 stops each. The dark
   lines on a solid are the outlines of its B-rep faces (also between faces that meet smoothly), not
   edges found by angle; cut faces are hatched and outlined. Both side panels are resized by dragging their
   edge. Reads `runs/`. Committed on `feat/visual-hull`.

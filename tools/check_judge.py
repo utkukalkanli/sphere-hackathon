@@ -2,6 +2,7 @@
 
     uv run python tools/check_judge.py                 # the 24 fixed eval parts without eval 99
     uv run python tools/check_judge.py --only test_case_38 test_case_236
+    uv run python tools/check_judge.py --rules score model model-untold     # plan phase 3, step 0
 
 For every part the solid after hull, holes, rounds and curved recesses is built once (cached in
 runs/_judge_cache), and level faces, shading and pockets are then run on it under each rule. Every
@@ -55,7 +56,7 @@ def evaluate(job: dict) -> dict:
     from OCP.gp import gp_Pnt
     from OCP.TopAbs import TopAbs_IN
 
-    from agentic_cad import hull_agent, judge
+    from agentic_cad import hull_agent, judge, propose
     from agentic_cad import visual_hull as vh
     from check_verify import ground_truth
 
@@ -66,12 +67,14 @@ def evaluate(job: dict) -> dict:
     target = vh.read_volume(case)
     started = time.time()
 
-    base_path = CACHE / f"base_{job['key']}_{name}.brep"
+    base_path = CACHE / f"base2_{job['key']}_{name}.brep"   # "base_" files may hold a model's cuts (before the skip below)
     if not base_path.is_file():
         agent = hull_agent.VisualHullAgent()
         try:
             solid = agent.carve(case.joinpath("description.md").read_text(), views)
-            solid = agent.refine(solid, case, views, skip=("depth", "shading", "pockets", "split"))
+            # "model" too: with an endpoint in the environment it would cut here, and every rule would
+            # start from a solid the model had already worked on
+            solid = agent.refine(solid, case, views, skip=("depth", "model", "shading", "pockets", "split"))
         finally:
             agent.close()
         BRepTools.Write_s(solid, str(base_path))
@@ -106,13 +109,22 @@ def evaluate(job: dict) -> dict:
         return float((mask & truth).sum() / union) if union else 0.0
 
     row = {"name": name, "rules": {}}
+    endpoint = {key: os.environ.get(key) for key in ("OPENAI_BASE_URL", "OPENAI_MODEL")}
     for rule in job["rules"]:
-        judge.RULE = rule
+        # "model" and "model-untold": the steps as they are (score rule) with the model's proposals
+        # between level faces and shading, the model told or not told how much the solid holds too much
+        judge.RULE = rule if rule in ("score", "local") else "score"
+        propose.TELL_VOLUME = rule != "model-untold"
+        for key, value in endpoint.items():
+            if rule.startswith("model") and value:
+                os.environ[key] = value
+            else:
+                os.environ.pop(key, None)
         solid = vh.largest_solid(vh.read_brep(str(base_path)))
         start = points_in(solid)
         row["iou_before"], row["volume_before"] = round(iou(start), 4), round(vh.volume(solid) / target, 4)
         agent = hull_agent.VisualHullAgent()
-        agent.decisions = []
+        agent.decisions, agent.answers = [], []
         clock = time.time()
         try:
             final = agent.refine(solid, case, views, skip=("rounds", "curved", "split"))
@@ -135,7 +147,7 @@ def evaluate(job: dict) -> dict:
         end = points_in(final) if final is not solid else start
         row["rules"][rule] = {"iou": round(iou(end), 4), "volume": round(vh.volume(final) / target, 4),
                               "real_material_lost": round(float((start & truth & ~end).sum()) / max(int(truth.sum()), 1), 4),
-                              "seconds": round(time.time() - clock, 1), "cuts": cuts}
+                              "seconds": round(time.time() - clock, 1), "cuts": cuts, "model": agent.answers}
     row["seconds"] = round(time.time() - started, 1)
     return row
 
@@ -147,7 +159,8 @@ def count(cuts: list[dict], accepted: bool, right) -> int:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--only", nargs="*", metavar="test_case_<n>")
-    parser.add_argument("--rules", nargs="*", default=["score", "local"], choices=["score", "local"])
+    parser.add_argument("--rules", nargs="*", default=["score", "local"], choices=["score", "local", "model", "model-untold"],
+                        help="model, model-untold: the score rule plus a model's proposals (needs OPENAI_BASE_URL, OPENAI_MODEL)")
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--save", type=Path, help="write every cut of every part to this .json")
     args = parser.parse_args()
