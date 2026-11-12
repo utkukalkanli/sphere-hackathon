@@ -99,6 +99,11 @@ Remove a question when it is answered, and record the answer in `decisions.md` o
   have 10.1 mm before they would reach the main bore. Unused: that lower bound, and whether the true volume can fix the depth once the rest
   of the part is right. The depth is worth up to 3.7 of the 8.1 cm3 of excess on practice 8
   (`knowledge.md`, "Where practice 8 differs from its views").
+- **From a mouth to the face it lies on** (2026-11-12, practice 9). `mouths.py` removes only
+  the column between a mouth and the camera. The mouth's end plane is the face the hole was made
+  from (the bores of one bank end on one plane, the crankcase wall), and the area of the view
+  around the mouths, between its lines, is that face: the whole area could be cut down to the
+  plane. Not built; on practice 9 it is the walls left between the six columns.
 - **Features that stand only over part of the height** (2026-11-12, practice 8: bolt lobes that
   are a boss at the top and at the bottom and absent in between; `knowledge.md`). A silhouette is
   the union over the whole depth, so the hull keeps them as full prisms; the surface behind is

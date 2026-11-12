@@ -10,6 +10,7 @@ Everything so far is deterministic. No model is called anywhere yet.
 | --- | --- | --- |
 | 1. Visual hull: a box with the `facts.json` dimensions, cut through wherever a view is white (front/back, right/left, top/bottom). Before cutting, each traced outline is rebuilt from straight lines and circular arcs (`outline_fit.py`). A fourth cut along the isometric views is implemented but off since 2026-11-11 | `src/agentic_cad/visual_hull.py`, `src/agentic_cad/outline_fit.py` | committed on `feat/visual-hull` |
 | 2. Holes: every cylindrical hole listed in `facts.json` is cut as a cylinder; a thinner coaxial boss inside a bore is kept. A hole whose listed end stops within 2 px of our surface, all around its axis, is carried through that skin (`spans._open_ends`). A listed hole along x, y or z that both views along its axis show closed, and that as listed would open a line of sight through the solid, is two opposite blind holes given as one span: it is cut as a blind hole from each end, half of the way to where it would break through its wall or meet the other one, the same depth for all holes of the entry; where `facts.json` counts cones that fit those blind holes (one or two faces each) every hole ends in a drill point of that half angle (`spans.py`, `HULL_HOLE_SPANS=0` switches it off; committed on `feat/phase0-safe-runs`, measured below) | `src/agentic_cad/holes.py` | committed on `feat/visual-hull`, measured (below) |
+| Mouths (runs right after the holes, part of `carve`): a listed hole end that lies buried in our solid, around whose circle a view looking at it draws a line (75 % of the circle) that no edge of our solid explains, is a mouth the view sees: what lies between it and that camera is cut out, the mouth swept towards the camera. Straight and isometric views. `HULL_MOUTHS=0` switches it off | `src/agentic_cad/mouths.py` | committed on `feat/phase0-safe-runs`, measured (below) |
 | 3. Rounds: along every boss or bore axis of `facts.json`, where both side views show one strip of the same width centred on the axis, the square the silhouettes left is cut to the circle (revolved fitted outline). Only where `facts.json` lists a boss of that radius there, or the part is a disc seen along the axis and has only lathe faces | `src/agentic_cad/rounds.py` | committed on `feat/visual-hull`, measured (below) |
 | Curved recesses around an axis (runs after step 3, before step 4): seen along a boss or bore axis of `facts.json`, a ring that is flat in our solid but whose tones change in the view is a curved face the side views could not show. If the solid has the start of that face next to the ring, it is fitted (line or circle, the radius snapped to a torus radius of `facts.json`) and carried on under the ring; if not, a cone of each half angle and a torus of each radius listed in `facts.json` are tried and the one the verifier rates highest is kept. A candidate is dropped if its tones, by the renderer's tone table, are more than 10 levels off the view or fit worse than the flat face, or if it would reach through the box (`HULL_SKIP=curved` switches the step off) | `src/agentic_cad/curved.py`, `tone.py`, `tone_tables.npz`, `regions.py` | committed on `feat/visual-hull` (818d5f4), measured (below) |
 | 4. Level faces: in each straight view, an area between the dark lines with the flat tone of a face looking at the camera is one face at one depth. Where it covers several flat levels of our solid, the whole area is cut down to the lowest (if that level covers at least 5 % of the area) | `src/agentic_cad/depth.py` | committed on `feat/visual-hull`, measured (below) |
@@ -333,6 +334,19 @@ Blind holes listed as one span (`spans.py`, 2026-11-12):
   the volume could not have shown it; practice 5 lines lacking 28 to 25 % (front view 35 to 12 %
   on hull + holes), volume 1.224 to 1.226; practice 8 unchanged. 24 eval parts: 4 ends opened,
   all on eval 123, and the ground truth is open beyond all 4. All files one valid solid.
+- Mouths (`mouths.py`, later the same day). Practice 9: the front view draws the inner mouths
+  of the six d127 bores, 87 mm under our surface (the crankcase they open into, which no
+  silhouette shows); 4 are opened towards the front camera and 2 towards the isometric one. Hull
+  + holes 1.880 to 1.572 times the true volume; whole pipeline 1.727 to 1.398, one valid solid.
+  Against the views, whole pipeline: tone off on 12.7 % of the part pixels to 9.9 %. The walls
+  between the six columns are still there. Practice 7: one mouth (d8.5, 2 mm under the surface),
+  0.03 % of the volume; the whole pipeline gave 1.943 against 1.936 before, a difference of the
+  later steps between two runs, not of this cut. No mouth on practice 1, 3, 5, 6, 8.
+- Mouths against the ground truth, 24 eval parts, hull + holes: it cuts on 2 parts, eval 123 (6
+  mouths, 1.038 to 1.030 times the true volume) and eval 171 (1 mouth). Of 60 000 sampled points
+  per part, 334 fall in what the cuts remove and none of them is inside the ground truth. Without
+  the test "no edge of ours explains the line" two more ends of eval 123 qualified and were wrong:
+  the far end of a hole, seen from the side where a coaxial hole has its mouth.
 - `artifacts/outputs/test_case_8.stp` is still the old solid.
 
 Verifier on the same 24 parts, 2026-11-11: the ground truth scores 0.96 on average (0.91 to 0.99),

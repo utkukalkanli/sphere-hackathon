@@ -70,6 +70,11 @@ truth. What it holds:
   cut exactly as listed then ends under a skin: the volume is almost right and every view that
   looks at the mouth is wrong (the "bores do not show" entry above was this, not material lying
   over the mouths). `spans._open_ends` carries such a hole through.
+- **A listed hole end is a point of the part's surface, and a view can say which kind** (2026-11-12).
+  An end is a bottom or a mouth. If a view that looks at the end from outside draws its circle,
+  it is a mouth and the part is empty from there to that camera: a depth that needs no tone and
+  no isometric search (practice 9: 87 mm). The line must not be one our own solid draws there:
+  a coaxial hole on the far face projects onto the same circle (eval 123).
 - **The cone count of `facts.json` confirms the blind holes of practice 8** (2026-11-12).
   `cones_half_angle_deg` lists 48 faces at 59 degrees, the point of a 118 degree drill, which the
   brief calls chamfers. Two blind holes per listed span in the two groups is 16 + 8 = 24 holes,

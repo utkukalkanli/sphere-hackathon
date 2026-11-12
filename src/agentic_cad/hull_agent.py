@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 
 from agentic_cad import holes as hl
+from agentic_cad import mouths
 from agentic_cad import spans
 from agentic_cad import iso_support
 from agentic_cad import outline_fit as of
@@ -103,6 +104,10 @@ class VisualHullAgent:
                 solid = self.cut_holes(solid, case_dir)
             except Exception as error:  # the hull is still a valid answer
                 trace.log(f"cut_holes raised {error!r}; keeping the hull", level="error")
+            try:
+                solid = mouths.apply(self, solid, case_dir)
+            except Exception as error:
+                trace.log(f"mouths.apply raised {error!r}; keeping the solid as it was", level="error")
         return solid
 
     def checkpoint(self, solid, output_path: Path | None) -> bool:
