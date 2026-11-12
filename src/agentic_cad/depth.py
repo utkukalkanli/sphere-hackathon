@@ -55,6 +55,7 @@ MIN_STRETCH_PX = 10      # shorter stretches say nothing
 ONE_PLANE_DEG = 3.0      # our solid's surface over an area is one plane if its normals stay within this
 AREAS = os.environ.get("HULL_DEPTH_AREAS", "drawing")   # "drawing": the faces of drawing.py; "pixels": between line pixels
 SUPPORT = os.environ.get("HULL_DEPTH_SUPPORT", "1") != "0"   # also level faces our solid has no flat level under
+OUTLINES = os.environ.get("HULL_DEPTH_OUTLINES", "1") != "0"   # drop a cut that takes part of a straight view's outline
 SEAM_PX = int(os.environ.get("HULL_DEPTH_SEAM", 3))   # how far a cut reaches over its area's border where the solid ends up no higher
 RIMS = os.environ.get("HULL_DEPTH_RIMS", "1") != "0"         # also lower the narrow faces along a face of known level
 ALONE = float(os.environ.get("HULL_DEPTH_ALONE", 0.75))   # share of the pixels around a block of ours that must lie a step lower for it to stand alone
@@ -252,7 +253,7 @@ def seen_edge_on(area: np.ndarray, level: float, view: verify.Observed, observed
 
 
 def find(view: verify.Observed, drawing: verify.Drawing, dims: dict[str, float],
-         observed: dict | None = None, facing: int | None = None) -> list[vh.Silhouette]:
+         observed: dict | None = None, facing: int | None = None, skip: frozenset = frozenset()) -> list[vh.Silhouette]:
     """What to cut away in one view: for every flat face that covers several levels of our solid, the
     face's area from its lowest level towards the camera."""
     right, up, towards = verify.camera(view.name)
@@ -261,6 +262,7 @@ def find(view: verify.Observed, drawing: verify.Drawing, dims: dict[str, float],
     tolerance = LEVEL_PX * view.mm_per_px
     reach = 2 * float(np.linalg.norm(centre))
     labels, chosen = flat_areas(view, facing)
+    chosen = [label for label in chosen if label not in skip]   # areas whose cut took part of an outline (`harmed`)
     if not chosen:
         return []
     core = cv2.erode((labels > 0).astype(np.uint8), np.ones((2 * EDGE_PX + 1, 2 * EDGE_PX + 1), np.uint8)) > 0
@@ -301,7 +303,7 @@ def find(view: verify.Observed, drawing: verify.Drawing, dims: dict[str, float],
         surface[area] = np.fmin(surface[area], level)
         planned.append((f"area_{label}", area, level, {"supported": supported}))
     if STEPS or RIMS:
-        planned += standing(view, labels, levels, surface, core, drawing.depth)
+        planned += standing(view, labels, levels, surface, core, drawing.depth, skip)
     # Each area is cut along an outline fitted to it alone, and two such outlines do not meet exactly:
     # between two faces cut side by side a wall a fraction of a pixel thick was left standing, as high
     # as the block that was taken off them (practice part 4). So a cut also takes the pixels within
@@ -326,7 +328,7 @@ def find(view: verify.Observed, drawing: verify.Drawing, dims: dict[str, float],
 
 
 def standing(view: verify.Observed, labels: np.ndarray, levels: dict[int, float], surface: np.ndarray,
-             core: np.ndarray, depth: np.ndarray) -> list[tuple]:
+             core: np.ndarray, depth: np.ndarray, skip: frozenset = frozenset()) -> list[tuple]:
     """What a levelled face leaves standing beside it: blocks of our solid on the faces next to it
     that are not flat faces square to the camera, so that nothing above gave them a level.
 
@@ -349,7 +351,7 @@ def standing(view: verify.Observed, labels: np.ndarray, levels: dict[int, float]
     names = {}
     for label in np.unique(labels[labels > 0]):
         area = labels == label
-        if label in levels or area.sum() < MIN_AREA_PX:
+        if label in levels or label in skip or area.sum() < MIN_AREA_PX:
             continue
         level = None
         if STEPS and (area & core).any():
@@ -384,6 +386,60 @@ def standing(view: verify.Observed, labels: np.ndarray, levels: dict[int, float]
     for _, piece, level, _ in found:
         surface[piece] = np.fmin(surface[piece], level)
     return found
+
+
+def harmed(view: verify.Observed, cuts: list[vh.Silhouette], before: dict, after: dict,
+           observed: dict) -> set[int]:
+    """The areas of this view whose cuts take away part of the outline of a straight view at right
+    angles to it.
+
+    `before` and `after` are our solid drawn from every camera, without and with all of the view's
+    cuts at once: the level faces together with the rims and blocks beside them. Together, because
+    a rim left standing hides in every outline that the face inside it was cut too low (practice
+    part 4: a web's lobe that is not quite flat was cut to a level our solid has only at its tip,
+    2.5 mm under the edge the front view shows; the round on its edge filled the outline until the
+    rim cut took it away).
+
+    A cut is blamed for a patch of lost pixels that lies in what it removes, seen from that side,
+    and reaches down to its level: a face cut too low loses the outline from its level upwards. A
+    tall block cut away in front of or behind the patch covers it too, and is not the cause. A
+    loss a pixel thick along an edge is within what a view can tell and does not count."""
+    right, up, towards = verify.camera(view.name)
+    half = view.mask.shape[0] / 2
+    surface = np.where(before[view.name].mask, before[view.name].depth, -np.inf)
+    blamed = set()
+    for name, other in observed.items():
+        if name not in verify.ORTHO_VIEWS or abs(verify.camera(name)[2] @ towards) > 0.1:
+            continue
+        lost = (other.mask & before[name].mask & ~after[name].mask).astype(np.uint8)
+        lost = cv2.morphologyEx(lost, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8)) > 0
+        if lost.sum() < MIN_STRETCH_PX:
+            continue
+        _, patches = cv2.connectedComponents(lost.astype(np.uint8), connectivity=8)
+        other_right, other_up, _ = verify.camera(name)
+        size = other.mask.shape[0]
+        for cut in cuts:
+            if cut.info.get("planes"):
+                continue
+            # what the cut removes: over its pixels, from its level up to our surface
+            rows, cols = np.nonzero((cut.mask > 0) & (surface > cut.info["level"]))
+            if not len(rows):
+                continue
+            flat = np.outer((cols + 0.5 - half) * view.mm_per_px, right) + np.outer((half - 0.5 - rows) * view.mm_per_px, up)
+            tops = surface[rows, cols]
+            column, foot = np.zeros(lost.shape, bool), np.zeros(lost.shape, bool)
+            for height in np.arange(cut.info["level"], float(tops.max()) + other.mm_per_px, other.mm_per_px):
+                points = flat[tops >= height] + height * towards
+                c = np.rint(points @ other_right / other.mm_per_px + size / 2 - 0.5).astype(int)
+                r = np.rint(size / 2 - 0.5 - points @ other_up / other.mm_per_px).astype(int)
+                ok = (c >= 0) & (c < size) & (r >= 0) & (r < size)
+                column[r[ok], c[ok]] = True
+                if height <= cut.info["level"] + verify.TOLERANCE_PX * other.mm_per_px:
+                    foot[r[ok], c[ok]] = True
+            reached = np.unique(patches[lost & foot])
+            if (lost & column & np.isin(patches, reached)).sum() >= MIN_STRETCH_PX:
+                blamed.add(int(cut.name.split("_")[1]))
+    return blamed
 
 
 def slanted_cuts(view: verify.Observed, labels: np.ndarray, levels: dict[int, float], surface: np.ndarray,
@@ -617,6 +673,18 @@ def apply(agent, solid: TopoDS_Shape, case_dir: Path | None, views: list[Path]) 
             cuts = find(observed[name], drawing, dims, observed, facing)
             if not cuts:
                 continue
+            if OUTLINES:
+                # all of the view's cuts at once, only to see what they do to the other views' outlines
+                together = agent.cutter.run(remove, solid, cuts, TIMEOUT)
+                if together is not None:
+                    blamed = harmed(observed[name], cuts, evidence.drawings(solid), evidence.drawings(together), observed)
+                    if blamed:
+                        step.log(f"{name}: {len(blamed)} face(s) left alone, their cuts take part of another view's outline: "
+                                 + ", ".join(f"{c.info['pixels']} px to {c.info['level']} mm" for c in cuts
+                                             if int(c.name.split('_')[1]) in blamed), level="warning")
+                        cuts = find(observed[name], drawing, dims, observed, facing, frozenset(blamed))
+                        if not cuts:
+                            continue
             # what rests on a reading of one area alone (steps, rims) is tried apart, under the strict rule
             strips = [c for c in cuts if c.info.get("rim") or c.info.get("step")]
             cuts = [c for c in cuts if not (c.info.get("rim") or c.info.get("step"))]
