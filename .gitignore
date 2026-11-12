@@ -1,4 +1,5 @@
 .venv
+.venv-cq
 **/__pycache__
 
 # Local settings and the organisers' credential files: never commit them

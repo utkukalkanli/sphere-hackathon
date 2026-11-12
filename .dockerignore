@@ -11,3 +11,4 @@ datasets
 # Local dashboard and its traces: not part of the agent
 ui
 runs
+.venv-cq
