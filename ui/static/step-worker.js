@@ -30,6 +30,17 @@ function measure(meshes) {
   return { bbox: max.map((v, k) => v - min[k]), min, max, volume: Math.abs(volume), area, triangles };
 }
 
+function signedVolume({ position: p, index }) {  // positive when the triangles are wound outwards
+  let volume = 0;
+  for (let i = 0; i < index.length; i += 3) {
+    const a = index[i] * 3, b = index[i + 1] * 3, c = index[i + 2] * 3;
+    volume += p[a] * (p[b + 1] * p[c + 2] - p[b + 2] * p[c + 1])
+      + p[a + 1] * (p[b + 2] * p[c] - p[b] * p[c + 2])
+      + p[a + 2] * (p[b] * p[c + 1] - p[b + 1] * p[c]);
+  }
+  return volume;
+}
+
 // A test "is this point inside the solid", for points given from the solid's min corner. A ray along
 // +x is counted through the triangles; these are binned on a grid over y and z so each point only
 // meets the few triangles above its own cell.
@@ -127,6 +138,12 @@ onmessage = async ({ data: { id, buffer, compare } }) => {
       // the triangles of each face of the solid, as pairs (first, last)
       faces: new Uint32Array((m.brep_faces || []).flatMap((f) => [f.first, f.last])),
     }));
+    // Some solids come with every triangle wound inwards. Turn those round, so that the side of a
+    // triangle the viewer calls its front is always the outside of the solid.
+    for (const m of meshes) {
+      if (signedVolume(m) >= 0) continue;
+      for (let i = 0; i < m.index.length; i += 3) [m.index[i + 1], m.index[i + 2]] = [m.index[i + 2], m.index[i + 1]];
+    }
     const faces = result.meshes.reduce((sum, m) => sum + (m.brep_faces ? m.brep_faces.length : 0), 0);
     const transfer = meshes.flatMap((m) => [m.position.buffer, m.index.buffer, m.faces.buffer, ...(m.normal ? [m.normal.buffer] : [])]);
     const measured = { ...measure(meshes), faces: faces || null };

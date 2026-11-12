@@ -159,6 +159,29 @@ function faceColours(THREE, m) {
   return new THREE.BufferAttribute(colours, 3);
 }
 
+// The outline of every face of the solid: the triangle edges that only one triangle of the face uses.
+// Faces that meet smoothly get a line between them too, which an edge-by-angle test would miss.
+function faceEdges(THREE, m) {
+  const count = m.position.length / 3, points = [];
+  for (let f = 0; f < m.faces.length / 2; f++) {
+    const seen = new Map();
+    for (let t = m.faces[2 * f]; t <= m.faces[2 * f + 1]; t++) {
+      for (let k = 0; k < 3; k++) {
+        const a = m.index[3 * t + k], b = m.index[3 * t + (k + 1) % 3], key = Math.min(a, b) * count + Math.max(a, b);
+        seen.set(key, seen.has(key) ? -1 : a * count + b);
+      }
+    }
+    for (const edge of seen.values()) {
+      if (edge < 0) continue;
+      const a = Math.floor(edge / count) * 3, b = (edge % count) * 3;
+      points.push(m.position[a], m.position[a + 1], m.position[a + 2], m.position[b], m.position[b + 1], m.position[b + 2]);
+    }
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(points), 3));
+  return geometry;
+}
+
 // Geometry is built once per loaded mesh and shared by every viewer that shows it, so scrubbing
 // through the steps does not rebuild it. It is freed a while after the last viewer let go.
 const built = new Map();
@@ -235,11 +258,40 @@ export async function createViewer(container, meshes, color = COLORS.ours, { int
         bool cap = cutOn > 0.5 && !gl_FrontFacing;
         float here = cap ? clamp(dot(vec3(gl_FragCoord.xy, 1.0), cutDepth), 0.0, 1.0) : gl_FragCoord.z;
         gl_FragDepth = here;
-        if (cap) gl_FragColor.rgb = capColour;
+        float hatch = mod(gl_FragCoord.x + gl_FragCoord.y, 9.0) < 1.5 ? 0.74 : 1.0;  // cut faces are hatched
+        if (cap) gl_FragColor.rgb = capColour * hatch;
         ${body}
         #include <dithering_fragment>`);
     };
   };
+  // The outline of the cut faces: where the plane crosses the triangles. Everything left of a cut
+  // solid lies behind the plane, so these lines are never hidden and need no depth test.
+  const contour = new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0x000000, depthTest: false }));
+  contour.renderOrder = 5;
+  contour.frustumCulled = false;
+  contour.visible = false;
+  scene.add(contour);
+  let traced = '';
+  function trace(a, at) {
+    if (traced === `${a} ${at}`) return;
+    traced = `${a} ${at}`;
+    const points = [];
+    for (const [list, shift] of [[meshes, [0, 0, 0]], ...(diff ? [[diff.meshes, diff.shift]] : [])]) {
+      for (const { position: p, index } of list) {
+        const level = at - shift[a];
+        for (let i = 0; i < index.length; i += 3) {
+          const d0 = p[index[i] * 3 + a] - level, d1 = p[index[i + 1] * 3 + a] - level, d2 = p[index[i + 2] * 3 + a] - level;
+          if ((d0 > 0) === (d1 > 0) && (d1 > 0) === (d2 > 0)) continue;
+          for (const [u, v, du, dv] of [[index[i], index[i + 1], d0, d1], [index[i + 1], index[i + 2], d1, d2], [index[i + 2], index[i], d2, d0]]) {
+            if ((du > 0) === (dv > 0)) continue;
+            const t = du / (du - dv);
+            for (let k = 0; k < 3; k++) points.push(p[u * 3 + k] + t * (p[v * 3 + k] - p[u * 3 + k]) + shift[k]);
+          }
+        }
+      }
+    }
+    contour.geometry.setAttribute('position', new THREE.Float32BufferAttribute(points, 3));
+  }
   const dim = (hex) => new THREE.Color(hex).multiplyScalar(0.6);
   capped(material, dim(color));
   lines.clippingPlanes = clip;
@@ -254,7 +306,7 @@ export async function createViewer(container, meshes, color = COLORS.ours, { int
       group.add(mesh);
       triangles += m.index.length / 3;
       if (triangles >= 400000) continue;
-      entry.edges = entry.edges || new THREE.EdgesGeometry(entry.geometry, 28);
+      entry.edges = entry.edges || (m.faces && m.faces.length ? faceEdges(THREE, m) : new THREE.EdgesGeometry(entry.geometry, 28));
       const edges = new THREE.LineSegments(entry.edges, stroke);
       edges.renderOrder = order;
       group.add(edges);
@@ -296,7 +348,7 @@ export async function createViewer(container, meshes, color = COLORS.ours, { int
       { otherDepth: { value: other.depthTexture }, viewSize: { value: size } });
     compare(material, dim(color), truthDepth, `if (gap > 4e-4) {
       float light = dot(gl_FragColor.rgb, vec3(0.333));
-      gl_FragColor.rgb = cap ? vec3(0.86, 0.2, 0.16) : mix(gl_FragColor.rgb, vec3(1.0, 0.27, 0.22) * (0.25 + light), 0.6 + 0.4 * clamp(gap * 40.0, 0.0, 1.0));
+      gl_FragColor.rgb = cap ? vec3(0.86, 0.2, 0.16) * hatch : mix(gl_FragColor.rgb, vec3(1.0, 0.27, 0.22) * (0.25 + light), 0.6 + 0.4 * clamp(gap * 40.0, 0.0, 1.0));
     }`);
     const lacking = new THREE.MeshStandardMaterial({ color: COLORS.missing, roughness: 0.7, metalness: 0, side: THREE.DoubleSide, ...offset });
     compare(lacking, dim(COLORS.missing).multiplyScalar(1.4), oursDepth, 'if (gap <= 4e-4) discard;');
@@ -315,6 +367,8 @@ export async function createViewer(container, meshes, color = COLORS.ours, { int
       size.set(w, h);
       scene.overrideMaterial = plain;
       for (const o of outlines) o.visible = false;
+      const cutting = contour.visible;
+      contour.visible = false;
       for (const [target, shown, other] of [[truthDepth, truth, root], [oursDepth, root, truth]]) {
         if (target.width !== w || target.height !== h) target.setSize(w, h);
         shown.visible = true;
@@ -326,6 +380,7 @@ export async function createViewer(container, meshes, color = COLORS.ours, { int
       scene.overrideMaterial = null;
       truth.visible = true;
       for (const o of outlines) o.visible = true;
+      contour.visible = cutting;
     };
   }
   let centre, radius;
@@ -336,10 +391,12 @@ export async function createViewer(container, meshes, color = COLORS.ours, { int
   function place(w, h, dir) {
     const a = slice.axis;
     cut.cutOn.value = 0;
+    contour.visible = a >= 0;
     if (a < 0) { plane.normal.set(0, 0, 1); plane.constant = 1e12; return; }
     const at = low(a) + slice.at * (high(a) - low(a)), side = dir[a] >= 0 ? -1 : 1;
     plane.normal.set(0, 0, 0).setComponent(a, side);
     plane.constant = -side * at;
+    trace(a, at);
     if (Math.abs(dir[a]) < 1e-3) return;  // seen edge on: no cut face in sight
     camera.updateMatrixWorld();
     const depth = (x, y) => {
@@ -488,7 +545,7 @@ export async function createViewer(container, meshes, color = COLORS.ours, { int
     resizes.disconnect();
     sight.disconnect();
     used.forEach(release);
-    for (const m of [material, lines, haze, hazeLines, ...extra]) m.dispose();
+    for (const m of [material, lines, haze, hazeLines, contour.geometry, contour.material, ...extra]) m.dispose();
   }
 
   viewers.add(v);
