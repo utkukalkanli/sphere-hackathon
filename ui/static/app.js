@@ -1,7 +1,10 @@
-// Dashboard front end. One large 3D view of the solid after the chosen pipeline step, with what that
-// step removed drawn over it; a slider of the steps underneath; everything about the input on the
-// left; the ground truth, as large as its panel, on the right, with two
-// panels under it: how the chosen step's solid differs from the truth, and what the step extracted. Both side panels can be dragged wider. No build step, no framework.
+// Dashboard front end. Two views side by side, like two processes with a link between them. Left
+// what was given: one window with its own slider (brief, facts, input pictures, ground truth). Right
+// what we made: the solid after the chosen pipeline step, with what that step removed drawn over it.
+// On the boundary between them floats what the chosen step extracted (it can be dragged away).
+// Underneath, in an area whose height can be dragged: the steps as a line in the middle of it (it
+// wraps when there are too many for one row), and how the chosen step's solid differs from the truth. On the right one window with
+// The boundary between the two views can be dragged. No build step, no framework.
 import { createViewer, setView, fit, zoomBy, trackball, setTrackball, ghost, setGhost, faces, setFaces, section, setSection, VIEWS, COLORS } from '/static/viewer.js';
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -34,7 +37,7 @@ const ICON = {
 const S = {
   datasets: [], runs: [], cases: {}, now: 0,
   dataset: null, caseName: null, runId: null,  // runId '' = committed outputs / no run
-  image: DEFAULT_VIEW,
+  source: 'truth',  // what the right window shows: 'brief', 'facts', an input picture or 'truth'
   sel: null,  // the step whose solid is shown; null = follow the latest
   diff: false,  // the big view shows the difference to the ground truth instead of the solid
 };
@@ -242,16 +245,6 @@ const viewportHTML = (id, label, tools = true) => `<div class="viewport" id="${i
     <button data-fit title="Fit the part (F, or double-click)" aria-label="Fit the part">${ICON.fit}</button>
   </div>` : ''}</div>`;
 
-// A panel that folds away under its title. Whether it is open is remembered.
-function dropHTML(id, title, body, open = true) {
-  try { open = (localStorage.getItem(`drop-${id}`) || (open ? 'open' : 'closed')) !== 'closed'; } catch { /* private mode */ }
-  return `<details class="drop" id="${id}" ${open ? 'open' : ''}><summary>${title}<span></span></summary>${body}</details>`;
-}
-document.addEventListener('toggle', (event) => {
-  if (!event.target.matches || !event.target.matches('details.drop')) return;
-  try { localStorage.setItem(`drop-${event.target.id}`, event.target.open ? 'open' : 'closed'); } catch { /* private mode */ }
-}, true);
-
 function toggleOrbit() {
   setTrackball(!trackball());
   $$('[data-orbit]').forEach((button) => button.setAttribute('aria-pressed', trackball()));
@@ -425,30 +418,37 @@ function renderMain() {
     live = { id: live.id + 1, rows: [] };
     htmlCache.delete(main);
     main.innerHTML = `
-      <aside class="side" id="input" aria-label="Input"></aside>
+      <aside id="result" aria-label="Input and ground truth">
+        <div class="view">${viewportHTML('out', 'Ground truth', false)}
+          <img id="big" alt="">
+          <div class="tools" id="pic-tools">
+            <button data-pic="0.5" title="Zoom out (right click)" aria-label="Zoom out">${ICON.minus}</button>
+            <button data-pic="2" title="Zoom in (click)" aria-label="Zoom in">${ICON.plus}</button>
+            <button data-pic="0" title="Whole picture" aria-label="Whole picture">${ICON.fit}</button>
+          </div>
+          <div id="doc"></div>
+          <div class="hud" id="result-head"></div></div>
+        <div id="sources"></div>
+      </aside>
       <section id="centre" class="${c.truth ? '' : 'no-truth'}" aria-label="The solid after the chosen step">
         ${viewportHTML('ours', 'Our solid after the chosen step. Drag to rotate, shift-drag to pan, scroll to zoom.')}
         <div class="hud"><div id="stage-label"></div><div id="steps-note"></div></div>
         <div class="hud end" id="steps-status"></div>
-        <div class="grip" data-side="left" role="separator" aria-orientation="vertical" title="Drag to resize, double-click to reset"></div>
-        <div class="grip" data-side="right" role="separator" aria-orientation="vertical" title="Drag to resize, double-click to reset"></div>
+        <div class="grip" role="separator" aria-orientation="vertical" title="Drag to resize, double-click to reset"></div>
       </section>
-      <aside id="result" aria-label="Ground truth">
-        <div class="view">${viewportHTML('out', 'Ground truth', false)}<div class="hud" id="result-head"></div></div>
-        <div id="info">
-          ${dropHTML('diff', 'Diff', '<div id="metrics"></div>')}
-          ${dropHTML('extracted', 'Extracted', '<div id="step-detail"></div>')}
-        </div>
-      </aside>
-      <footer id="timeline"></footer>`;
-    renderInput(c);
+      <section id="extracted" aria-label="What the chosen step extracted"><div id="step-detail"></div></section>
+      <footer id="foot"><div id="timeline"></div><div id="metrics"></div></footer>
+      <div class="grip row" role="separator" aria-orientation="horizontal" title="Drag to resize, double-click to reset"></div>`;
+    placeExtracted();
+    new ResizeObserver(layoutTimeline).observe($('#timeline'));
+    loadBrief(c);
     startMeasuring(c);
   }
   renderResult(c);
   renderSteps(c);
 }
 
-// -- left: input --------------------------------------------------------------------------------
+// -- the brief and the facts ------------------------------------------------------------------------
 
 function fmt(value) {
   if (value == null) return '–';
@@ -507,40 +507,36 @@ function markdown(text) {
 
 const imageSrc = (c, name) => `${dataset().inputs_url}/${c.name}/${name === 'context' ? 'context.png' : `images/${name}.png`}`;
 
-function renderInput(c) {
-  const images = [...c.views.map((file) => file.replace(/\.png$/, '')), ...(c.context ? ['context'] : [])];
-  if (!images.includes(S.image)) S.image = images.includes(DEFAULT_VIEW) ? DEFAULT_VIEW : images[0];
-  // The panel is a window on the input pictures; the brief and the facts fold away under it, closed
-  $('#input').innerHTML = `
-    <div class="window">${images.length ? `<figure class="ref"><img id="big" alt="Reference render, ${esc(viewLabel(S.image))}" src="${imageSrc(c, S.image)}" data-cut="${imageSrc(c, S.image)}">
-      <figcaption id="big-label">${esc(viewLabel(S.image))}</figcaption></figure>
-    <div class="thumbs">${images.map((name, i) => `<button data-image="${name}" aria-pressed="${name === S.image}"
-      title="${viewLabel(name)}${VIEWS[name] ? ` — turns the 3D views to this side (${i + 1})` : ''}">
-      <img alt="${viewLabel(name)}" src="${imageSrc(c, name)}" data-cut="${imageSrc(c, name)}"></button>`).join('')}</div>` : '<p class="note">This case has no reference renders.</p>'}</div>
-    <div class="more">
-      ${dropHTML('brief-drop', 'Brief', '<div><article class="prose" id="brief"></article></div>', false)}
-      ${dropHTML('facts-drop', 'Facts', `<div>${factsHTML(c.facts)}</div>`, false)}
-    </div>`;
-  hydrateImages($('#input'));
-  const id = live.id;
+function loadBrief(c) {
+  const shown = live;
   fetch(`/api/description?dataset=${S.dataset}&case=${c.name}`).then((r) => r.text()).then((text) => {
-    if (id === live.id) $('#brief').innerHTML = markdown(text);
-  });
+    shown.brief = text;
+    if (shown === live) renderResult(c);
+  }, () => {});
 }
 
-function showImage(name, turn = true) {
+// -- right: one window on the brief, the facts, the input pictures and the ground truth ------------
+
+const isPicture = (name) => !['brief', 'facts', 'truth'].includes(name);
+const sourceLabel = (name) => ({ brief: 'Brief', facts: 'Facts', truth: 'Ground truth' }[name] || viewLabel(name));
+function sourcesOf(c) {
+  const images = [...c.views.map((file) => file.replace(/\.png$/, '')), ...(c.context ? ['context'] : [])];
+  return ['brief', 'facts', ...images, ...(c.truth ? ['truth'] : [])];
+}
+// The chosen one if this case has it; else the truth, else a picture (the practice set has no truth)
+function sourceOf(c) {
+  const list = sourcesOf(c);
+  if (list.includes(S.source)) return S.source;
+  return list.includes('truth') ? 'truth' : list.includes(DEFAULT_VIEW) ? DEFAULT_VIEW : list.find(isPicture) || 'brief';
+}
+
+function selectSource(name, turn = true) {
   const c = currentCase();
-  if (!c || !$('#big')) return;
-  S.image = name;
-  $$('.thumbs button').forEach((b) => b.setAttribute('aria-pressed', b.dataset.image === name));
-  $('#big').dataset.cut = imageSrc(c, name);
-  $('#big-label').textContent = viewLabel(name);
+  if (!c || !sourcesOf(c).includes(name)) return;
+  S.source = name;
   renderResult(c);
-  hydrateImages();
   if (turn && VIEWS[name]) setView(name);
 }
-
-// -- right: ground truth and the diff ------------------------------------------------------------------------------
 
 function startMeasuring(c) {
   const id = live.id, state = live.state = { truth: c.truth ? undefined : null, ours: null };
@@ -549,49 +545,92 @@ function startMeasuring(c) {
   }
 }
 
-// The ground truth. The practice set has no ground-truth solid: there the window shows the
-// organisers' render of the real part, in the view chosen on the left. Never our own output.
 function renderResult(c) {
-  setHTML($('#result-head'), `<h2><i class="sw truth"></i>Ground truth</h2>${c.truth ? '' : '<span id="truth-label"></span>'}`);
-  if (c.truth) return showModel($('#out'), c.truth.url, `${c.truth.url}?${c.truth.mtime}`, COLORS.truth);
-  const stage = $('#out .stage');
-  if (!$('img.ref', stage)) {
-    stage.innerHTML = c.views.length ? '<img class="ref" alt="Render of the real part">' : '<p class="note">No ground truth</p>';
+  const view = $('#result .view');
+  if (!view) return;
+  const list = sourcesOf(c), at = sourceOf(c);
+  setHTML($('#result-head'), `<h2>${at === 'truth' ? '<i class="sw truth"></i>' : ''}${esc(sourceLabel(at))}</h2>`);
+  view.dataset.show = at === 'truth' ? 'model' : isPicture(at) ? 'image' : 'doc';
+  if (c.truth) showModel($('#out'), c.truth.url, `${c.truth.url}?${c.truth.mtime}`, COLORS.truth);  // stays loaded behind the others
+  if (isPicture(at)) {
+    const img = $('#big'), src = imageSrc(c, at);
+    if (img.dataset.cut !== src) { resetBig(); img.dataset.cut = src; img.alt = `Reference render, ${viewLabel(at)}`; hydrateImages(view); }
+  } else if (at === 'brief') setHTML($('#doc'), `<article class="prose">${live.brief == null ? '' : markdown(live.brief)}</article>`);
+  else if (at === 'facts') setHTML($('#doc'), factsHTML(c.facts));
+  renderSources(c, list, at);
+}
+
+// The slider under the window: brief, facts, the pictures, the truth
+function renderSources(c, list, at) {
+  const box = $('#sources'), signature = `${S.dataset}/${c.name}/${list.join()}`;
+  if (box.dataset.rows !== signature) {
+    box.dataset.rows = signature;
+    box.innerHTML = `<div class="track" style="--n:${list.length}">
+      <div class="rail"></div>
+      <input type="range" id="source" min="0" max="${list.length - 1}" step="1" aria-label="What the window shows">
+      ${list.map((name, i) => `<button class="stop" data-source="${name}" title="${esc(sourceLabel(name))}${VIEWS[name] ? ` — turns the 3D views to this side (${VIEW_NAMES.indexOf(name) + 1})` : ''}">
+        <i class="dot"></i>${isPicture(name) ? `<img alt="${esc(viewLabel(name))}" src="${imageSrc(c, name)}" data-cut="${imageSrc(c, name)}">` : `<span class="name">${name === 'truth' ? 'Truth' : sourceLabel(name)}</span>`}</button>`).join('')}
+    </div>`;
+    hydrateImages(box);
   }
-  const img = $('img.ref', stage);
-  if (img && img.dataset.cut !== imageSrc(c, S.image)) { img.dataset.cut = imageSrc(c, S.image); hydrateImages(stage); }
-  if ($('#truth-label')) $('#truth-label').textContent = `render, ${viewLabel(S.image)}`;
+  const index = list.indexOf(at), slider = $('#source');
+  if (Number(slider.value) !== index) slider.value = index;
+  slider.setAttribute('aria-valuetext', sourceLabel(at));
+  $$('.stop', box).forEach((stop, i) => stop.setAttribute('aria-current', i === index));
 }
 
-// -- side panels: drag the edge to resize ----------------------------------------------------------
+// -- the boundary between the two views: drag to resize ----------------------------------------------
 
-const WIDTHS = { left: 280, right: 310 };
-function setWidth(side, width) {
-  const value = Math.round(Math.max(220, Math.min(innerWidth * 0.45, width)));
-  document.body.style.setProperty(`--${side}`, `${value}px`);
-  try { localStorage.setItem(`panel-${side}`, value); } catch { /* private mode */ }
+function setSplit(width) {  // null: back to the share the stylesheet gives the left view
+  const value = width == null ? null : Math.round(Math.max(260, Math.min(innerWidth * 0.65, width)));
+  if (value == null) document.body.style.removeProperty('--split'); else document.body.style.setProperty('--split', `${value}px`);
+  try { value == null ? localStorage.removeItem('panel-split') : localStorage.setItem('panel-split', value); } catch { /* private mode */ }
 }
-for (const side of Object.keys(WIDTHS)) {
-  let saved = null;
-  try { saved = Number(localStorage.getItem(`panel-${side}`)); } catch { /* private mode */ }
-  if (saved) document.body.style.setProperty(`--${side}`, `${saved}px`);
+try { if (Number(localStorage.getItem('panel-split'))) setSplit(Number(localStorage.getItem('panel-split'))); } catch { /* private mode */ }
+
+// The area under the views: as high as its content unless it was dragged
+function setFoot(height) {
+  const value = height == null ? null : Math.round(Math.max(70, Math.min(innerHeight * 0.6, height)));
+  if (value == null) document.body.style.removeProperty('--foot'); else document.body.style.setProperty('--foot', `${value}px`);
+  try { value == null ? localStorage.removeItem('panel-foot') : localStorage.setItem('panel-foot', value); } catch { /* private mode */ }
+}
+try { if (Number(localStorage.getItem('panel-foot'))) setFoot(Number(localStorage.getItem('panel-foot'))); } catch { /* private mode */ }
+
+// The window on what the step extracted floats on the boundary. Dragged by its title it stays where
+// it was put (as an offset from the boundary); a double-click on the title puts it back.
+let floatAt = [0, 0];
+try { floatAt = JSON.parse(localStorage.getItem('extracted-at')) || [0, 0]; } catch { /* private mode */ }
+function placeExtracted(at = floatAt) {
+  floatAt = at;
+  if ($('#extracted')) $('#extracted').style.translate = `${at[0]}px ${at[1]}px`;
+}
+
+function drag(event, handle, move) {
+  event.preventDefault();
+  handle.setPointerCapture(event.pointerId);
+  handle.classList.add('on');
+  const done = () => { handle.classList.remove('on'); handle.removeEventListener('pointermove', move); };
+  handle.addEventListener('pointermove', move);
+  handle.addEventListener('pointerup', done, { once: true });
+  handle.addEventListener('pointercancel', done, { once: true });
 }
 document.addEventListener('pointerdown', (event) => {
-  const grip = event.target.closest('.grip');
-  if (!grip) return;
-  event.preventDefault();
-  grip.setPointerCapture(event.pointerId);
-  grip.classList.add('on');
-  const side = grip.dataset.side, box = $('#main').getBoundingClientRect();
-  const move = (e) => setWidth(side, side === 'left' ? e.clientX - box.left - 12 : box.right - e.clientX);
-  const done = () => { grip.classList.remove('on'); grip.removeEventListener('pointermove', move); };
-  grip.addEventListener('pointermove', move);
-  grip.addEventListener('pointerup', done, { once: true });
-  grip.addEventListener('pointercancel', done, { once: true });
+  const grip = event.target.closest('.grip'), title = event.target.closest('#extracted h2');
+  if (grip) {
+    const box = $('#main').getBoundingClientRect(), row = grip.classList.contains('row');
+    drag(event, grip, (e) => (row ? setFoot(box.bottom - e.clientY) : setSplit(e.clientX - box.left)));
+  } else if (title) {
+    const from = [event.clientX - floatAt[0], event.clientY - floatAt[1]];
+    drag(event, title, (e) => {
+      placeExtracted([e.clientX - from[0], e.clientY - from[1]]);
+      try { localStorage.setItem('extracted-at', JSON.stringify(floatAt)); } catch { /* private mode */ }
+    });
+  }
 });
 document.addEventListener('dblclick', (event) => {
   const grip = event.target.closest('.grip');
-  if (grip) setWidth(grip.dataset.side, WIDTHS[grip.dataset.side]);
+  if (grip) grip.classList.contains('row') ? setFoot(null) : setSplit(null);
+  if (event.target.closest('#extracted h2')) { placeExtracted([0, 0]); try { localStorage.removeItem('extracted-at'); } catch { /* private mode */ } }
 });
 
 const settle = (promise) => promise.then((data) => data.measured, () => null);
@@ -665,11 +704,12 @@ function renderMetrics(c, state) {
   ].filter(Boolean);
   const cell = (value) => (value == null || !isFinite(value) ? '<td class="none">–</td>' : `<td>${num(value)}</td>`);
   const note = ours === undefined || (ours && c.truth && !o) ? '<p class="note pulse">Measuring…</p>' : '';
-  setHTML($('#diff summary span'), state.name ? `after ${esc(state.name)}` : '');
-  setHTML($('#metrics'), `${scores.length ? `<dl class="kv scores">${scores.map(([label, value, hint]) => `<dt title="${esc(hint)}">${label}</dt><dd>${value}</dd>`).join('')}</dl>` : ''}
+  setHTML($('#metrics'), `${scores.length ? `<dl class="scores">${scores.map(([label, value, hint]) => `<div title="${esc(hint)}"><dt>${label}</dt><dd>${value}</dd></div>`).join('')}</dl>` : ''}
   <table class="metrics">
-    <thead><tr><th></th><th><i class="sw truth"></i>Truth</th><th><i class="sw ours"></i>Ours</th><th>Diff</th></tr></thead>
-    <tbody>${rows.map(([label, unit, expected, actual]) => `<tr><th>${label} <small>${unit}</small></th>${cell(expected)}${cell(actual)}${delta(expected, actual)}</tr>`).join('')}</tbody>
+    <thead><tr><th></th>${rows.map(([label, unit]) => `<th>${label} <small>${unit}</small></th>`).join('')}</tr></thead>
+    <tbody><tr><th><i class="sw truth"></i>Truth</th>${rows.map((r) => cell(r[2])).join('')}</tr>
+      <tr><th><i class="sw ours"></i>Ours</th>${rows.map((r) => cell(r[3])).join('')}</tr>
+      <tr><th>Diff</th>${rows.map((r) => delta(r[2], r[3])).join('')}</tr></tbody>
   </table>${note}`);
 }
 
@@ -732,8 +772,24 @@ function attachedJSON(url) {
   return attached.get(url);
 }
 
+// A cut along one direction reads two opposite views. Both are shown, the second one mirrored the
+// way the agent mirrors it, so the two and the joined silhouette under them line up.
+const PAIRS = { front_back: ['front', 'back', 'X'], right_left: ['right', 'left', 'X'], top_bottom: ['top', 'bottom', 'Y'] };
+function pairHTML2(s) {
+  const pair = PAIRS[(s.name.match(/^cut_(front_back|right_left|top_bottom)$/) || [])[1]], c = currentCase();
+  if (!pair || !c) return '';
+  const view = (side) => (c.views.find((file) => file.endsWith(`_${side}.png`)) || '').replace(/\.png$/, '');
+  const figure = (side, flip) => {
+    const name = view(side);
+    return name ? `<figure><button class="art plain" data-lightbox="${imageSrc(c, name)}"><img alt="${side} view" data-cut="${imageSrc(c, name)}" ${flip ? `style="scale: ${flip === 'X' ? '-1 1' : '1 -1'}"` : ''}></button>
+      <figcaption>${side}${flip ? ' <small>mirrored</small>' : ''}</figcaption></figure>` : '';
+  };
+  return `<div class="pair">${figure(pair[0])}${figure(pair[1], pair[2])}</div>`;
+}
+
 // What the chosen step took from the inputs: its pictures, its lists, its numbers and what it said
 function detailHTML(s, base, time) {
+  const joined = pairHTML2(s);
   const images = s.artifacts.filter((a) => isImage(a.name));
   const lists = s.artifacts.filter((a) => /\.json$/i.test(a.name));
   // the same number is often both in the output (mm3) and in the metrics (cm3): keep the metric
@@ -744,8 +800,9 @@ function detailHTML(s, base, time) {
   const data = [s.input !== undefined ? `<h4>Input</h4>${raw(s.input)}` : '', s.output != null ? `<h4>Output</h4>${raw(s.output)}` : ''].join('');
   return [
     s.error ? `<pre class="bad">${esc(s.error)}</pre>` : '',
-    ...images.map((a) => `<button class="art" data-lightbox="${esc(`${base}/${a.path}`)}" title="${esc(a.name)}">
-      <img alt="${esc(a.name)}" src="${esc(`${base}/${a.path}`)}"></button>`),
+    joined,
+    ...images.map((a) => `<figure><button class="art" data-lightbox="${esc(`${base}/${a.path}`)}" title="${esc(a.name)}">
+      <img alt="${esc(a.name)}" src="${esc(`${base}/${a.path}`)}"></button>${joined && /^silhouette_/.test(a.name) ? '<figcaption>Both joined <small>cut only where both are empty</small></figcaption>' : ''}</figure>`),
     ...lists.map((a) => {
       const value = attachedJSON(`${base}/${a.path}`);
       return value == null ? '' : `<h3>${esc(words(a.name.replace(/\.json$/i, '')))}${Array.isArray(value) ? ` <small>${value.length}</small>` : ''}</h3>${tableHTML(value)}`;
@@ -774,38 +831,56 @@ function renderSteps(c) {
       const state = running ? 'running' : t.status === 'running' ? 'interrupted' : t.status;
       status = `<span class="state ${state}">${state}</span> ${duration((t.end || (running ? now : t.last)) - t.start)}`;
       if (t.error) note = `<pre class="bad">${esc(t.error)}</pre>`;
-      let model = null, at = 0, lastRun = null;
-      // A planned step that has not run: still to come, switched off, or passed over
-      const planned = (p, passed) => {
-        const state = p.off ? 'off' : passed || t.skips.has(p.name) ? 'skipped' : running ? 'pending' : 'not run';
-        const why = p.off || t.skips.get(p.name) || { skipped: 'Skipped in this case.', pending: 'Not started yet.', 'not run': 'The case ended before this step.' }[state];
-        rows.push({ id: `plan:${p.name}`, raw: p.name, about: about({ name: p.name }), model, before: null, changed: false, state,
-          n: String(rows.length + 1).padStart(2, '0'), name: words(p.name.replace(/^cut_/, '')), ratio: '', chips: '',
-          detail: () => `<p class="note">${esc(why)}</p>` });
-      };
+      let model = null, lastRun = null, volumeWas = '';
+      // Every case shows the same stops: the plan. A step the plan does not list (a retry, a cut
+      // repeated inside a check) is folded into the stop it happened in.
+      const plan = fullPlan(t.plan);
+      const groups = plan.map(() => []), home = new Map();
+      let at = 0, here = 0;
       t.list.forEach((s) => {
-        // steps the plan does not list (a retry, a cut repeated inside a check) go in where they happen
-        const j = t.plan.findIndex((p, i) => i >= at && !p.off && p.name === s.name);
-        if (j >= 0) { for (; at < j; at++) planned(t.plan[at], true); at = j + 1; }
-        const stage = s.artifacts.filter((a) => a.role === 'stage' && isStep(a.name)).pop();
+        if (home.has(s.parent)) { home.set(s.id, home.get(s.parent)); groups[home.get(s.parent).at].push(s); return; }
+        const j = plan.findIndex((p, i) => i >= at && p.name === s.name);
+        if (j >= 0) { here = j; at = j + 1; }
+        home.set(s.id, { at: here, own: j >= 0 });
+        groups[here].push(s);
+      });
+      plan.forEach((p, index) => {
+        const steps = groups[index], s = steps.find((x) => x.name === p.name && home.get(x.id).own && !t.steps.get(x.parent));
+        if (!s) {  // has not run: still to come, switched off, or passed over
+          const state = p.off ? 'off' : index < here || t.skips.has(p.name) ? 'skipped' : running ? 'pending' : 'not run';
+          const why = t.skips.get(p.name) || p.off || { skipped: 'Skipped in this case.', pending: 'Not started yet.', 'not run': 'The case ended before this step.' }[state];
+          rows.push({ id: `plan:${p.name}`, raw: p.name, about: about({ name: p.name }), model, before: null, changed: false, state,
+            n: String(rows.length + 1).padStart(2, '0'), name: words(p.name.replace(/^cut_/, '')), ratio: '', chips: '',
+            detail: () => `<p class="note">${esc(why)}</p>` });
+          return;
+        }
+        // The stop's solid: what the step itself left, or a folded step that went through with its own cuts
+        const root = (x) => { while (t.steps.get(x.parent)) x = t.steps.get(x.parent); return x; };
+        const counts = (x) => x === s || (root(x) !== s && root(x).status === 'ok');
+        const stage = steps.filter(counts).flatMap((x) => x.artifacts.filter((a) => a.role === 'stage' && isStep(a.name))).pop();
         const before = stage ? model : null;  // only a step that left a new solid removed something
         if (stage) model = { url: `${base}/${stage.path}` };
-        const m = s.metrics || {}, time = duration((s.end || (running ? now : t.last)) - s.start);
+        const m = s.metrics || {}, end = Math.max(...steps.map((x) => x.end || (running ? now : t.last)));
+        const time = duration(end - s.start);
         const ratio = truth && m.volume_cm3 != null ? m.volume_cm3 * 1000 / truth : null;
+        const was = volumeWas;
+        if (ratio != null) volumeWas = `×${ratio.toFixed(ratio < 10 ? 2 : 1)}`;
+        const open = steps.some((x) => !x.end);
         rows.push({
+          was,
           id: s.id, raw: s.name, about: about(s), model, before, changed: Boolean(stage),
-          state: s.end ? s.status : running ? 'running' : 'interrupted',
+          state: !open ? s.status : running ? 'running' : 'interrupted',
           n: String(rows.length + 1).padStart(2, '0'), name: words(s.name.replace(/^cut_/, '')),
           ratio: ratio == null ? '' : `×${ratio.toFixed(ratio < 10 ? 2 : 1)}`,
           chips: [
             m.removed_cm3 ? `<i class="sw ghost"></i>removed ${num(m.removed_cm3)} cm³` : '',
             ratio != null ? `${num(ratio)} × true volume` : '',
           ].filter(Boolean).join(' · '),
-          detail: () => detailHTML(s, base, time),
+          detail: () => detailHTML(s, base, time) + steps.filter((x) => x !== s).map((x) =>
+            `<h3>${esc(words(x.name.replace(/^cut_/, '')))}</h3>${detailHTML(x, base, duration((x.end || (running ? now : t.last)) - x.start))}`).join(''),
         });
         lastRun = rows[rows.length - 1];
       });
-      for (; at < t.plan.length; at++) planned(t.plan[at], false);
       const last = lastRun;  // the exported file is the last step's solid, tidied
       if (last && output && !running && t.status === 'ok') Object.assign(last, { model: output, before: null });
       if (!running) rows.forEach((r) => r.model && loadStep(r.model.url, r.model.key).catch(() => {}));  // warm up, so scrubbing is instant
@@ -829,16 +904,33 @@ function renderSteps(c) {
   setHTML($('#steps-note'), note);
   renderTimeline(rows, chosen);
   const detail = chosen ? chosen.detail() : '';
-  setHTML($('#step-detail'), detail);
-  setHTML($('#extracted summary span'), detail && chosen ? esc(chosen.name) : '');
+  setHTML($('#step-detail'), detail && `<h2>${esc(chosen.name)}</h2>${detail}`);
+  hydrateImages($('#step-detail'));
   measureOurs(c, chosen && chosen.model, chosen ? chosen.name : '');
   const first = rows.find((r) => r.model);
+  live.frame = run && first ? first.model : null;
   showModel($('#ours'), chosen && chosen.model && chosen.model.url, chosen && chosen.model && chosen.model.key, COLORS.ours,
     note ? '' : `<p class="note">${running ? 'Waiting for the first solid…' : 'No solid to show yet.'}</p>`,
-    { before: chosen && chosen.before, frame: run && first ? first.model : null, truth: diff });
+    { before: chosen && chosen.before, frame: live.frame, truth: diff });
 }
 
-// One line on what each step does, shown under its stop. A step can bring its own with
+// The stops every case has, in order. A trace brings its own plan (hull_agent.planned); names it
+// lacks (runs traced before a step was planned, or before there was a plan) are put in from here,
+// so every case of every run shows the same stops.
+const STOPS = ['bounding_box', 'cut_front_back', 'cut_right_left', 'cut_top_bottom', 'cut_iso', 'isometric_support', 'check_views',
+  'cut_holes', 'open_mouths', 'evidence', 'cut_rounds', 'cut_curved', 'level_faces', 'model_cuts', 'shading_depth', 'cut_pockets',
+  'split_faces', 'export_step'];
+function fullPlan(given) {
+  const plan = given.slice();
+  STOPS.forEach((name, i) => {
+    if (plan.some((p) => p.name === name)) return;
+    const after = STOPS.slice(0, i).reverse().map((n) => plan.findIndex((p) => p.name === n)).find((k) => k >= 0);
+    plan.splice(after == null ? 0 : after + 1, 0, { name });
+  });
+  return plan;
+}
+
+// One line on what each step does, shown when the pointer is on its stop. A step can bring its own with
 // trace.step(..., description="..."); this list covers the steps the pipeline has today.
 const SIDES = { front_back: 'front and back', right_left: 'right and left', top_bottom: 'top and bottom', iso: 'isometric' };
 const ABOUT = [
@@ -847,6 +939,10 @@ const ABOUT = [
   [/^retry_(.+)_first$/, (m) => `Cuts again, ${SIDES[m[1]] || words(m[1])} first`],
   [/^check_views$/, () => 'Compares the solid with the silhouettes'],
   [/^cut_holes$/, () => 'Cuts the cylindrical holes listed in facts.json'],
+  [/^open_mouths$/, () => 'Opens listed holes whose mouth a view draws under our surface'],
+  [/^isometric_support$/, () => 'Cuts with the isometric silhouette too, where the straight cuts left far too much'],
+  [/^evidence$/, () => 'Numbers the areas of the views and what the solid has under each'],
+  [/^model_cuts$/, () => 'Cuts a model proposes, each kept only if the views fit better'],
   [/^cut_rounds$/, () => 'Makes square sections round along boss and bore axes'],
   [/^cut_curved$/, () => 'Carries a curved face on under a flat ring the side views left around an axis'],
   [/^cut_pockets$/, () => 'Cuts pockets whose outline the views draw under our surface'],
@@ -861,6 +957,18 @@ function about(step) {
   return '';
 }
 
+// The line of steps takes as many rows as it needs for every stop to keep a readable width. On one
+// row it is a slider that can be dragged; on several the stops are clicked (or the arrow keys used).
+const STOP_WIDTH = 74;
+function layoutTimeline() {
+  const track = $('#timeline .track');
+  if (!track) return;
+  const count = $$('.stop', track).length, fit = Math.max(1, Math.floor($('#timeline').clientWidth / STOP_WIDTH));
+  const lines = Math.ceil(count / fit), columns = Math.ceil(count / lines);
+  if (track.style.getPropertyValue('--n') !== String(columns)) track.style.setProperty('--n', columns);
+  track.classList.toggle('wrapped', lines > 1);
+}
+
 // The steps as a slider. It is rebuilt only when the steps change, so a drag is never interrupted.
 function renderTimeline(rows, chosen) {
   const timeline = $('#timeline');
@@ -870,14 +978,14 @@ function renderTimeline(rows, chosen) {
     timeline.innerHTML = rows.length < 2 ? '' : `<div class="track" style="--n:${rows.length}">
       <div class="rail"><i></i></div>
       <input type="range" id="scrub" min="0" max="${rows.length - 1}" step="1" aria-label="Pipeline step">
-      ${rows.map((r) => `<button class="stop ${r.changed ? 'cut' : ''} ${r.state.replace(' ', '-')}" data-sel="${r.id}" title="${esc(r.name)}${r.ratio ? ` — ${r.ratio} the true volume` : ''}">
+      ${rows.map((r) => `<button class="stop ${r.changed ? 'cut' : ''} ${r.state.replace(' ', '-')}" data-sel="${r.id}">
         <i class="dot"></i><span class="name">${esc(r.name)}</span>
-        <span class="v ${r.state === 'ok' ? '' : `state ${r.state}`}">${r.state === 'ok' ? r.ratio : r.state === 'pending' ? '' : r.state}</span>
-        <span class="about">${esc(r.about)}</span></button>`).join('')}
+        <span class="v ${r.state === 'ok' ? '' : `state ${r.state}`}">${r.state === 'ok' ? r.ratio : r.state === 'pending' ? '' : r.state}</span></button>`).join('')}
     </div>`;
   }
   const scrub = $('#scrub');
   if (!scrub) return;
+  layoutTimeline();
   const at = Math.max(0, rows.indexOf(chosen));
   if (Number(scrub.value) !== at) scrub.value = at;
   scrub.setAttribute('aria-valuetext', chosen ? chosen.name : '');
@@ -888,14 +996,59 @@ function renderTimeline(rows, chosen) {
   });
 }
 
-// A step that cuts along one view pair shows that view in the input window
+// With the pointer on a stop: what the step does, and the solid before and after it (what the step
+// removed is drawn over the second one). The two small views follow the camera of the big one.
+let tipFor = null;
+function hideTip() {
+  if (tipFor == null) return;
+  tipFor = null;
+  const tip = $('#tip');
+  $$('.stage', tip).forEach((stage) => stage.viewer && stage.viewer.dispose());
+  tip.hidden = true;
+  tip.innerHTML = '';
+}
+function showTip(row, stop) {
+  if (tipFor === row.id) return;
+  hideTip();
+  const pair = row.changed && row.before && row.model;
+  if (!row.about && !pair) return;
+  tipFor = row.id;
+  const tip = $('#tip'), mini = (id) => `<div class="viewport" id="${id}"><div class="stage"></div></div>`;
+  tip.innerHTML = `${row.about ? `<p>${esc(row.about)}</p>` : ''}${pair ? `<div class="pair">
+    <figure>${mini('tip-before')}<figcaption>Before <b>${row.was}</b></figcaption></figure>
+    <figure>${mini('tip-after')}<figcaption>After <b>${row.ratio}</b></figcaption></figure></div>` : ''}`;
+  tip.hidden = false;
+  const at = stop.getBoundingClientRect(), width = tip.offsetWidth;
+  tip.style.left = `${Math.max(10, Math.min(innerWidth - width - 10, at.left + at.width / 2 - width / 2))}px`;
+  tip.style.bottom = `${innerHeight - at.top + 10}px`;
+  if (!pair) return;
+  const options = { interactive: false, frame: live.frame };
+  showModel($('#tip-before'), row.before.url, row.before.key, COLORS.ours, '', options);
+  showModel($('#tip-after'), row.model.url, row.model.key, COLORS.ours, '', { ...options, before: row.before });
+}
+document.addEventListener('pointermove', (event) => {
+  const timeline = event.target.closest && event.target.closest('#timeline');
+  if (!timeline || event.pointerType === 'touch') return hideTip();
+  const stops = $$('.stop', timeline);
+  let stop = event.target.closest('.stop');
+  if (!stop && event.target.id === 'scrub' && stops.length) {  // the slider lies over the dots
+    const box = $('.track', timeline).getBoundingClientRect();
+    stop = stops[Math.max(0, Math.min(stops.length - 1, Math.floor((event.clientX - box.left) / box.width * stops.length)))];
+  }
+  const row = stop && live.rows.find((r) => r.id === stop.dataset.sel);
+  if (row) showTip(row, stop); else hideTip();
+});
+document.documentElement.addEventListener('pointerleave', hideTip);
+
+// A step that cuts along one view pair shows that view, if the right window is on a picture
 const STEP_VIEW = [[/front|back/, 'view_0_front'], [/right|left/, 'view_3_right'], [/top|bottom/, 'view_4_top'], [/iso/, 'view_6_iso_front_right_top']];
 function selectStep(id) {
   S.sel = id;
   renderSteps(currentCase());
   const row = live.rows.find((r) => r.id === id);
   const view = row && /^cut_|^retry_/.test(row.raw) && (STEP_VIEW.find(([pattern]) => pattern.test(row.raw)) || [])[1];
-  if (view && $(`[data-image="${view}"]`)) showImage(view, false);
+  const c = currentCase();
+  if (view && c && isPicture(sourceOf(c))) selectSource(view, false);
 }
 
 function moveStep(offset) {
@@ -915,7 +1068,7 @@ function openOverlay(src) {
 // -- events -------------------------------------------------------------------------------------
 
 // -- scores -------------------------------------------------------------------------------------
-// One panel over the input column: every case of the set that has a score, worst first, with the
+// One panel over the left of the big view: every case of the set that has a score, worst first, with the
 // score after each step as small bars. The case list itself stays in order of number.
 let scoresOpen = false;
 function toggleScores() {
@@ -968,6 +1121,7 @@ function render() {
 
 function selectCase(name, datasetId = S.dataset) {
   if (datasetId !== S.dataset) Object.assign(S, { dataset: datasetId, runId: null });
+  hideTip();
   Object.assign(S, { caseName: name, sel: null, runId: null });  // normalise() picks this case's newest run
   render();
 }
@@ -983,8 +1137,9 @@ document.addEventListener('click', async (event) => {
   if (!target) return;
   const d = target.dataset;
   if (d.move) return moveCase(Number(d.move));
-  if (d.image) return showImage(d.image);
+  if (d.source) return selectSource(d.source);
   if (d.zoom) return zoomBy(Number(d.zoom));
+  if (d.pic) return picTool(Number(d.pic));
   if (d.fit !== undefined) return fit();
   if (d.orbit !== undefined) return toggleOrbit();
   if (d.ghost !== undefined) return toggleGhost();
@@ -1009,13 +1164,79 @@ document.addEventListener('click', async (event) => {
   if (d.action === 'stop') return api('/api/stop', { run: S.runId }).then(poll, (e) => toast(`Could not stop the run: ${e.message}`));
 });
 
-document.addEventListener('dblclick', (event) => {
-  if (event.target.id === 'big') openOverlay(event.target.src);
+// The picture in the left window: a click zooms in at the pointer, a right click (or shift-click) zooms out,
+// scroll or pinch zooms too, drag or a sideways scroll pans. It never opens full screen.
+const pan = { k: 1, x: 0, y: 0, drag: null };
+function placeBig() {
+  const img = $('#big');
+  if (!img) return;
+  img.style.transform = pan.k === 1 ? '' : `translate(${pan.x}px, ${pan.y}px) scale(${pan.k})`;
+  img.classList.toggle('zoomed', pan.k !== 1);
+}
+function resetBig() { Object.assign(pan, { k: 1, x: 0, y: 0, drag: null }); placeBig(); }
+function clampBig(img) {
+  const w = img.offsetWidth, h = img.offsetHeight;
+  pan.x = Math.min(0, Math.max(w - w * pan.k, pan.x));
+  pan.y = Math.min(0, Math.max(h - h * pan.k, pan.y));
+}
+function zoomBig(img, event, factor) {
+  const box = img.parentElement.getBoundingClientRect(), px = event.clientX - box.left, py = event.clientY - box.top;
+  const k = Math.min(40, Math.max(1, pan.k * factor));
+  pan.x = px - (px - pan.x) * k / pan.k;
+  pan.y = py - (py - pan.y) * k / pan.k;
+  pan.k = k;
+  clampBig(img);
+  placeBig();
+}
+function picTool(factor) {  // the buttons at the lower right: about the middle of the window
+  const img = $('#big');
+  if (!factor) return resetBig();
+  const box = img.parentElement.getBoundingClientRect();
+  zoomBig(img, { clientX: box.left + box.width / 2, clientY: box.top + box.height / 2 }, factor);
+}
+document.addEventListener('wheel', (event) => {
+  const img = event.target;
+  if (img.id !== 'big') return;
+  event.preventDefault();
+  if (!event.ctrlKey && (event.shiftKey || Math.abs(event.deltaX) > Math.abs(event.deltaY))) {  // sideways scroll pans
+    pan.x -= event.deltaX || event.deltaY;
+    clampBig(img);
+    return placeBig();
+  }
+  zoomBig(img, event, Math.exp(-event.deltaY * (event.ctrlKey ? 0.01 : 0.0025)));
+}, { passive: false });
+document.addEventListener('pointerdown', (event) => {
+  if (event.target.id !== 'big' || event.button !== 0) return;
+  event.preventDefault();
+  pan.drag = { x: event.clientX - pan.x, y: event.clientY - pan.y, x0: event.clientX, y0: event.clientY, moved: false };
+  event.target.setPointerCapture(event.pointerId);
+});
+document.addEventListener('pointermove', (event) => {
+  const drag = pan.drag;
+  if (!drag || event.target.id !== 'big') return;
+  if (!drag.moved && Math.hypot(event.clientX - drag.x0, event.clientY - drag.y0) < 4) return;
+  drag.moved = true;
+  pan.x = event.clientX - drag.x;
+  pan.y = event.clientY - drag.y;
+  clampBig(event.target);
+  placeBig();
+});
+document.addEventListener('pointerup', (event) => {
+  const drag = pan.drag;
+  pan.drag = null;
+  if (drag && !drag.moved && event.target.id === 'big') zoomBig(event.target, event, event.shiftKey || event.altKey ? 0.5 : 2);
+});
+document.addEventListener('pointercancel', () => { pan.drag = null; });
+document.addEventListener('contextmenu', (event) => {
+  if (event.target.id !== 'big') return;
+  event.preventDefault();
+  zoomBig(event.target, event, 0.5);
 });
 
 document.addEventListener('input', (event) => {
   if (event.target.id === 'menu-filter') { htmlCache.delete($('#menu .list')); return renderMenu(); }
   if (event.target.id === 'cut') return setSection(section().axis, Number(event.target.value));
+  if (event.target.id === 'source') { const c = currentCase(); return c && selectSource(sourcesOf(c)[event.target.value]); }
   if (event.target.id === 'scrub' && live.rows[event.target.value]) selectStep(live.rows[event.target.value].id);
 });
 
@@ -1037,7 +1258,7 @@ document.addEventListener('keydown', (event) => {
     ArrowRight: () => moveStep(1), ArrowLeft: () => moveStep(-1), ']': () => moveStep(1), '[': () => moveStep(-1),
     ArrowDown: () => moveCase(1), ArrowUp: () => moveCase(-1),
     '+': () => zoomBy(1.25), '=': () => zoomBy(1.25), '-': () => zoomBy(0.8), f: fit, 0: fit, t: toggleOrbit, g: toggleGhost, d: toggleDiff, c: toggleFaces, x: cycleSection, s: toggleScores,
-  }[event.key] || (/^[1-8]$/.test(event.key) && (() => showImage(VIEW_NAMES[Number(event.key) - 1])));
+  }[event.key] || (/^[1-8]$/.test(event.key) && (() => selectSource(VIEW_NAMES[Number(event.key) - 1])));
   if (!act) return;
   event.preventDefault();
   act();

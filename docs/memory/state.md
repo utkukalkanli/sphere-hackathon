@@ -35,7 +35,7 @@ reasons in `decisions.md`.
 | rounds (`cut_rounds`) | `rounds.py` | `HULL_SKIP=rounds`, `HULL_ROUNDS_DISC=0` | IoU 0.834 to 0.847 (simple 0.960 to 0.994); "disc": cuts 6 of 266 eval parts, none lower; practice 6 3.81 to 3.31 |
 | curved recesses (`cut_curved`) | `curved.py`, `tone.py`, `regions.py` | `HULL_SKIP=curved` | no cut on the 24; 5 of the 37 lathe-type eval parts, none worse (249: 0.725 to 0.981); practice 2 1.105 to 1.018 |
 | level faces (`level_faces`) | `depth.py` | `HULL_SKIP=depth`, `HULL_DEPTH_SUPPORT=0` | IoU 0.847 to 0.854; supported cuts 0.8668 to 0.8791 (38: 0.628 to 0.933; 99: 0.252 to 0.241, accepted); practice 6 3.31 to 2.77 |
-| model (`model_cuts`) | `propose.py`, `ops.py`, `judge.py` | off unless `OPENAI_BASE_URL` and `OPENAI_MODEL` are set; `HULL_PROPOSALS=<dir>` replays files | 12 eval parts with excess, Gemma 4 31B, same start solid, 20 000 points: IoU 0.9181 without, 0.9423 with (236: 0.796 to 0.990; 171: 0.759 to 0.862; 74: 0.899 to 0.918; 3: 0.918 to 0.906; 38 and 110 down 0.007); up to 554 s a part (below) |
+| model (`model_cuts`) | `propose.py`, `ops.py`, `judge.py` | off unless `OPENAI_BASE_URL` and `OPENAI_MODEL` are set; `HULL_PROPOSALS=<dir>` replays files | 12 eval parts with excess, Gemma 4 31B, same start solid, 20 000 points: IoU 0.9181 without, 0.9414 with (236: 0.796 to 0.990; 171: 0.759 to 0.844; 74: 0.899 to 0.918; 3: 0.918 to 0.912; 38 and 110 down 0.007); 24 to 332 s a part (below) |
 | shading (`shading_depth`) | `shading.py` | `HULL_SKIP=shading`, `HULL_SHADING_SLANTED=0`, `HULL_SHADING_DEEP=0` | IoU 0.854 to 0.861 (110: 0.79 to 0.86, 236: 0.70 to 0.73), none lower |
 | pockets (`cut_pockets`) | `pockets.py`, `lines.py` | `HULL_SKIP=pockets` | eval 236 1.354 to 1.254 times the true volume (IoU 0.740 to 0.796); 22 of 24 untouched, none lower |
 | split (`split_faces`) | `split.py`, `lines.py` | `HULL_SKIP=split` | moves no material; splits faces on about 10 of the 24 |
@@ -186,9 +186,12 @@ Practice set, our volume / true volume (no ground truth, so only excess shows):
   the region table (practice 5: 20 proposals, 0.135 cm3 removed). Asked only which numbered
   regions are floors of recesses, with our solid drawn beside the isometric views, it named right
   ones: eval 236 12 of 12 kept, 171 7 of 8. The depth is searched by the pipeline (9 depths,
-  shallow to deep, the judge keeps the best). The loss on eval 3 (a tyre) was four cuts in
-  regions of kind "curved"; since then only "facing" regions are searched and the search stops
-  when two depths in a row are no better. That version is being measured.
+  shallow to deep, the judge keeps the best). The loss on eval 3 (a tyre, 0.918 to 0.906) was four cuts in
+  regions of kind "curved"; since then only "facing" regions are searched (0.912). Stopping the
+  search when two depths in a row were no better was tried and taken out: eval 236 fell from
+  0.990 to 0.801. The plan's gate (mean up, no part down by more than 0.01) holds on these 12
+  parts; the step has not been run on a hard set, and its time (up to 332 s a part, all nine
+  depths for up to 12 recesses) has not been bounded or measured on the practice set.
 - Replay of proposals written by three large stand-in models for older solids
   (`runs/_research_scratch/round4_model/`): practice 5 1.225 to 0.990, 7 1.913 to 1.316, 9 1.205
   to 1.123. Not a measurement of right cuts: the proposers were told the excess.

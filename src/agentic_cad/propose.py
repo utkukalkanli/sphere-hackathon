@@ -263,11 +263,12 @@ def apply(agent, solid: TopoDS_Shape, case_dir: Path | None, views: list[Path]) 
             except ValueError as error:
                 report[op["id"]] = f"cannot be built: {error}"
                 return None
-            rated, worse = [], 0
+            rated = []
             for variant in variants:
-                # shallow to deep: past the floor a cut only adds walls the part does not have, so two
-                # depths in a row that are no better than the best so far end the search
-                if agent.out_of_time() or (rated and worse >= 2):
+                # Every depth is tried. Stopping once two in a row were no better than the best so
+                # far was measured and lost most of the gain (eval 236: 0.990 to 0.801): the error
+                # does not fall evenly on the way down to the floor.
+                if agent.out_of_time():
                     break
                 try:
                     tool = ops.tool_for(variant, evidence)
@@ -279,8 +280,6 @@ def apply(agent, solid: TopoDS_Shape, case_dir: Path | None, views: list[Path]) 
                     continue
                 verdict = rater.rate(base, carved)
                 judge.note(agent, "model", base, carved, bool(verdict.accepted and verdict.error < 0), verdict)
-                better = verdict.accepted and verdict.error < min((r[0] for r in rated), default=0.0)
-                worse = 0 if better else worse + 1
                 if verdict.accepted and verdict.error < 0:
                     rated.append((verdict.error, variant, carved, verdict))
             if not rated:
