@@ -101,6 +101,12 @@ kept beside its successor. Older wording: `git show bda2104:docs/memory/decision
 - **One time budget for the run, 17 of the 20 minutes; steps are bounded by counts, not clocks**
   (2026-11-11, 2026-11-12). A clock per step makes the solid depend on the machine.
 
+- **Reverted: refusing later-step cuts that draw new edges inside one-colour areas** (2026-11-12,
+  user: "not the result I wanted"; was 8218a17, reverted in 953d9e4). It refused practice 6's
+  level-face cuts (2.77 back to 3.28) and its extra drawing per cut cost time, so practice 5 and 7
+  lost their later steps (whole run 902 s, score 0.8463 to 0.8277). What the user wants for
+  practice 6's flat zig-zag flanks is still open (`open-questions.md`).
+
 ## Evaluation
 
 - **`uzum` runs the cases in parallel with a hard stop: `nar`'s `scripts/main.py`** (2026-11-12,

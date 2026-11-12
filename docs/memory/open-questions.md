@@ -94,3 +94,8 @@ Remove a question when it is answered and record the answer in `decisions.md`, `
 - `tools/dataset` needs `cadquery` and `pyvista`, which are only in the local `datasets/.venv`.
 - `.idea/` and `.impeccable/` are untracked: add them to `.gitignore`?
 - `docs/` and `CLAUDE.md` go into the Docker image; exclude them in `.dockerignore`?
+- **Practice 6's flanks: what should our solid look like there?** (2026-11-12, user.) The render
+  shows each flank as one flat triangle from flange to cap (a zig-zag folded paper made into a
+  cone); the level-faces step cuts triangles and steps into them. Refusing such cuts (8218a17) was
+  reverted as not the wanted result. Open: whether the flanks should be built as those planes
+  instead of carved.
