@@ -8,7 +8,7 @@ import cadquery as cq
 
 REPO = Path(__file__).resolve().parents[1]
 INPUTS = REPO / "artifacts/inputs"
-OUTPUTS = REPO / "artifacts/outputs"
+OUTPUTS = REPO / "cad/outputs"   # hand-written reference models, kept out of the submission folder
 
 
 def solid_of(obj):
@@ -54,7 +54,7 @@ def report(name, shape):
 
 
 def finish(name, obj, render=True):
-    """Validate, export to artifacts/outputs/<name>.stp and optionally render."""
+    """Validate, export to cad/outputs/<name>.stp and optionally render."""
     shape = solid_of(obj)
     report(name, shape)
     OUTPUTS.mkdir(parents=True, exist_ok=True)

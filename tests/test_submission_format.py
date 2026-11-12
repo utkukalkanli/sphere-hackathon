@@ -26,6 +26,7 @@ def test_inputs_complete(test_case):
     assert len(views) == N_VIEWS, f"{test_case}: expected {N_VIEWS} views in images/, found {len(views)}"
 
 
+@pytest.mark.skipif(not HAS_OUTPUTS, reason="no outputs committed yet")
 @pytest.mark.parametrize("test_case", TEST_CASES)
 def test_output_exists(test_case):
     output = OUTPUTS / f"{test_case}.stp"
