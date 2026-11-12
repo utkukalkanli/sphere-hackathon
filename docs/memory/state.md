@@ -138,6 +138,11 @@ set is no longer used, see decisions.md). Score = mean of min/max over the 9 par
   too-deep pocket took part 5 to 0.978.
 - Part 9 drops most with a 150 mm pocket from the front; without ground truth it is unknown whether
   all of it was excess.
+- Surface area against `facts.json`, outputs of d312797: 1 1.00, 2 1.23, 3 1.32, 4 1.35, 5 1.11,
+  6 0.44, 7 1.15, 8 1.09, 9 0.84 times the true area. Part 3 has the right volume but 32 % too much
+  area (thin leftover skins?). Using area as a tie-breaker between candidates plus rejecting cuts
+  that move it more than 15 % further from the truth made the score worse (0.814 -> 0.794, part 9
+  1.39 -> 1.60): a right pocket can move the area away first. Not used.
 - `HLRBRep_PolyAlgo` fails on many candidates of parts 5 and 9; the exact `HLRBRep_Algo` is used
   then (slower: part 5 60 -> 88 s).
 
