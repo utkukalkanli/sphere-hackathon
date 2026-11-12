@@ -1,184 +1,137 @@
 # What we know about the task and the code
 
-Facts that took reading or measuring to find out. They change rarely; correct them when they do.
+Facts that took reading or measuring to find out. Correct an entry in place when it changes.
+Unless a date says otherwise, numbers are from 2026-11-11 or 12 on the fixed 24 eval parts.
+Longer accounts of each finding: `git show bda2104:docs/memory/knowledge.md`.
 
-## The inputs
+## The task
 
-**`facts.json` is exact and is given for the hidden parts too.** It was measured from the ground
-truth. What it holds:
+- **Position and orientation of our solid do not matter; size and handedness do** (README,
+  Outputs). The scorer registers the two solids; how is unknown.
+- CI on a pull request runs pytest and builds the image; on a push to `main` it also submits.
+  pytest fails if a practice part lacks its `test_case_<n>.stp` in `artifacts/outputs` or the
+  folder holds another file.
+- After code freeze the organisers run the image on the practice inputs and compare with the
+  committed outputs (a mismatch is reviewed by hand), then on the hidden parts. They need
+  `<team>.env` with every variable the agent reads.
 
-| field | what it gives | what it does not give |
+## `facts.json`
+
+Exact, measured from the ground truth, and given for the hidden parts too.
+
+| field | gives | does not give |
 | --- | --- | --- |
-| `bounding_box_mm` | x, y, z size | |
-| `volume_mm3`, `surface_area_mm2` | the true values: a target to check any candidate solid against | |
-| `faces`, `edges`, `face_types`, `through_holes_genus` | counts per surface type; number of through-passages | |
-| `cylindrical_holes_and_bores` | full concave cylinders: diameter, axis, count, centres (midpoint of the axis) | `lengths` is the set of distinct lengths in the group, not one per centre |
-| `cylindrical_shafts_and_bosses` | full convex cylinders, same layout | |
-| `partial_cylinders_arcs` | diameter, concave or convex, face count | no position, no axis |
-| `fillets_rounds_from_cylinders`, `fillets_from_tori_minor_radii`, `cones_half_angle_deg` | radii and angles with counts | no position |
+| `bounding_box_mm`, `volume_mm3`, `surface_area_mm2` | true sizes | |
+| `faces`, `edges`, `face_types`, `through_holes_genus` | counts | |
+| `cylindrical_holes_and_bores`, `cylindrical_shafts_and_bosses` | full cylinders: diameter, axis, count, centres (midpoint of the axis) | `lengths` is the set of distinct lengths of a group, not one per centre |
+| `partial_cylinders_arcs` | diameter, concave or convex, face count | position, axis |
+| `fillets_rounds_from_cylinders`, `fillets_from_tori_minor_radii`, `cones_half_angle_deg` | radii and angles with counts | position |
 
-- An axis is `"X"`, `"Y"`, `"Z"` or a vector written as text. Positions are in mm from the
-  bounding-box min corner, in the frame of the views.
-- A cylinder counts as full when its faces sweep at least 98 % of a turn. Counterbores, grooves and
-  stepped bores appear as several entries on the same axis.
-- **In the organisers' `facts.json` one hole entry can be two opposite blind holes** (practice 8,
-  read in the views 2026-11-12). Coaxial cylinder faces of one diameter are given as one centre
-  and one length, the length being the span from the outer end of one to the outer end of the
-  other. The 8 holes of diameter 7 along Z are listed as 40.2 long, the full height, and the top
-  and the bottom view both show a drilled cone bottom there, not white. The 4 holes of diameter
-  4.2 along X are listed as 66 long (x 7 to 73, pad face to pad face); the right and left views
-  show a bottom. The isometric view shows no bottom in either group, only the wall and its seam
-  (a straight line along the axis, easily taken for the bottom's edge), so the holes are deeper
-  than about 0.7 diameters and nothing says how deep. The bore of diameter
-  20 on the same span is two openings into the window, and white in both views. The depth of
-  each blind hole is nowhere in `facts.json` or the brief; the brief calls all of them "through".
-  Our eval tool (`tools/dataset/part_worker.py`) keeps every stretch of an axis as its own entry,
-  so the eval set has no such case. `holes.py` alone cuts the whole span: on practice 8 that makes
-  through holes of all 12, about 12 cm3 of the 121 cm3 part for the 8 large ones alone.
-  `spans.py` now replaces such a span (see `state.md`).
-- **Where practice 8 differs from its views** (2026-11-12, whole pipeline with `spans.py`, 1.063
-  times the true volume, 7.7 cm3 of excess; `tools/check_views.py`, no ground truth). One kind of
-  place: the lobes of the flange around the bolt holes. In the part a lobe is a boss of radius 6
-  that stands only at the top and at the bottom, about 7 mm of cylinder ending in a dome, with a
-  fillet into the body wall; between the two domes there is no lobe. Our solid has every lobe as
-  a prism over the full height, because the top outline is the union over all heights. The back
-  centre lobe is right already (the side silhouette shows its profile). Wrong are the two back
-  corner lobes, hidden behind it in the side views, and the front centre lobe, hidden behind the
-  feet: about 1 cm3 each by a rough estimate. Their profiles are in the views, but as lines inside
-  the part (side views, isometric views), not as silhouette. Tone more than 15 levels off: back
-  17.5 % of the part pixels, front 8.4 %, left and right 4 to 5 %, top and bottom under 1 % since
-  the drill points, isometric 1 and 3 %. The rest of the excess can be the hole depth: up to 3.7
-  cm3 (d7 holes 10 mm deep instead of 5.05: 3.1; d4.2 holes 11 instead of 5.94: 0.6).
-- **The isometric silhouette takes 0.8 % of the true volume off practice 8** (hull 1.112 to
-  1.104, the notches between the domes of the lobes on the silhouette's rim), which is under the
-  1 % minimum gain, so with `HULL_ISO_EXCESS=1.05` the support runs and is not kept.
-- **Practice 5, 7, 9 against their views** (`tools/check_views.py`, whole pipeline of 2026-11-12
-  noon, volumes 1.224, 1.936, 1.729 times the truth). Share of part pixels with the tone more than
-  15 levels off, over the 8 views: 4.0 %, 16.7 %, 22.1 % (practice 8: 6.2 %), so the measure
-  ranks the parts as the volume does, without a ground truth. Lines of the views with no edge of
-  ours near: 28 %, 41 %, 50 %. Where, by eye in the saved pictures: practice 5, three dark
-  rounded-rectangle openings and three scallops in the bottom view and three areas of 5900 px in
-  the back view that we have flat; practice 7, the whole deep cavity of the top view (89000 px in
-  two areas) is filled in ours; practice 9, in the top and front views the mouths of the six d127
-  bores do not show in our solid at all (view 82, ours 202, 31000 px each): the bores are cut
-  (hull + holes 2.68 to 1.88) but a skin closed their mouths (fixed, see below), and the big
-  recess of the front view (65000 px), the crankcase hollow the bores open into, is flat in ours:
-  87 mm of our material lie in front of the inner bore mouths that the front view draws.
-- **A hole listed up to a face of the part can stay closed in our solid** (2026-11-12, practice
-  9). The hull's faces that come from a traced silhouette lie a fraction of a pixel outside the
-  part's (0.25 to 0.31 mm on practice 9, at 0.52 mm per pixel); box faces are exact. A cylinder
-  cut exactly as listed then ends under a skin: the volume is almost right and every view that
-  looks at the mouth is wrong (the "bores do not show" entry above was this, not material lying
-  over the mouths). `spans._open_ends` carries such a hole through.
-- **A listed hole end is a point of the part's surface, and a view can say which kind** (2026-11-12).
-  An end is a bottom or a mouth. If a view that looks at the end from outside draws its circle,
-  it is a mouth and the part is empty from there to that camera: a depth that needs no tone and
-  no isometric search (practice 9: 87 mm). The line must not be one our own solid draws there:
-  a coaxial hole on the far face projects onto the same circle (eval 123).
-- **The area around a mouth is not always the face the mouth lies on** (2026-11-12, practice 7):
-  a hole that starts 2 mm down a recess only a quarter of a millimetre wider shows one circle,
-  and the area outside it is the face above the recess. Several mouths on one plane in one area
-  do not have that excuse (practice 9, three bores a bank).
-- **Volume and surface together do not tell a hidden void from open pockets we have not cut**
-  (2026-11-12, scratch probe; practice solids of the whole pipeline, eval solids after hull and
-  holes). Our volume and our surface over the true ones: practice 6 (the hollow one) 2.76 and
-  0.81; eval 38 1.62 and 0.76, eval 110 1.28 and 0.76, practice 5 1.23 and 0.81, none of which
-  is hollow. A missing pocket lowers the surface as a missing void does. The older note that
-  practice 6 has 0.45 of the true surface was the solid of steps 1 to 4.
-- **Nor does a wall thickness solved from the volume and checked with the surface** (same probe,
-  on voxels, 110 along the longest side; the surface of a cavity at depth t is the derivative of
-  its volume). If all of our excess were one cavity at one wall thickness, our surface over the
-  true one would be: practice 6 1.21 (wall 5.1 mm), against practice 5 1.06, eval 123 1.07, eval
-  109 1.08, eval 110 and 212 1.09, eval 38 1.17. The parts that are not hollow fit the hollow
-  model better than the one that is, because practice 6 still has excess outside (the grooves:
-  tone off on 10 % of its pixels) which the model puts into the cavity.
-- **What does set practice 6 apart needs the outside to be right first**: its bottom view fits
-  (tone off 0.3 %) and the brief's own sizes give the flange about 393 cm3 and the cap about 105
-  cm3 against 378 cm3 for the whole part, so material is missing where no view looks. Of the 122
-  faces the outside accounts for about half (this session's count: 18 grooves with two flat
-  walls each, 36 fin patches, top, bottom, bore floor); 36 B-spline faces and one plane are left
-  for an inner surface. Practice 7 is as thin a shell by volume (wall 18 % of its deepest point,
-  practice 6 13 %, all others 33 % or more) but its cavity is open and the top view shows it.
-- **Practice 6 has 18 fins and repeats every 20 degrees, not every 90** (2026-11-12, counted
-  in the top view: a fin at 12 and at 6 o'clock, a groove at 3 and at 9). The brief says
-  "four-fold symmetric with a fin on each cardinal axis", which is wrong. Tried on that word:
-  our solid in common with itself turned by 90, 180 and 270 degrees about the axis, to give the
-  grooves missed in the shade what the lit side has. Volume 2.759 to 2.443 times the truth and
-  the result is wrong: about 40 small fins, the side outlines lose 28 000 to 36 000 px, tone off
-  10.3 to 12.3 %. The turn by 180 degrees alone came back as an empty solid from the boolean.
-  A repeat angle has to be read from the views, never from the brief; with 18 turns of an
-  800-face solid it was not tried.
-- **The cone count of `facts.json` confirms the blind holes of practice 8** (2026-11-12).
-  `cones_half_angle_deg` lists 48 faces at 59 degrees, the point of a 118 degree drill, which the
-  brief calls chamfers. Two blind holes per listed span in the two groups is 16 + 8 = 24 holes,
-  and the views draw each drilled bottom as two half faces: 48. A drill point adds 0.6 radii to
-  the hole below its cylinder. `spans.py` cuts that point when the count fits (`state.md`).
-- **A listed hole that is not white in the views along its axis is not by itself wrong**: on the
-  practice set that holds for 12 hole groups (blind bores of 5, 6, 7 among them). The cut is
-  wrong where it opens a line of sight through the part that both views along the axis show
-  closed; on the practice set that is only the two groups of part 8.
+- An axis is `"X"`, `"Y"`, `"Z"` or a vector as text. Positions are in mm from the bounding-box
+  min corner, in the frame of the views; our solid is built in that frame.
+- A cylinder is full when its faces sweep 98 % of a turn. Counterbores, grooves and stepped
+  bores are several entries on one axis.
+- **One entry can be two opposite blind holes** (practice 8). Coaxial faces of one diameter are
+  listed with one centre and the span from one outer end to the other. Its 8 d7 holes are listed
+  40.2 long, the full height, and both views along them show a drilled bottom; the brief calls
+  them "through". Their depth is nowhere. Our eval tool lists every stretch separately, so the
+  eval set has no such case.
+- **The cone count confirms such holes**: practice 8 lists 48 cones at 59 degrees (a 118 degree
+  drill), two half faces for each of 24 blind holes. A drill point adds 0.6 radii.
+- A listed hole that is not white in the views along its axis is not by itself wrong (12 groups
+  on the practice set). It is wrong where it opens a line of sight both views show closed.
+- **A hole listed up to a face can stay closed in our solid**: faces traced from a silhouette lie
+  a fraction of a pixel outside the part's (0.25 to 0.31 mm on practice 9), so the cylinder ends
+  under a skin. The volume barely shows it; every view of the mouth does.
+- **A listed hole end is a point of the part's surface.** If a view looking at it draws its
+  circle, it is a mouth and the part is empty from there to that camera (practice 9: 87 mm). The
+  line must not be one our own solid draws: a coaxial hole on the far face projects onto the same
+  circle (eval 123). The area around a mouth is not always its face (practice 7: a recess a
+  quarter of a millimetre wider than the hole shows one circle).
+- **Volume and surface together do not tell a hidden void from uncut open pockets.** Our volume
+  and surface over the true ones: practice 6 (hollow) 2.76 and 0.81; eval 38 1.62 and 0.76,
+  practice 5 1.23 and 0.81 (not hollow). A wall thickness solved from the volume and checked
+  with the surface fits the parts that are not hollow better than practice 6.
 
-**`description.md` in the practice set is written prose with information that is not in
-`facts.json`**: plate thicknesses, where a pocket or rib sits and how deep it is, which holes are
-blind, symmetry planes. Example, practice part 1: "plate 14.0 mm thick in Y, rear rib protrudes 5.0
-mm, recess Ø25.4 with axis parallel to X centred at Z = 25.4, Y = 7.0". It always has an
-`**Envelope:** X x Y x Z mm` line.
+## Briefs and `context.png`
 
-**The views** are 1024 px, orthographic, white background, the part in flat tan shading with dark
-lines on the face boundaries. Pockets and cavities are visible as shading and edges, especially in
-the two isometric views.
+- **Practice briefs are prose but hold almost no number `facts.json` lacks**: of 417 numeric
+  tokens 360 are verbatim in `facts.json`, 51 derivable, 6 new (two hole centres of practice 5,
+  angles). No depth of any feature that causes our excess. Each has an
+  `**Envelope:** X x Y x Z mm` line.
+- **They are wrong in places**: practice 6 "solid" (it is a shell) and "four-fold symmetric" (it
+  repeats every 20 degrees); practice 8 blind holes "through", drill points "chamfers"; practice
+  9 "exact mirror images" with bores offset 25.4 mm; practice 1 recess at Y = 7.0 where the view
+  shows 0; practice 5 "thin-walled cover" for a cylinder head. The views decide.
+- Eval briefs are generated from `facts.json` by a template and hold nothing more.
+- `context.png`: the part in orange inside a grey assembly, from an unstated angle. 6 of the 9
+  practice parts have one (not 7 and 8); the eval set has none.
 
-- The part is centred in the image. Half the image equals the framed extent times 1.04.
-- **A tone is a face direction, not a depth** (measured 2026-11-11). In a straight view every flat
-  face square to the camera has the same tone whatever its depth (practice: 182 +-5, with a slow
-  gradient across the image; eval renders: one exact value). Slanted faces are darker (practice 8
-  front: 154 and 130). An isometric view gives the three sides it sees three tones (practice:
-  194 / 102 / 82), so there a tone says which way a face looks. Depth comes from where a face of a
-  known direction appears in the isometric view. The real renderer and our eval renderer light
-  differently, so tones must be measured per view on the solid, never hard-coded.
-- **Measuring a tone on the solid's faces goes wrong in three ways** (all found 2026-11-11, each
-  made a false cut): (1) where the solid has far more material than the part, most of its faces of a
-  direction are not faces of the part, and the commonest tone under them belongs to another side
-  (eval 51: 117 instead of 192 for the top in the isometric view); (2) a region taken for a face
-  square to the view can be a gently sloping one, which the isometric view shows in another side's
-  tone (eval 171); (3) in one straight view the commonest tone can be that of a sloping face that
-  fills the view (eval 171 front: 180, the other five views 176 and 177). What `shading.py` does
-  now: the facing tone is the middle one of the six straight views; the isometric tone of a side is
-  measured two ways (all faces of the solid, and only faces whose outline lands on isometric lines)
-  and where they disagree the one equal to another side's settled tone is dropped, because the
-  three sides of one isometric view have three tones.
-- **The facing tone is nearly one value across the six straight views on the real renders too**
-  (measured 2026-11-12 on the 9 practice parts, on the solid's facing faces): 176 to 186 per view,
-  the middle of the six 182 to 185. Practice 9 has no 18-level gap there; that gap is between the
-  commonest colours of the views, two of which show mostly the slanted banks. Single views do sit
-  up to 6 levels off the middle (practice 7 right: 176 against 182 +-3), so `shading.facing_tone`
-  can miss the facing faces of such a view. That errs on the side of not cutting.
-- **A gently sloping face has almost the tone of a face square to the view** (Lambert: 15 degrees
-  is 3 % darker), so tone cannot tell them apart. What does: the solid usually has the slope right
-  already from the side silhouette, and then its outline lands on the isometric lines as it is.
-  Such a face is left alone (`shading.confirmed`).
-- **In the real renders the tone depends on which way a face tilts, not only on how much**
-  (measured 2026-11-12 on the dish of practice 2, back view, whose shape is known from the brief:
-  a torus of minor radius 15.25 around the stem). Facing tone 186. At 25 degrees of tilt the four
-  tilt directions (right, down, left, up in the image) give 167, 125, 154, 230; at 5 degrees 179,
-  170, 176, 184. Reversing the tilt reverses the pattern, so a dent and a bump look different in one
-  view. So the Lambert figure in the bullet above ("15 degrees is 3 % darker") understates it for
-  these renders: the light is not at the camera. `tone = 63 + 16 nx - 86 ny + 113 nz` (image axes,
-  nz towards the camera) fits the dish with an rms of 6.6 levels, about 4 degrees; the rest is a
-  highlight (230 is brighter than facing). One tone is still one equation for the two unknowns of a
-  normal.
-- **The tone is one function of the normal in the camera's frame, the same for every view and every
-  part, in both renderers** (`tools/check_normals.py`, 2026-11-12). A table of the median tone per
-  direction of the normal (21 x 21 cells), built from the other parts, predicts a part it has not
-  seen: on the 24 eval parts (normals from the ground truth) with an rms of 2.3 grey levels, median
-  0, and no view worse than 3.3; on the 9 practice parts (normals from our solid after steps 1 to 4,
-  so wrong where the solid is) with a median of 2 levels, 1 to 2 on seven parts, 4 on part 7 and 24
-  on part 6. The light moves with the camera and comes from above it in both: as one distant light,
-  direction (x +0.13, y +0.70, z +0.70) with x to the right of the image, y up, z to the camera.
-  Eval: `tone = 120 + 10 x + 50 y + 53 z`; practice: `90 + 15 x + 76 y + 77 z`. The linear form is
-  only rough (rms 5.4 on eval); the table is what fits.
-- **How much a tilt shows depends on its direction** (same run, tone by the table; facing is 184 in
-  the practice renders, 178 in the eval renders):
+## The views: geometry
+
+- 1024 px, orthographic, white background, flat tan shading, dark lines on face boundaries.
+  Hardly anti-aliased (3 grey levels), so no sub-pixel edge exists.
+- The part is centred; half the image is the framed extent times 1.04. In the six straight views
+  the silhouette's bounding rectangle is the box face, so the scale is exact.
+- In the isometric views the frame fits the projected box or the part itself. The scale follows
+  from the top view: the extent along (1, 1, 0) in mm is the part's width there in pixels
+  (`verify._iso_scale`). A stretch can be 9 times shorter there than in a straight view.
+- A solid drawn with `verify.draw` lands within 1 px of the part in all 8 views, both renderers.
+- **The silhouette mask is wider than the part** (the dark outline counts as part), so tracing
+  through pixel centres is closer than along pixel edges. A pixel is background when its darkest
+  channel is above 215.
+- A silhouette overlap below 1 is normal for thin parts: the ground truth gets 0.83 against its
+  own view when the part is 12 px thick.
+- Thin-walled silhouettes are rare and easy to tell: a 3 x 3 opening removes 14.5 % of the part
+  pixels in eval 51's top view and at most 0.07 % in every other silhouette we have.
+- **A silhouette cut can land below the true volume without being wrong** (eval 75: 0.956 with
+  fitted and traced outlines alike).
+- **Round sections come out square** from two side views: up to 4/pi = 1.27 times the volume.
+- **What the silhouettes miss is open to a view, not enclosed**: after hull and holes 97 % of
+  the excess has a free line of sight along an axis. What is missing is depth.
+
+## The views: lines
+
+- Lines are found as what a 5 px closing fills in, at least 28 levels darker than both sides.
+  Missed: a line between two dark faces (practice 6: faces 55 to 70, line 30 to 45; a relative
+  test in `regions.segment` gets most) and the boundary of a bright and a dark face (split at
+  jumps of 24 levels; in eval renders that also splits curved faces into their triangles).
+- **The organisers' renderer draws no line at the bottom of a groove** (practice 6): ridges have
+  a line, valleys only a tone step of as little as 2 levels. Two faces meeting in a concave
+  crease can be one area; `depth.py` skips areas under 90 % of their convex outline.
+- **A render draws the seam of a full cylinder, cone or torus**, which is no boundary between
+  two faces (eval 181). Two half faces give two such lines in opposite views (practice 3).
+- **A third of the lines inside the views are not edges of our solid** (32 % of 762 000 px).
+  Under them the truth has a depth step for 52 % (our surface in front for 93 % of those), a
+  smooth or coplanar boundary for 42 % (a pure split for 15 % of all), nothing for 4 % (our eval
+  renderer's own lines).
+- `lines.py` grades (`tools/check_lines.py`): pieces called "below" have excess under them for
+  16 876 of 16 992 px; "level" is a pure split for 51 % of its length; 28 % stays "unseen".
+- **A line between two adjacent facing regions is a depth step** (175 of 179 pairs); where our
+  solid has the pair coplanar it is wrong for 18 of 22. It does not say which side is too high.
+- **A floor shows as a line in a perpendicular view only if the recess is open to that side**
+  (eval 38: 8 of 11 wrong regions; 0 of 16 blind pockets on 236, 110, 74).
+- **The outline of a region must be taken on the middle of the lines around it**; the 2 to 3 px
+  offset otherwise misses a 2.5 px tolerance once projected.
+- **A floor seen past something nearer has that thing's outline**, so its outline lands on no
+  line at the right depth while its tone fits (eval 74, 171, 236).
+- Lines under our surface exist on 7 of the 24 parts (15 186 px; eval 3, a tyre, has a third:
+  seams of a curved surface, not pockets). 3423 px are in a closed figure, 345 px end up with a
+  depth that stands out.
+
+## The views: tones
+
+- **A tone is a face direction, not a depth.** The renders hold no depth cue (regressing the
+  facing tone on depth changes nothing). Depth comes from where a face of known direction
+  appears in the isometric view.
+- **The tone is one function of the normal in the camera's frame, the same for every view and
+  part, per renderer.** A 21 x 21 table of median tone per direction predicts unseen parts with
+  an rms of 2.3 levels on eval (ground-truth normals) and a median of 2 on practice (our normals;
+  4 on part 7, 24 on part 6). One distant light from above the camera, direction (+0.13, +0.70,
+  +0.70) in image x, y and towards the camera. Roughly: eval `120 + 10 x + 50 y + 53 z`,
+  practice `90 + 15 x + 76 y + 77 z`; the table is what fits.
+- Facing tone: 178 in eval renders (one exact value), 182 to 185 in practice (single views 176
+  to 186). Tone by tilt direction:
 
   | tilt | practice: right, up, left, down | eval: right, up, left, down |
   | --- | --- | --- | --- |
@@ -187,441 +140,183 @@ the two isometric views.
   | 30 to 50 | 157, 202, 136, 90 | 168, 198, 154, 117 |
   | 50 to 75 | 134, 186, 107, 76 | 150, 187, 130, 112 |
 
-  A face tilting down (its normal turning towards the bottom of the image) loses about 2 levels per
-  degree; tilting up it first gets brighter and then darker again, so the tone there has two answers.
-- **Where the practice tone does not fit the table, our solid is wrong there**: the rms on the
-  practice parts is 4 to 13 levels on parts 1, 2, 3, 4, 8 (volume within 10 % of the truth) and 18
-  to 42 on parts 5, 6, 7, 9 (the ones with large excess). Not yet used.
-- **Areas between the lines can be told apart by tone alone, except flat faces at some angles**
-  (`src/agentic_cad/regions.py`, `tools/check_regions.py`, 24 eval parts, 1367 areas of at least
-  250 px in the six straight views, truth from the ground truth's normals, 2026-11-12). Called
-  facing (even tone, the facing one), slanted (even, another tone) or curved (uneven): right for
-  98.0 % of the area and 91.3 % of the areas. By area: facing 99.9 % right, curved 98.6 %, slanted
-  68 %. A third of the slanted area is called facing, and no threshold fixes that: other directions
-  have the facing tone too (tilts of 5 to 30 degrees to the right or upwards, and some steep ones:
-  eval 211 back at 72 degrees shows 177 against 178). It takes a second view of the same face.
+  Tilting down loses about 2 levels per degree; tilting up first brightens, so the tone has two
+  answers there. A dent and a bump look different in one view.
+- **The facing tone does not prove a face is square to the camera.** Tilts of 5 to 30 degrees
+  right or up, and some steep ones (eval 211: 72 degrees shows 177), have it; so does a large
+  even area (practice 6: a fin's flank of 71000 px). What tells a level face: seen edge-on from
+  a perpendicular view it is one straight stretch with a line along it (100 % for the true
+  ones, 9 % for the false one).
+- **The facing tone must be taken from even areas of the six views, not from pixels**: the
+  commonest colour is wrong on round parts and on views filled by a slanted face (eval 171,
+  practice 9, whose "two tones" were its banks).
+- **Measuring a side's isometric tone on our own faces goes wrong** where the solid has much
+  excess (eval 51), where a "facing" region slopes gently (eval 171) and where a slanted face
+  fills the view. `shading.py` measures it two ways and drops the one equal to another side's.
+- **The real renders light a flat face unevenly**, up to 8 levels across the image; a plane
+  plus a bowl around the centre fitted per area leaves 1 level. The eval renders do not.
+- **The eval renders are flat-shaded per triangle**, the real ones smooth.
+- **Which renderer made a case can be read off the solid**: the median misfit of a table is 1.0
+  with the right one and 11 to 15 with the other.
+- **Areas between lines can be classified by tone alone** (`regions.py`): facing, slanted or
+  curved is right for 98.0 % of the area (facing 99.9 %, curved 98.6 %, slanted 68 %: a third
+  is called facing and no threshold fixes it).
 - **The isometric view settles facing against slanted only as a check of the solid's own face**
-  (`src/agentic_cad/normals.py`, `tools/check_regions.py`, 24 eval parts, our solid after steps 1 to
-  4, 2026-11-12). The solid's surface under a flat area is projected into the isometric view that
-  sees that side and the tone there is read. Solving the normal freely from the two tones went wrong
-  in three ways: two equations have more than one solution (eval 145 top: 76 degrees for 67, 57
-  degrees off in direction); where the solid is at the wrong depth the tone is read off another face
-  (eval 38 top, the floor of the U-channel: "78 degrees" for a face square to the camera); and small
-  areas land on a neighbour. Every normal it got right was also the solid's own normal there. So the
-  test is: do both tones fit the normal the solid has (within 5 levels each)? Then the area is that
-  face. Result: of 435 flat areas 227 are confirmed (90 % of the flat area); among them all 54
-  truly slanted ones are called slanted (35 by tone alone), normal off by 0 degrees median and 1 at
-  the 90th percentile. By area the slanted faces go from 68 % to 88 % right, all faces from 98.0 %
-  to 98.9 %. It finds no slanted face the solid does not already have.
-- **The isometric confirmation tests a face's direction, not its depth, so it must not stop the
-  shading step from cutting** (2026-11-12, 24 eval parts, solid after steps 1 to 4). A face of the
-  solid that is far too high still lands, in the isometric view, on some parallel face of the part
-  and shows the right tone. Of 217 areas `normals.py` confirms, the solid is within 2 px of the
-  truth under 200; `shading.confirmed`, which also wants the outline on lines, is right on 155 of
-  166. Used as one more reason to leave a face alone it blocked three floors on eval 38 that the
-  shading step lowers correctly (160 px proposed, the truth 164 px down): IoU 0.639 without it,
-  0.610 with it. It changed nothing on the other parts, including the one wrong proposal it would
-  have stopped (eval 146, which the step drops by itself).
-- **How much of a part's flat area the isometric view confirms follows how right the solid is**
-  (practice parts, same date): 100 % on parts 1, 2, 3 (volume within 2 % of the truth), 96 % on 5,
-  86 % on 8, 61 to 62 % on 4 and 7, 47 % on 9, 26 % on 6. An area that is flat in the view and not
-  confirmed is a place where the solid is wrong or hidden from the isometric camera. Not used yet.
-- **The facing tone does not prove a face is square to the camera, even on a large even area**
-  (practice 6, left view, 2026-11-12): the flank of a fin, 71000 px with the tone of a facing face
-  to within 3 levels, is not one. Taken for one it was cut flat to the solid's lowest point, 30 mm
-  into the cone, and the verifier accepted it. What tells a level face: seen from a camera at right
-  angles it is one straight stretch, and the view draws a line (or the outline) along it. The flat
-  triangles of practice 6 have that line along 100 % of their stretch; the false one along 9 %.
-- **"The solid contains the part" gives depths without any other source** (2026-11-12). A level
-  face is no higher than the solid's lowest point over its area; a flat face through a known edge is
-  no steeper than the steepest plane through that edge inside the solid. Both cuts can only remove
-  what is not part, as long as the area really is that kind of face. On practice 6 the flanks of the
-  fins come out at 82 to 83 degrees and the planes touch the cone along the whole ridge (0.3 to 3 mm
-  over 35 mm of radius).
-- **The verifier's score drops for a right cut whose neighbours are still uncut** (practice 6: 14
-  triangles and 15 flanks cut, volume 3.31 to 2.99, score 0.227 to 0.206). The walls left standing
-  next to a cut are edges the views do not draw, so precision falls (front view 0.94 to 0.44), while
-  recall rises in every view (0.61 to 0.74): more of the views' lines have become face boundaries.
-- **The organisers' renderer draws no line at the bottom of a groove** (practice 6, top view,
-  every ridge and valley of the lower half looked at pixel by pixel, 2026-11-12). Each ridge between
-  two flanks has a line 20 to 80 levels darker than both; no valley has one, only the step from one
-  flank's tone to the other's, which is as little as 2 levels (70 and 68). So two faces that meet
-  in a concave crease can be one area, and no threshold separates them. `depth.py` solves such an
-  area from the level edges it lies along instead (see `state.md`).
-- **Comparing an area's tones with those the solid's surface would have does not say whether the
-  solid is right there** (practice 6): under four of the flat triangles the solid is a cone whose
-  tone, on the lit side, is the facing tone to within 1 to 10 levels. Used as a guard it kept those
-  four from being levelled.
-- **Lines between two dark faces are missed** (practice 6, top view: faces of tone 55 to 70, line
-  30 to 45). `regions.segment` now also takes what a 5 px closing fills in by 8 levels and 15 % of
-  the tone; that separates most flanks, not those in the darkest third of the view. An area made
-  of two faces bends around a corner: `depth.py` skips areas under 90 % of their convex outline.
-- **Eval part 99 does not give the same solid twice**: hull, holes and rounds scored 0.250 in one
-  run and 0.406 in the next (volume 3.77 and 2.32 times the truth), with other sessions loading the
-  machine. A before/after on that part means nothing unless both use one solid.
-- **The facing tone has to be taken from even areas, not from pixels.** The commonest tone of a
-  view, or the middle one of the six, is wrong on round parts, whose side views show no flat face
-  (it called 3.4 % of the truly facing area slanted). The tone that most of the even area of the six
-  views has got every facing area of the 24 parts right.
-- **The real renders light a flat face unevenly**: up to about 8 levels across the image, smoothly
-  (practice 1 right: 178 to 186 on one flat face; practice 2 front: 183 to 186). A plane plus a bowl
-  around the image centre, fitted per area, leaves about 1 level. Without that, large flat faces of
-  the practice parts count as curved (practice 1: 53 % of the area facing, 77 % with it). The eval
-  renders have none of it.
-- **Where a bright face meets a dark one the line between them is not found** (practice 1 front: the
-  flat block and the dark start of the recess were one area). `find_lines` wants a line 28 levels
-  darker than both sides. `regions.segment` also splits where neighbouring pixels differ by 24
-  levels. In the eval renders that splits some curved faces into their triangles, which then look
-  flat (complex tier 98.2 % to 95.6 % of the area right); the real renders are smooth.
-- **Which renderer made a case can be read off the solid** (2026-11-12): the median difference
-  between the views' tones and a tone table applied to our solid's faces is 1.0 with the right
-  table and 11 to 15 with the other (eval 249: eval 1.0, organisers 14.6; practice 2: organisers
-  1.3, eval 11.3). `tone.choose` takes the organisers' table unless another has under half its misfit.
-- **The tone table confirms a proposed face but does not measure its angle to 10 degrees**
-  (2026-11-12). Faces proposed rightly by `curved.py` sit 0.5 to 3 levels (median) from the tones
-  the table gives them, the flat face they replace 8 to 22 away; the wrong proposals on practice 5
-  were 20 to 40 away. But on eval 249 the true cone (half angle 53.9) is 9 levels off and a wrong
-  one (43.9) 1.5: the ground truth normals there are 36 degrees from the camera and the render is 7
-  to 16 levels darker than the table says for that direction on the lower half of the ring. Why is
-  not known.
-- **The verifier prefers whatever brings the volume closer**, since its score is multiplied by the
-  volume ratio: between three cones on eval 249 its line terms were equal to three digits and it
-  chose by volume alone. That is right only when the candidate accounts for the whole recess (the
-  cone carried through to the axis), and wrong when part of the excess is elsewhere (the same cone
-  stopped at the next line: it picked a steeper one that cut into the part, IoU 0.83 against 0.88).
-- **The eval renders are flat-shaded per triangle** (`smooth_shading=False`, triangles up to 0.15
-  rad apart), the real renders are smooth. A curved face has steps of tone in the eval renders.
-- **Practice 2 after step 3 is exactly the revolved silhouette** (12095 mm3 against 12131 computed
-  from the pixels; true 10947). All of the excess is one ring-shaped trough in the dish behind the
-  rim: the R15.25 arc that the silhouette shows leaving the stem carries on below the rim's edge
-  between radius 12.4 and 24.4 mm, 1.23 mm deep (about 1140 mm3 computed). No silhouette shows it;
-  the back view shows it as shading, and `facts.json` has the radius (`fillets_from_tori_minor_radii`).
-- **The outline of a region must be taken on the middle of the lines around it.** A region ends
-  where the line begins; that offset of 2 to 3 px misses the 2.5 px tolerance once projected.
-- **A floor seen past something nearer has that thing's outline, not its own**, so its outline lands
-  on no line at the right depth, while its tone fits (eval 74, 171, 236). Lines cannot find these.
-- **A slanted plane placed by its outline alone is not reliable** (2026-11-11). Trying every fall
-  direction, slope and depth and keeping the plane whose outline lands on isometric lines gave a
-  false cut on eval part 74: with three free numbers some plane always lands on lines. Hung on an
-  edge of known depth, with only the slope free, it gave none on the 8 parts checked exactly.
-- `tools/eval_hull.py --iou` samples 1500 points, so it cannot see a change under about 1 % of the
-  volume. A boolean intersection with the ground truth is exact but fails on some complex parts
-  (eval 3 and 171 gave nonsense).
-- The solid drawn with `verify.draw` lands within 1 px of the part in all 8 views, real and eval
-  renders alike (practice 1, 3, 8, eval 1), so matching across views pixel by pixel is sound.
-- In the six straight views the silhouette's own bounding rectangle is the box face, so the scale is
-  known exactly.
-- In the isometric views the scale is not fixed by the box. The frame fits either the projected
-  bounding box or the part itself; `iso_silhouette` tries both and accepts one only if 99.8 % of the
-  silhouette falls inside the projection of the solid carved so far.
+  (`normals.py`): solving a normal freely from two tones has several solutions and reads other
+  faces where the depth is wrong. Asking whether both tones fit the solid's normal (5 levels)
+  confirms 227 of 435 flat areas, all 54 truly slanted ones among them (slanted area right 68 %
+  to 88 %). It finds no slanted face the solid lacks.
+- **That confirmation tests direction, not depth**: a face far too high still lands on a
+  parallel face of the part. As a guard in shading it blocked three right cuts on eval 38.
+- **How much of a part's flat area is confirmed follows how right the solid is** (practice: 100 %
+  on 1, 2, 3; 26 % on 6), and where the practice tones miss the table the solid is wrong (rms 4
+  to 13 on good parts, 18 to 42 on 5, 6, 7, 9). `tools/check_views.py` uses this.
+- **The table confirms a proposed face but does not measure its angle to 10 degrees**: right
+  proposals of `curved.py` sit 0.5 to 3 levels from the table, wrong ones 20 to 40; but on eval
+  249 the true cone (53.9 degrees) is 9 levels off and a wrong one (43.9) 1.5.
+- **Comparing an area's tones with the solid's surface does not say the solid is right there**:
+  a cone on the lit side has the facing tone to within 1 to 10 levels (practice 6).
 
-**What the silhouettes miss is open to a view, not enclosed.** After steps 1 + 2, 97 % of the excess
-material (24-part eval sample, 2026-11-11) has a free line of sight to the outside along an axis:
-pockets, recesses and steps that sit behind a wall in every silhouette but are open to one view. Truly
-enclosed cavities are 3 %. The information is in the views as shading and face-boundary lines; what is
-missing is depth.
+## Practice parts
 
-**Round sections come out square.** A cylinder or turned profile whose axis lies across two views is
-cut by both as a strip, so its cross-section stays a square: up to 4/pi = 1.27 times the true
-volume. Practice outputs of steps 1 + 2 (2026-11-11): part 2 (poppet valve) is 1.23 times the true
-volume, part 4 (crankshaft) 1.24.
-
-**`context.png`** shows the part in orange inside a translucent grey assembly, from an unstated
-angle. 6 of the 9 practice parts have one (not 7 and 8).
-
-**The practice parts**, with tiers by our own rule (up to 30 faces simple, up to 200 medium, above
-that complex), which gives exactly 3 of each:
-
-| part | what | box mm | faces | holes listed | note |
+| part | what | box mm | faces | holes | note |
 | --- | --- | --- | --- | --- | --- |
 | 1 | retainer bracket | 19 x 19 x 51 | 17 | 2 | blind cylindrical recess along X |
-| 2 | poppet valve | 53 x 86 x 53 | 12 | 0 | cones and tori: a turned part |
-| 3 | flanged bushing | 22 x 132 x 132 | 9 | 1 | sleeve with a through-bore |
-| 4 | three-throw crankshaft | 212 x 197 x 565 | 178 | 0 | many fillets, no holes |
-| 5 | cylinder head cover | 508 x 86 x 165 | 172 | 33 | hollow box, 15 through-passages |
-| 6 | finned air-filter cone | 140 x 140 x 137 | 122 | 1 | 72 spline faces, V grooves |
-| 7 | housing (no context image) | 162 x 95 x 153 | 628 | 20 | deep open cavity, 222 spline faces |
-| 8 | hydraulic pump body | 80 x 128 x 40 | 306 | 19 | figure-eight through window |
-| 9 | V6 engine block | 508 x 256 x 512 | 371 | 23 | two inclined cylinder banks |
+| 2 | poppet valve | 53 x 86 x 53 | 12 | 0 | turned; a torus trough (R15.25) in the dish that no silhouette shows |
+| 3 | flanged bushing | 22 x 132 x 132 | 9 | 1 | bore is two half faces |
+| 4 | three-throw crankshaft | 212 x 197 x 565 | 178 | 0 | many fillets |
+| 5 | cylinder head | 508 x 86 x 165 | 172 | 33 | 15 through-passages; dark openings and scallops in the bottom view that we have flat |
+| 6 | finned air-filter cone | 140 x 140 x 137 | 122 | 1 | 18 fins, 72 spline faces; a shell a few mm thick |
+| 7 | housing | 162 x 95 x 153 | 628 | 20 | deep open cavity (89000 px of the top view) that ours fills |
+| 8 | hydraulic pump body | 80 x 128 x 40 | 306 | 19 | figure-eight window; 24 blind holes listed as 12 spans |
+| 9 | V6 engine block | 508 x 256 x 512 | 371 | 23 | two inclined banks; crankcase hollow behind the bores |
 
-## The local eval set differs from the real inputs
+Tiers by our rule (up to 30 faces simple, up to 200 medium): parts 1 to 3, 4 to 6, 7 to 9.
 
-`datasets/eval` was built by our own tool (`tools/dataset/part_worker.py`), which copies the
-organisers' format:
+- **Practice 6.** As a body of revolution its outline holds 3.27 times the true volume; the
+  flange alone holds more than the whole part. The bottom view is a closed face with one blind
+  bore, so no view shows the hollow. About half of its 122 faces are outside; 36 B-spline faces
+  are left for an inner surface. Intersecting our solid with itself turned by 90 degrees (on
+  the brief's word) gave a wrong solid; a repeat angle must be read from the views.
+- **Practice 8.** After the blind holes the excess (7.7 cm3) is the flange lobes around the
+  bolt holes: in the part a lobe is a boss only at the top and bottom, about 7 mm each, with no
+  lobe between; ours is a prism over the full height, since a silhouette is the union over the
+  depth. Their profiles are lines inside the side and isometric views. The rest can be hole
+  depth (up to 3.7 cm3). The isometric silhouette takes only 0.8 % off, under the minimum gain.
+- **Practice 7 is as thin a shell as practice 6 by volume**, but its cavity is open and seen.
 
-- **Its briefs are generated from `facts.json` by a template** ("Mechanical part ... 98 faces"). They
-  hold nothing that `facts.json` does not. A step that reads the brief cannot be measured on the
-  eval set; it can only be judged on the 9 practice parts, which have no ground truth.
-- Its views are rendered by us with pyvista in the same style and framing. The silhouettes behave
-  the same; small differences in shading are possible.
-- It has no `context.png`. Each case has a `source.json` the real inputs do not have.
-- Sources: 113 ABC, 85 Fusion 360 assembly, 68 Fusion 360 reconstruction. Tiers by face count.
-- Rebuilding it needs `cadquery` and `pyvista` in `datasets/.venv` and the 24 GB of raw downloads.
-  Neither is in `pyproject.toml`.
+## The eval set
+
+- 266 parts (100 simple, 100 medium, 66 complex by face count; 113 ABC, 153 Fusion 360), built
+  by `tools/dataset/part_worker.py` with pyvista in the organisers' format. Each case has a
+  `source.json`. Rebuilding needs `cadquery`, `pyvista` and 24 GB of raw downloads.
+- It cannot measure: anything read from a brief, blind holes listed as spans, enclosed voids
+  (no part has one), `context.png`.
+- **Eval 99** is a cage of spline tubes (2 % of its box). **It does not give the same solid
+  twice** under load (0.250 and 0.406): compare only on one cached solid. **Eval 51** has walls
+  of 1 to 2 px; the fitted outline cuts them through and the traced fallback gives its faces.
+  Together they are 52 % of the sample's lost IoU; parts filling under 5 % of their box are 6
+  of 266 and no practice part.
+- `--iou` samples 1500 points. A boolean with the ground truth is exact but fails on some
+  complex parts (eval 3, 171).
+
+## Where the loss is, and what did not work
+
+Research round of 2026-11-12: scratch prototypes on cached solids, in
+`runs/_research_scratch/`; plan and model experiment in `docs/plan-pipeline.md`.
+
+- Share of lost IoU on the sample: eval 51 and 99 52 %; blind flat-floored pockets open to one
+  direction 25 %; recesses open to two directions 12 %; fillets, chamfers, outline tolerance
+  8 %; under-cut 3 %; enclosed cavities 1 %.
+- Outside 51 and 99 the excess lies under flat floors square to a view: with every facing
+  region at its true depth eval 38, 236, 110, 74 reach 0.98 to 0.99. Excess under facing areas
+  11.4 part volumes, slanted 1.9, curved 6.3, under the lines 8.1 (summed over parts and views).
+- **A cut raises IoU exactly when the share of true excess in it exceeds r / (1 + r)**, r being
+  our volume over the true one: 0.51 at 1.05, 0.67 at 2, 0.79 at 3.7. So large structural cuts
+  first.
+- **The verifier prefers whatever brings the volume closer** (its score is multiplied by the
+  volume ratio) and **drops for a right cut whose neighbours are still uncut** (the walls left
+  standing are edges no view draws: practice 6, 0.227 to 0.206).
+- **The score rule passes most wrong arbitrary cuts** (59 of 60 good and 175 of 307 bad column
+  cuts); a per-pixel rule over the 8 views passes 55 and 30. On the cuts the steps themselves
+  propose the score rule kept no wrong one. The per-pixel rule counts the walls of an unfinished
+  recess against a right cut (eval 236), and no rule can choose a depth for a floor no view sees.
+- Tried and not worth building:
+  - depths from the briefs (no such numbers) or from tone (no depth cue);
+  - removing the deepest material until the volume fits: eval 38 0.643 to 0.468. The true
+    volume gives a depth only when all excess is known to lie under the chosen regions;
+  - a slanted plane placed by its outline alone, three free numbers: false cut on eval 74;
+  - cuts from coplanar pairs: +0.063 on the parts they were developed on, +0.004 outside;
+  - symmetry (`solid AND mirror`): 0.8712 to 0.8715; repeated figures do not share a depth;
+  - a second level-face pass after pockets: no change;
+  - work aimed at eval 51 and 99.
+- Surface metrics (Chamfer, F1 at 1 % of the diagonal) agree with IoU on removing outside
+  excess, except eval 38. A closed void with the wall 2 mm off scores worse than the filled part
+  under F1 and better under IoU.
+- **A model proposing typed cuts looked large on practice 5, 7, 9 and is unverified**: one cut
+  carries most of it (practice 7 top pocket, practice 9 crankcase), the proposers were told the
+  excess, and there is no ground truth.
 
 ## How the code behaves
 
-- **Straight cuts**: the two opposite views are mirrored onto each other and joined; a pixel is cut
-  only if both views show background there. A pixel is background when its darkest channel is above
-  215.
-- **Outlines** (`outline_fit.py`): the traced pixel outline is split at the corners of a 1.2 px
-  polygon; runs that fit a circle within 1 px and sweep at least 12 degrees become arcs, a whole
-  outline that fits a circle becomes a full circle, the rest are lines. Lines drifting under 1 px
-  (or 0.4 %) are made exactly horizontal or vertical. `HULL_OUTLINE=pixels|lines|arcs` switches the
-  mode (default `arcs`); `pixels` is the old 0.6 px polygon.
-- **The renders are hardly anti-aliased** (3 grey levels between part and background), so there is
-  no sub-pixel edge information to recover; a traced slanted edge is a true staircase.
-- **OpenCascade booleans with curved faces can return a wrong solid without saying so**, and
-  differently per platform (found 2026-11-11 on practice part 6, a round part seen end-on): the
-  result is valid, just not fully cut, or empty. On the ARM laptop a slightly enlarged circle gave
-  2 to 5 % too much volume; in the amd64 image the same cut came back empty. A fuzzy tolerance does
-  not help (1e-6 gives a wrong volume, 1e-4 an empty result). Flat faces are reliable. Hence the
-  projection check after every cut. What made part 6 cut cleanly on both platforms was fitting
-  fillets exactly tangent to the lines beside them and lines exactly onto the box faces.
-- **A fitted loop can cross itself** after its corners are moved; `trace_outlines` checks every loop
-  as a face and keeps the traced polygon for the ones that fail (eval part 99: 1 of 32 loops).
-- **The solid is built with its bounding-box min corner at the origin**, the same frame as the
-  positions in `facts.json` and the brief.
-- **The verifier** (`verify.py`): `observe(case_dir)` gives mask, lines and mm per pixel of every
-  view; `draw(mesh, view, dims, mm_per_px)` gives depth, face and normal per pixel of a candidate on
-  the same pixel grid; `check(solid, case_dir, observed).score` is lines x silhouettes x volume
-  ratio. A check takes 1 to 4 s. Lines are found as what a 5 px closing fills in (at least 28 grey
-  levels darker than the surroundings).
-- **The scale of an isometric view** follows from the top view: the part's extent along (1, 1, 0) is
-  known there in mm and is the width of the part in the isometric view in pixels. No guess about what
-  the renderer framed is needed (`verify._iso_scale`).
-- **A silhouette overlap below 1 is normal for thin parts**: the ground truth itself gets 0.83 against
-  its own view when the part is 12 px thick, from a one-pixel difference.
-- **The tone of faces looking at the camera** is the most common part colour of a straight view. In
-  the eval renders it is the same in every view (BGR 85, 141, 178); in the practice renders it varies
-  by view (practice part 9: 104, 159, 202 in four views, 97, 146, 184 in two), so it is taken per view.
-- **A hole of ours can show past the edge of a face**: when a listed hole is not where the view draws
-  it, its floor appears as a sliver of lower level inside the neighbouring face (eval part 123).
-- **A third of the lines inside the views are not reproduced by our solid, and most of them mark
-  missing geometry, not only a missing split** (scratch probe, 24 eval parts, 8 views, solid after
-  holes, rounds, depth and shading, 2026-11-11 night). Of 762 000 line pixels inside the part,
-  244 000 (32 %, 2320 pieces) lie more than 4 px from every face boundary of our solid, so inside
-  one face of ours. What the ground truth has there: a jump in depth for 52 % (93 % of those with
-  our surface in front of the true one), a boundary between faces that meet smoothly or lie in one
-  plane for 42 % (two thirds with excess under it, mostly eval 3; one third, 15 % of all, with our
-  surface already right: a pure split, as the cylinder seams of eval 27), a crease for 2 %, nothing
-  for 4 % (eval 1, 73, 181, 37: lines of our renderer with no edge in the truth). Face counts miss
-  both ways: ours above `facts.json` on 13 of the 24, below on 9, equal on 2.
-- **An edge is drawn onto a face with `BRepFeat_SplitShape`**, as the section of the face with the
-  line swept along the view direction (2026-11-12). Pieces that meet must go in as one wire, or the
-  edges do not share their corners and nothing splits; a figure that neither closes nor reaches
-  the border of the face at both ends is dropped silently. The sweep also meets a cylinder on its
-  far side: only section edges near the visible line are kept. `ShapeUpgrade_UnifySameDomain`
-  (`vh.tidy`) undoes every such split, and a single edge along a full cylinder adds no face.
-- **In an isometric view the same stretch can be 9 times shorter than in a straight view** (eval
-  123 left: 0.010 against 0.090 mm per pixel), so anything read beside a line there must be taken
-  further from it in the straight view, by that ratio.
-- **A triangulation stays on the shape it was made for.** `verify.tessellate(solid, ..., angular)`
-  with a finer angle than the default leaves that mesh on the solid, and every later
-  `verify.draw` of it (level faces, shading) then sees other triangles and decides differently
-  (practice 7: 2.076 to 2.090 with no cut in between). A step that needs a finer mesh takes it from
-  a `BRepBuilderAPI_Copy(solid, True, False)`.
-- **A solid can be valid in memory and invalid in the file.** Practice 4 after the rounds step
-  passes `BRepCheck_Analyzer` before and after `vh.tidy` and fails it once the `.stp` is read back.
-- **Most thin faces of the hull are not two views disagreeing about one plane** (`datums.py`,
-  2026-11-12). Putting the fixed coordinates of the three silhouettes on shared values removes about
-  6 % of the faces thinner than 2 px on the 24 eval parts. What is left: corner patches where a
-  curved outline of one view meets a curved or slanted outline of another (eval 2, 145: inherent to
-  cutting prisms, the part has a blend there), short nearly-straight pieces inside one outline, and
-  the polyline outlines of eval 51 and 99, which hold 95 % of all thin faces of the sample.
-- **Counting small faces by area counts real holes** (eval 147: 50 holes of r 4.5 mm are each under
-  0.1 % of the area). Use the width, 2 x area / perimeter.
-- **Moving an outline by a pixel can cost a thin-walled part its walls** (eval 51 with datums: the
-  share of the true part inside our solid falls from about 78 % to 50 %).
-- **The silhouette mask is already wider than the part**, so tracing through the centres of the
-  border pixels is closer to the truth than tracing along their outer edges (2026-11-12: edges made
-  14 of 22 ordinary eval parts worse, none better). The dark line drawn around the part counts as part.
-- **The fitted outline can cut a thin wall through** (eval 51 top/bottom, 316 loops, walls of 1 to 2
-  px: the cut returns 0.5 % of the true volume after 90 s, then the traced pixels are used; that is
-  where its 1384 faces come from). Almost every loop is fitted as lines and arcs; the polylines in
-  the output come from this fallback, not from loops that could not be fitted.
-- **A silhouette cut can land below the true volume without being wrong** (eval 75, a plate with
-  many holes: top/bottom leaves 0.956 of the true volume with fitted and with traced outlines alike,
-  and matches its view). The 97 % guard then dropped the whole direction: IoU 0.675 instead of
-  0.925. What looked like a fragile boolean (it "went through" with shared datums or edge tracing)
-  was the volume landing just above 97 %.
-- **The order of the silhouette cuts decides their time, not their result** (eval 99, 2026-11-12,
-  each cut in a child process, laptop moderately loaded). Isometric cut last: 178 s for that cut.
-  Third: 156 s. Second: 20 s. First, on the box: 0.4 s, and the four cuts together 48 s (the three
-  straight ones alone 23 s). Same solid every time (2.318 of the true volume). The cut was "by far
-  the slowest and the only one that hung" because it ran last, against a solid of thousands of faces.
-- **Eval 99 is a cage of spline tubes** (320 B-spline faces, volume 2 % of the box). Its 3130 faces
-  are the three lattice silhouettes crossing where the part has nothing: ghost material, 3.78 times
-  the true volume. Its outlines are fitted and not reducible (about 8 segments per window).
-- **The isometric cut, made first** (hull only, no holes, 2026-11-12; three cuts against four):
-  eval 99 IoU 0.250 to 0.406, 38 0.576 to 0.628, 171 0.568 to 0.580, 51 0.125 to 0.128, 236 and 110
-  unchanged; practice volume / true: 6 3.84 to 3.66, 7 2.65 to 2.54, 9 2.70 to 2.68, 5 unchanged.
-  No part lower. It adds faces: 51 485 to 958, 171 90 to 176, practice 9 32 to 81, 7 121 to 187.
-  Its scale still has to come from the finished hull (`iso_silhouette`), so "first" means carving
-  twice, or taking the scale from the top view as `verify._iso_scale` does.
-- **Thin-walled silhouettes are rare and easy to tell**: the share of part pixels that a 3 x 3
-  opening removes is 14.5 % in the top view of eval 51 and at most 0.07 % in every other silhouette
-  of the 24 eval parts and the 9 practice parts.
-- **A render draws the seam of a full cylinder, cone or torus, and that line is not a boundary
-  between two faces** (2026-11-12, eval 181: three cylinders, 7 faces, one line along each). Our
-  face of the same surface is closed along another line, so the view's line runs through the
-  inside of our face; drawn onto it, it makes two faces of one. Where the part has two half faces
-  (practice 3, the bore) there are two such lines around the axis, seen in opposite views. In
-  `facts.json` a full cylinder counts as one entry either way. `split.seams` leaves out the one
-  line, or of several the one nearest to where our own face is closed.
-- **One edge with a loose end makes `BRepFeat_SplitShape` drop all the edges added with it**
-  (2026-11-12). A line carried on past the figure it ends on leaves a stub on the far side;
-  `split._draw` keeps only section edges whose ends lie on the border of the face or on another
-  kept edge. `splitter.Modified(face)` gives the faces a face was split into, and those are the
-  same objects in the result, so the next figure can be drawn onto them.
-- **A new later step** is a module with `apply(agent, solid, case_dir, views)` added to `LATER_STEPS`
-  in `hull_agent.py` and its label to `STEPS` in `tools/eval_hull.py`.
-- **A step takes the views and the drawings from the agent** (2026-11-12, `evidence.py`):
-  `evidence = agent.evidence(case_dir, dims)`, then `evidence.observed`, `evidence.drawings(solid)`
-  (draws a view when it is first asked for), `evidence.lines(solid)`, `evidence.regions()`,
-  `evidence.rows(solid)`. Drawings and lines are found again by the solid's identity, so a solid
-  that was copied or tidied is another solid. Nothing returned may be written into: the views and
-  their label images are shared by every step of the case.
-- **`Cutter.run(operation, shape, argument, timeout)`** runs any boolean in a spawned child process.
-  The operation must be a module-level function and the argument picklable. Use it for every new
-  geometric step.
-- **Export** (`export.checkpoint`): coplanar faces are merged on a copy, the largest solid is
-  written in millimetres to `/tmp`, read back, and renamed onto the output only if it is one valid
-  solid.
-- **`vh.tidy` changes the solid it is given** (2026-11-12, practice 8 after the holes: its volume
-  reads 122 459 mm3 before `tidy` and 122 976 after, on the same object, and the level-face step
-  then cuts nothing; practice 5 changed too). The solid it returns is right. A caller that goes on
-  with the original must hand `tidy` a `BRepBuilderAPI_Copy`; `export.checkpoint` does. The other
-  callers (`split.py`, `tools/eval_hull.py`) pass the solid itself and were not changed.
-- **A failing case does not stop the run.** Every case gets its bounding box before anything else
-  and keeps the file of its last good step whatever happens after (`state.md`). Inside the agent,
-  a view direction, the hole step or a later step that raises is skipped and the solid so far is
-  kept. Only a case whose bounding box cannot be read (no `facts.json` and no Envelope line) ends
-  without a file. After a hard crash of the main process (a segfault inside OpenCascade outside a
-  child cut) the files are there, but the cases not yet done stay as they were.
-- **A case's trace can be entered more than once**, with the same `CaseTrace` object and `more`
-  set while it will be entered again; `tracer.case(name)` a second time would start the step and
-  file numbers at 1 again.
-- **Tracing** (`trace.py`) never raises. It writes to `runs/` in the repo, to `/tmp` otherwise, and
-  is off with `TRACE=0`. `role="stage"` on an attached `.stp` puts it in the dashboard's step strip.
-- **The dashboard measures the overlap itself** (`ui/static/step-worker.js`): 40 000 fixed sample
-  points, both solids laid min corner on min corner, inside-test by ray along x through the
-  tessellation. On eval part 21 after the top/bottom cut it gave IoU 0.382, equal to the volume
-  score, and an excess equal to the difference of the volumes to 0.2 %.
-- **The dashboard's 3D diff is drawn, not computed** (`ui/static/viewer.js`): no boolean. The depth
-  of each solid's nearest surface goes into a texture; then our solid is painted red wherever its
-  surface lies in front of the truth's (material under that face the part does not have), and the
-  truth shows in violet wherever it lies in front of ours (missing). It is what the camera sees:
-  turn the part for the other sides. A first version drew our solid as a translucent red shell over
-  the truth; the user found it unreadable. In three.js two materials with the same `onBeforeCompile`
-  source share one program unless `customProgramCacheKey` differs. The numbers in the Diff panel
-  come from point sampling instead.
-- **The dashboard's section needs no cap geometry** (`ui/static/viewer.js`): where a closed solid is
-  clipped, the pixels that show the inside of its skin are exactly its cut face. They are painted
-  flat and written at the plane's depth (`gl_FragDepth`), so the depth comparison of the 3D diff
-  treats the cut face like any other face. This only holds if the triangles are wound outwards:
-  occt-import-js returns some solids (ground truths among them) wound inwards, so the worker turns a
-  mesh round when its signed volume is negative. Before that fix every face of such a solid was
-  drawn as cut face.
-- **The dashboard** can start runs itself; those write to `runs/<run>/outputs`, not to
-  `artifacts/outputs`. Only `scripts/main.py` without arguments overwrites `artifacts/outputs`.
+Geometry (OpenCascade):
 
-## Submission mechanics
+- **Booleans with curved faces can return a wrong solid without saying so**, differently per
+  platform (practice 6: 2 to 5 % too much on ARM, empty on amd64). A fuzzy tolerance does not
+  help. Fitting fillets exactly tangent and lines exactly onto box faces did; hence the
+  projection check after every cut.
+- **A solid can be valid in memory and invalid in the file** (practice 4: a cone of half angle
+  88.66 degrees passes `BRepCheck_Analyzer` until the `.stp` is read back).
+- **`vh.tidy` changes the solid it is given**; only its return value is right. Hand it a
+  `BRepBuilderAPI_Copy` if the original is used again. `split.py` and `tools/eval_hull.py` do
+  not.
+- **A triangulation stays on the shape it was made for**: a finer `verify.tessellate` changes
+  what every later `verify.draw` sees. Take finer meshes from a copy.
+- **The order of the silhouette cuts decides their time, not their result** (eval 99: isometric
+  cut last 178 s, first on the box 0.4 s).
+- A fitted loop can cross itself; `trace_outlines` keeps the traced polygon for such loops.
+- **Most thin faces are not two views disagreeing about one plane**: they are corner patches
+  where curved outlines of two views meet, and the polylines of eval 51 and 99 (95 % of them).
+  Count thin faces by width, 2 x area / perimeter; by area, real small holes count.
+- `BRepFeat_SplitShape`: pieces that meet must go in as one wire; one edge with a loose end
+  drops all edges added with it; a figure must close or reach the face's border; the sweep also
+  meets a cylinder's far side. `ShapeUpgrade_UnifySameDomain` undoes every split.
+  `splitter.Modified(face)` gives the new faces, the same objects as in the result.
 
-- CI on a pull request runs pytest and builds the image. On a push to `main` it also submits.
-- pytest fails if any practice part lacks a `test_case_<n>.stp` in `artifacts/outputs`, or if that
-  folder holds a file with another name.
-- After code freeze the organisers run the image on the practice inputs and compare with the
-  committed outputs; a mismatch is reviewed by hand. Then they run it on the hidden parts.
-- At code freeze they need `<team>.env` with every variable the agent reads.
+Pipeline:
 
-## Research round of 2026-11-12 (14 research agents, scratch prototypes, nothing in the pipeline)
+- Straight cuts: the two opposite views are mirrored onto each other; a pixel is cut only if
+  both show background.
+- `outline_fit.py`: the traced outline is split at the corners of a 1.2 px polygon; runs within
+  1 px of a circle sweeping 12 degrees become arcs; lines drifting under 1 px become exactly
+  horizontal or vertical.
+- **`Cutter.run(operation, shape, argument, timeout)`** runs a boolean in a spawned child. The
+  operation must be a module-level function, the argument picklable.
+- **A new later step** is a module with `apply(agent, solid, case_dir, views)`, added to
+  `LATER_STEPS` and `STEP_NAMES` in `hull_agent.py` and to `STEPS` in `tools/eval_hull.py`.
+- **A step takes views and drawings from `agent.evidence(case_dir, dims)`**: `.observed`,
+  `.drawings(solid)`, `.lines(solid)`, `.regions()`, `.rows(solid)`. They are found by the
+  solid's identity (a copied or tidied solid is another solid) and must not be written into.
+- Verifier: `observe(case_dir)` gives mask, lines and mm per pixel of each view;
+  `draw(mesh, view, dims, mm_per_px)` depth, face and normal per pixel;
+  `check(solid, case_dir, observed).score`. Most of a check's time is `verify.draw` (edges,
+  normals), not the boolean (0.03 s) or the triangles.
+- A hole of ours can show past the edge of a face, as a sliver of lower level in the
+  neighbouring face, when the view draws the hole elsewhere (eval 123).
+- Only a case whose box cannot be read (no `facts.json`, no Envelope line) ends without a file.
+- A case's trace can be entered more than once with the same `CaseTrace` and `more` set;
+  `tracer.case(name)` a second time would restart the numbering. Tracing never raises, writes to
+  `runs/` (or `/tmp`), and is off with `TRACE=0`. `role="stage"` on an attached `.stp` makes it
+  a stop.
 
-Every number here is from scratch scripts on cached solids (`runs/_lines_cache`, set `eaab2b17…`,
-mostly after shading and before pockets), often on voxels. None is a pipeline run. The scripts are
-in the session scratchpad, not in the repo.
+Dashboard:
 
-- **README: "Position and orientation do not matter; size and handedness do"** (Outputs section).
-  The organisers' scorer registers the two solids; how is unknown. Our frame cannot cost us.
-- **The practice briefs hold almost no number that `facts.json` lacks**: of 417 numeric tokens in
-  the 9 briefs 360 are verbatim in `facts.json`, 51 derivable, 6 new (the two hole centres of
-  practice 5 that `more_not_listed` cut off, and angles). No depth of any feature that causes our
-  excess. The briefs are also wrong in places (practice 6 "solid"; practice 9 "exact mirror
-  images" with bores offset 25.4 mm; practice 1 recess at Y = 7.0, the view shows Y = 0).
-- **The renders hold no depth cue**: on practice 1, 3, 4, 7, 8 the tone of facing faces regressed
-  on image position and depth gives the same rms with and without depth (0.40 against 0.41 on
-  practice 7 front, 8 levels all at 181 to 185).
-- **Where the loss of the 24-part sample is** (share of lost IoU): eval 51 and 99 together 52 %;
-  blind flat-floored pockets open to one direction 25 %; recesses open to two directions 12 %;
-  fillets, chamfers and outline tolerance 8 %; under-cut 3 %; enclosed cavities 1 %. Parts filling
-  under 5 % of their box are 6 of 266, 2 of the 8 complex parts of the sample, and no practice part.
-- **Outside 51 and 99 the excess lies under flat floors square to a view**: with every facing
-  region at its true depth, eval 38, 236, 110, 74 reach IoU 0.98 to 0.99. Unused radii, angles and
-  arcs of `facts.json` address about 2 % of the excess.
-- **A line between two adjacent facing regions of a straight view is a depth step**: true for 175
-  of 179 pairs on 25 parts outside the sample; where our solid has the pair coplanar it is wrong
-  for 18 of 22. It does not say which of the two is too high.
-- **A floor shows as a line in a perpendicular view only if the recess is open to that side**
-  (eval 38: 8 of 11 wrong regions, 97 % of their excess; 0 of 16 blind pockets on 236, 110, 74).
-- **The true volume cannot choose where or which**: removing the deepest material until the volume
-  fits made 38, 236, 110 worse (0.643 to 0.468 on 38); assignments of candidate depths within 1 %
-  of the true volume number 1.6e11 on eval 38; and a combined step (flagged pairs, side-line
-  depths, volume closure, chosen by silhouette feasibility and volume) gained 0.037 on the sample
-  and 0.004 on 25 parts outside it (2 better, 5 worse, worst 0.787 to 0.638). Volume gives a depth
-  only when all the excess is known to lie under the chosen regions (236: 0.75 against 0.74 mm).
-- **Coplanar pairs with the local accept rule: safe, and small outside the sample** (scratch step
-  with real B-rep cuts; every member of a flagged pair tried at side-line, closure and cap depths;
-  accepted if the 8-view error without the observed-line term does not rise and the volume
-  improves; the shallowest accepted depth). Sampled IoU: 14 sample parts +0.063 (38: 0.645 to
-  0.990, 236: 0.749 to 0.978); the 25 parts outside it +0.004 (2 better, 3 worse, worst -0.028,
-  against -0.149 without the accept rule); 11 parts never looked at before, run once, +0.004 (1
-  better, none worse, no wrong cut). Wrong accepted cuts are floors hidden in all eight views
-  (error unchanged, so "not worse" passes), and right regions at a wrong depth. The observed-line
-  term cannot say which member of a pair moves. On practice 5, 7, 9 it found little and about half
-  of that looked wrong by eye (practice 9: a strip cut 496 mm deep).
-- **A cut raises IoU exactly when the share of true excess in it exceeds r / (1 + r)**, r being our
-  volume over the true one and our solid containing the part: 0.51 at r = 1.05, 0.67 at 2, 0.79 at
-  3.7. A cut of 5 % of the volume gains 0.045 at r = 1.05 and 0.004 at r = 3.7.
-- **The accept rule of the later steps lets most wrong cuts through**: of 451 systematic column
-  cuts on 22 eval parts (60 good, 307 bad by sampled IoU) "score may drop by 0.003" accepts 59 of
-  60 good and 175 of 307 bad. "The summed per-pixel error over the 8 views (tone against the table,
-  masks, unmatched lines both ways) does not rise and the volume ratio improves" accepts 55 and
-  30. That rule was chosen after seeing the data. It cannot choose a depth: for floors hidden from
-  both isometric cameras the error is the same at 1 and 1.5 times the true depth (13 of 30 regions).
-- **`verify.rasterise` is the cost of a check, not OpenCascade**: on eval 236 and 38 the boolean
-  takes 0.03 s, the tessellation 0.01 s, drawing 8 views 1.4 to 1.7 s. Filling large triangles
-  with `cv2.fillConvexPoly` drew the 8 views in 0.09 to 0.14 s on those two.
-- **In the pipeline the gain from drawing large triangles alone is 1.2 to 2.4 times, not 10**
-  (2026-11-12, `state.md`): 8 views of eval 236 take 0.12 s in `rasterise` and 0.44 s in
-  `verify.draw`, whose edges and normals are now most of a check.
-- **The steps' own proposals are not the systematic column cuts of the research round**
-  (`tools/check_judge.py`, 23 eval parts, 2026-11-12): of the cuts that level faces, shading and
-  pockets tried and that were large enough to grade, the run with the score rule had 14 right and
-  6 wrong (it kept 13 and refused all 6), the run with the local rule 27 right and 6 wrong. So "175 of 307 wrong cuts accepted" says what the score rule does with
-  arbitrary proposals, such as a model's, not what it does in the pipeline today.
-- **The local rule counts the walls of an unfinished recess against a right cut** (eval 236,
-  isometric view, looked at as pictures): a pocket cut that is all excess opens walls towards the
-  dish beside it, which is still filled in our solid; the view shows the dish there, the candidate
-  a wall, and the tone error rises by 4300 px over 32 000 changed pixels.
-- **Symmetry is common and worth little**: `solid AND mirror(solid)` on the real cached solids of
-  the 24 parts, 0.8712 to 0.8715. Repeated figures do not share a depth (3 of 16 groups) and pocket
-  floors are not levels the solid already has (1 of 41 regions).
-- **Shell signature** (practice solids after steps 1 to 4): practice 6 has 3.78 times the true
-  volume and 0.45 of the true area; 5, 7, 9 have 0.82 to 1.05 of the area, so their excess is open
-  pockets, not a hollow. No eval part has an enclosed void.
-- **Surface metrics agree with IoU on removing outside excess** (12 eval parts, Chamfer and F1 at
-  1 % of the diagonal), except eval 38, whose shading cuts raise IoU by 2 points and lower F1
-  (0.626 to 0.605). A closed void with the wall off by 2 mm scores worse than the filled part under
-  F1 and better under IoU.
-- **Time of the 9 practice parts** (run `20261112-012947-5078`, 391 s): shading 37 %, split 21.5 %,
-  level faces 16 %, pockets 15 %, hull, holes and export together 2 %. Running level faces a second
-  time after pockets changed no IoU on 8 eval parts.
-- **A model proposing typed cuts, judged locally: large on practice 5, 7, 9, unverified**
-  (2026-11-12, scratch `round4_model/`, agents standing in for the model, inputs only, told the
-  volume ratio). Our volume over the true one: 1.224 to 1.000, 1.936 to 1.297, 1.729 to 1.034.
-  One cut carries most of it (practice 7 top pocket, practice 9 crankcase hollow). No ground
-  truth, and the proposers sized their cuts to the excess they were told, so this is not an
-  overlap. The local accept rule took two cuts that broke the silhouette for a tone gain
-  (practice 9): the mask term must not rise on its own. Today's score rule accepted every cut on
-  practice 7 and went below the true volume on practice 5. The briefs of practice 5 and 9
-  describe the part wrongly; the views decided. Plan: `docs/plan-pipeline.md`.
+- It can start runs; those write to `runs/<run>/outputs`. Only `scripts/main.py` without
+  arguments overwrites `artifacts/outputs`.
+- The overlap is measured in the browser (`step-worker.js`): 40 000 points, ray test through
+  the tessellation.
+- The 3D diff is drawn from depth textures, not computed by a boolean. In three.js two materials
+  with the same `onBeforeCompile` source share a program unless `customProgramCacheKey` differs.
+- The section needs no cap geometry: clipped pixels showing the inside of the skin are the cut
+  face. That needs outward winding; occt-import-js returns some solids wound inwards, so the
+  worker flips a mesh with negative signed volume.

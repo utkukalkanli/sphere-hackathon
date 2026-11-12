@@ -27,6 +27,12 @@ Keep them current as part of the work, without being asked:
 - Give numbers with what they were measured on (which set, how many parts, which commit or date).
 - Several sessions often work in this repo at once. Read a memory file again just before editing it,
   and change only the lines that are yours to change.
+- These files are loaded into every session, so keep them short. Each fact lives in one file:
+  what a step does and its latest numbers in `state.md`, the reason in `decisions.md`, what was
+  found out in `knowledge.md`. Put a new result into the entry it belongs to (the row of the
+  pipeline table, the measurement tables) and overwrite the older number; do not append a dated
+  section per session. A reversed decision replaces the old entry. History is in git; the long
+  versions from before the compaction of 2026-11-12 are at commit `bda2104`.
 
 ## Rules that are easy to break
 
@@ -64,7 +70,8 @@ uv run pytest                                          # what CI runs
 | path | contents |
 | --- | --- |
 | `scripts/main.py` | entrypoint the organisers run |
-| `src/agentic_cad/` | the agent: `visual_hull.py` (step 1), `holes.py` (step 2), `rounds.py` (step 3), `depth.py` (step 4), `shading.py` (step 5), `verify.py` (checks a candidate solid against the inputs), `hull_agent.py` (runs the steps), `trace.py` (run traces for the dashboard) |
+| `src/agentic_cad/` | the agent: `hull_agent.py` runs the steps (one module each, listed in order in `state.md`), `verify.py` and `judge.py` check a candidate solid against the inputs, `evidence.py` shares views and drawings between steps, `export.py` writes the file, `trace.py` run traces for the dashboard |
+| `docs/plan-pipeline.md` | the plan for the model step and what is left of it |
 | `artifacts/inputs` | the 9 practice parts; `artifacts/outputs` holds our committed answers for them |
 | `datasets/eval` | 266 extra parts in the same format, with ground truth, for local scoring |
 | `tools/eval_hull.py` | local score; `tools/dataset/` built the eval set |

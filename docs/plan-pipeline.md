@@ -34,7 +34,7 @@ accepted large cut lowers r, and with it the precision the next cut needs.
 
 ## Rules for the implementer
 
-- Work on a branch off `feat/visual-hull`. Never push to `main`; that is a submission.
+- Work on `feat/phase0-safe-runs` or a branch off it. Never push to `main`; that is a submission.
 - Do not change the entrypoint, the output names or the units.
 - Do not run the 266-part eval. Use `uv run python tools/eval_hull.py --iou` (24 parts, cached).
 - No threshold may be chosen by looking at the 9 practice parts. Choose on eval parts; use the
@@ -47,129 +47,20 @@ accepted large cut lowers r, and with it the precision the next cut needs.
 - The sampled IoU of `eval_hull.py` uses 1500 points, so it cannot see changes under about 0.01
   per part. For the gates below, compare with at least 20 000 points (`IOU_POINTS`).
 
-## Phase 0: every case always has a valid file
+## Status (2026-11-12)
 
-Files: `scripts/main.py`, `src/agentic_cad/hull_agent.py`, `src/agentic_cad/export.py`.
+| phase | state |
+| --- | --- |
+| 0. Every case always has a valid file | done (195e3c8) |
+| 1. One judge, fast drawing, budgets by count | done (cbc80bb). The gate failed: the later steps keep the score rule, the local judge serves the model step only |
+| 2. One evidence table per case | done (7a63c25), no output changed |
+| 3. The model proposes | built without a model (bda2104), off; step 0, the test against ground truth, is not done |
+| 4. A hard set | `tools/find_hard.py` written, not run |
 
-What is wrong today (read in the code):
-
-- `process()` deletes the case's output at the start (`main.py:71`) and `generate_cad` writes it
-  only at the very end. A segfault in the main process, or the organisers' kill, leaves this case
-  and every later case without a file.
-- If the final solid does not survive the `.stp`, the export falls back to the solid before all
-  later steps, losing every good step with the bad one.
-
-Changes:
-
-1. **Boxes first.** Before any other work, write the bounding box of every case
-   (`write_fallback`). Remove the `unlink` in `process()`; the box replaces a stale file.
-2. **Checkpointed writes.** Add `export.checkpoint(solid, output_path, keep_faces)`: tidy unless
-   `keep_faces`, write to a temporary file in `/tmp`, read it back and check it
-   (`reads_back_valid` already does this; reuse the written file instead of writing twice), then
-   copy it next to the output under a temporary name and `os.replace` it onto
-   `test_case_<n>.stp`. Return whether it was written. The output directory must never be left
-   holding a file with another name: remove leftovers at start and at exit.
-3. **Hull and holes for every case, then the later steps.** Second pass: `build_hull` and
-   `cut_holes` for each case, then a checkpoint. Third pass: `refine` for each case. Keep per case
-   what `refine` needs (the solid, `agent.volumes`, `agent._stage`). `CaseTrace` keeps a list of
-   tokens, so entering a case twice looks supported; verify that the dashboard still shows one
-   case with all its steps, and fix `trace.py` if not.
-4. **A checkpoint after every later step that changed the solid** (in `refine`). A step whose
-   result fails the checkpoint is dropped and the solid before it is kept. This replaces the
-   fallback in `generate_cad`.
-5. **Order of the third pass:** cases with the largest volume ratio first. It matters only when
-   time runs short; those cases have the most to gain.
-6. Keep the time share logic (`RUN_BUDGET`, `agent.deadline`) as it is, applied to the third pass.
-
-Not in this phase: running each case in its own process. It would also bound the hull by the
-deadline, but tracing lives in the main process. Note it in `open-questions.md` if it stays open.
-
-Done when:
-
-- `uv run pytest` passes and `uv run python scripts/main.py` gives 9 valid solids with the same
-  volumes as before the change (within 1e-6 relative; compare `agent.volumes` or read the files).
-- Killing the run with SIGKILL at a random moment leaves 9 files that all read back as one valid
-  solid, and nothing else in the output directory. Try it at least five times.
-- A step made to raise, and a step made to return an invalid solid, cost only that step.
-- The image builds and runs as a non-root user with a read-only input directory.
-
-## Phase 1: one judge, fast enough to ask often
-
-New file: `src/agentic_cad/judge.py`. Touched: `verify.py`, `shading.py`, `pockets.py`, `depth.py`.
-
-1. **Fast drawing.** Drawing 8 views costs 1.4 to 1.7 s on eval 236 and 38; the boolean costs
-   0.03 s. A prototype that fills large triangles with `cv2.fillConvexPoly` drew the same views in
-   0.09 to 0.14 s (`runs/_research_scratch/photometric/common.py`). Port it into
-   `verify.rasterise`. It was measured on blocky parts only; do not expect the gain on parts with
-   many small triangles. Done when, on the cached solids of the 24 eval parts and the 9 practice
-   parts, masks and face maps differ on at most 0.1 % of the pixels from the old drawing,
-   `verify.check(...).score` agrees to 0.001, and the time per check is reported per part.
-2. **The judge.** Port `maps` and `delta` from the scratch file `runs/_research_scratch/round2_accept/r2common.py`. Per
-   view and pixel it computes four errors of a candidate against the input view:
-   - tone: |observed tone - tone the table gives the candidate's normal|, clipped at 30 levels,
-     away from lines and edges;
-   - mask: silhouettes differ;
-   - shp: a sharp edge of the candidate with no observed line within 2.5 px;
-   - rec: an observed line with no candidate edge within 2.5 px.
-
-   Interface: `Judge(case_dir, dims, observed, table)`, `judge.rate(base, candidate) -> Verdict`
-   with the change of each term, the volume ratios and `accepted`; the maps of the base are cached
-   and replaced when a candidate is accepted. Accept when: the candidate is valid, keeps at least
-   97 % of the true volume, brings the volume ratio closer to 1, tone + mask + shp does not
-   rise, and the mask term alone does not rise. The last condition comes from the model
-   experiment: without it a large tone gain bought a broken silhouette (practice 9, 28 000 px).
-   The rec term is reported and not used (round 3: it cannot say which side of a line moves).
-3. **Switch.** `HULL_JUDGE=score` (today's rule, default) or `local`. Wire it into `shading.py`,
-   `pockets.py` and the column cuts of `depth.py`. Leave `rounds.py`, `curved.py`, `split.py` and
-   `iso_support.py` on the score rule: the local rule was measured on column cuts only.
-4. **Measure, then decide the default.** Run the 24 parts with both settings. Report per part.
-   - Gate to make `local` the default: mean sampled IoU not lower, no part lower by more than
-     0.01, and fewer cuts that remove real material (count them with the exact boolean on the
-     parts where it works).
-   - Known risks to look at by hand: a right cut whose neighbours are still uncut leaves walls the
-     views do not draw, which raises shp (practice 6; the scratch code has an excused variant,
-     `shp_fix`); on practice 9 the rule refused a shading cut that looked right.
-   - If the gate fails, keep `score` as the default and keep the judge for phase 3 only.
-5. **An evidence requirement, as a second variant.** "Does not rise" passes every floor that no
-   view sees. Variant: the tone term must fall by a minimum per changed pixel. This has not been
-   tested; measure it next to the plain rule and keep it only if it removes wrong cuts without
-   losing more right ones than it removes.
-6. **Budgets by count.** `shading.BUDGET` (45 s), `pockets.BUDGET` (30 s) and `split.BUDGET`
-   (15 s) stop steps by the clock, so a slower machine gives another solid (practice 7 and 9
-   today). After the fast drawing, replace each with a cap on what is counted (regions,
-   candidates, passes) and keep the clock only through `agent.out_of_time()`. Done when two
-   practice runs, one alone and one with the machine loaded, give the same volumes and face counts.
-
-## Phase 2: one evidence table per case
-
-New file: `src/agentic_cad/evidence.py`. Touched: `shading.py`, `pockets.py`, `depth.py`,
-`split.py`, `hull_agent.py`.
-
-Today each step calls `verify.observe`, `regions.find` and `lines.find` for itself, and
-`agent.lines_found` hands lines from pockets to split by hand. These four steps are 90 % of the
-run time.
-
-1. `Evidence` holds, for the case: the observed views, the chosen tone table, the drawings of the
-   current solid, the regions of each straight view (`regions.find`) and the line pieces
-   (`lines.find`). Built once after the holes, kept on the agent, and refreshed for the views a cut
-   changed when a cut is accepted.
-2. Each region gets, besides its kind (facing, slanted, curved):
-   - the solid's depth under it (median and spread);
-   - the length of line pieces under our surface inside or along it;
-   - whether a neighbouring facing region across a line is coplanar with it in our solid (a line
-     between two facing regions is a depth step for 175 of 179 pairs; coplanar in our solid means
-     wrong for 18 of 22);
-   - the misfit between its tone and the tone of the solid's face under it;
-   - whether the isometric view confirms the solid's face (`normals.refine`).
-3. The steps read the table instead of computing their own. This sub-step must change no output:
-   same volumes on the 24 parts and the practice set.
-4. A marked image per view: the view with the region outlines and their numbers drawn in.
-   Attached to the trace (it appears under "Extracted" without a UI change) and used as the
-   model's input in phase 3.
-
-Not in this phase: new cuts from the flags. The coplanar-pair cuts were measured at +0.004 outside
-the parts they were developed on, and using the isometric confirmation as a guard cost eval 38
-three right cuts. The flags are for ordering and for the model.
+What was built and measured is in `docs/memory/state.md`; the full text of phases 0 to 2 is in
+`git show bda2104:docs/plan-pipeline.md`. Differences from the plan as written: the judge does
+not ask that the volume comes closer, it lets the outline worsen by 0.2 % of a view's part, and
+a model's cut must make the views fit strictly better (`docs/memory/decisions.md`).
 
 ## Phase 3: the model proposes
 
@@ -220,8 +111,8 @@ set (phase 4) improves on average and no part of the 24-part sample gets worse b
 The 24-part sample is mostly easy and the practice set has no ground truth.
 
 - Choose about 20 eval parts whose solid after the holes holds more than 1.5 times the true
-  volume, from results that are already cached (`runs/_eval_cache`; the step 1 results of 259
-  parts from 2026-11-11). Do not run the 266 parts to find them.
+  volume. The cached results this counted on do not exist (`runs/_eval_cache` holds 24 parts),
+  so `tools/find_hard.py` runs hull and holes on all 266 parts: that needs the user's go.
 - Leave out parts that fill under 5 % of their box (cages like eval 51 and 99): 6 of 266, and no
   practice part is one.
 - Fix the list in `tools/eval_hull.py` as a named sample (`--hard`), cached like the default one.
