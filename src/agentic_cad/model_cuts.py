@@ -74,6 +74,27 @@ our model is already right, and areas that are not flat floors (walls seen edge-
 - if nothing is to be cut in this view, answer {"floors": []}."""
 
 
+SELECT_SYSTEM = """You are a CAD engineer checking a 3D model against the drawings of a mechanical part.
+
+You get one orthographic view of the part with its areas outlined and numbered (the areas between \
+the drawn lines), the same view of OUR current model with the same numbers, the part's two isometric \
+views, its brief and facts.json. Our model was carved from the silhouettes, so it is never smaller \
+than the part, but it fills in pockets, recesses and cavities that are open towards this view.
+
+Your task: name the numbered areas that show such an opening in the part (a pocket, recess, cavity, \
+groove or bore mouth seen from this camera) where our model is still solid. You do not need to give \
+a depth; it is measured separately.
+
+Answer with one JSON object and nothing else:
+{"openings": [{"area": <number>, "reason": "<a few words>"}]}
+- leave out areas where our model already looks like the view, and outer faces of the part;
+- when unsure, leave it out; at most 4 areas;
+- if there is no such opening in this view, answer {"openings": []}."""
+MODE = os.environ.get("HULL_MODEL_MODE", "select")   # select: the model names areas, the depth is swept; floors: it gives depths
+SWEEP_LEVELS = 12        # depths tried per named area, from our surface to the far side
+MIN_ISO_GAIN = 0.001     # the isometric views' line agreement must rise by this much
+
+
 def configured() -> bool:
     return bool(os.environ.get("OPENAI_MODEL")) and os.environ.get("HULL_MODEL", "1") != "0"
 
@@ -89,21 +110,23 @@ def call(messages: list[dict], timeout: float = TIMEOUT) -> str:
     return response.json()["choices"][0]["message"]["content"] or ""
 
 
-def parse(answer: str) -> list[dict]:
-    """The floors in a model answer; malformed entries are dropped."""
+def parse(answer: str, key: str = "floors") -> list[dict]:
+    """The floors (or openings) in a model answer; malformed entries are dropped."""
     answer = re.sub(r"<think>.*?(</think>|$)", "", answer, flags=re.S)
     match = re.search(r"\{.*\}", answer, flags=re.S)
     if not match:
         return []
     try:
-        floors = json.loads(match.group(0)).get("floors") or []
+        floors = json.loads(match.group(0)).get(key) or []
     except (json.JSONDecodeError, AttributeError):
         return []
     result = []
     for item in floors:
         try:
-            result.append({"area": int(item["area"]), "floor": float(item["floor"]),
-                           "reason": str(item.get("reason", ""))[:120]})
+            entry = {"area": int(item["area"]), "reason": str(item.get("reason", ""))[:120]}
+            if key == "floors":
+                entry["floor"] = float(item["floor"])
+            result.append(entry)
         except (KeyError, TypeError, ValueError):
             continue
     return result
@@ -174,7 +197,7 @@ def offer(view: verify.Observed, drawing: verify.Drawing, labels: np.ndarray, fo
 
 
 def ask(view: verify.Observed, drawing: verify.Drawing, labels: np.ndarray, items: list[dict],
-        context: dict, isos: list[np.ndarray], table) -> tuple[list[dict], str]:
+        context: dict, isos: list[np.ndarray], table, select: bool = False) -> tuple[list[dict], str]:
     right, up, towards = verify.camera(view.name)
     axis, sign = _axis(towards)
     name = "XYZ"[axis]
@@ -198,8 +221,62 @@ def ask(view: verify.Observed, drawing: verify.Drawing, labels: np.ndarray, item
             f"3. and 4. the part's isometric views (front-right-top and back-left-bottom).")
     content = [{"type": "text", "text": text}, _image(_numbered(view.image, labels, items)),
                _image(_numbered(ours, labels, items))] + [_image(iso) for iso in isos]
-    answer = call([{"role": "system", "content": SYSTEM}, {"role": "user", "content": content}])
-    return parse(answer), answer
+    answer = call([{"role": "system", "content": SELECT_SYSTEM if select else SYSTEM}, {"role": "user", "content": content}])
+    return parse(answer, "openings" if select else "floors"), answer
+
+
+def _iso_lines(report: verify.Report) -> float:
+    values = [v.lines for name, v in report.views.items() if name.startswith("iso")]
+    return float(np.mean(values)) if values else 0.0
+
+
+def sweep(agent, step, solid: TopoDS_Shape, view: verify.Observed, labels: np.ndarray, item: dict,
+          dims: dict[str, float], case_dir: Path, observed: dict, target: float | None,
+          base: verify.Report, deadline: float) -> tuple[TopoDS_Shape | None, dict]:
+    """Cut a named area as a flat-floored pocket at the depth where the isometric views' lines agree
+    best, among the depths that keep all 8 silhouettes (deeper than that, the pocket breaks through)."""
+    right, up, towards = verify.camera(view.name)
+    centre = np.array([dims["x"], dims["y"], dims["z"]]) / 2
+    half = view.mask.shape[0] / 2
+    axis, sign = _axis(towards)
+    reach = 2 * float(np.linalg.norm(centre))
+    area = (labels == item["label"]).astype(np.uint8) * 255
+
+    def to_mm(pixels: np.ndarray) -> np.ndarray:
+        return np.column_stack([(pixels[:, 0] + 0.5 - half) * view.mm_per_px, (half - 0.5 - pixels[:, 1]) * view.mm_per_px])
+
+    outlines = vh.trace_outlines(area, to_mm, view.mm_per_px)
+    if not outlines:
+        return None, {"result": "no outline"}
+    top = min(sign * (value - centre[axis]) for value in item["our_surface"]) - MIN_DROP_PX * view.mm_per_px
+    far = -dims["xyz"[axis]] / 2 + 2 * view.mm_per_px
+    if top <= far:
+        return None, {"result": "no room below our surface"}
+    silhouette, iso = base.mean("silhouette"), _iso_lines(base)
+    best, tried = None, []
+    for level in np.linspace(top, far, SWEEP_LEVELS):
+        if time.time() > deadline:
+            break
+        cut = vh.Silhouette(name=f"opening_{view.name}_{item['area']}", views=[view.name], mask=area, outlines=outlines,
+                            origin=centre + level * towards, right=right, up=up, direction=towards, depth=reach,
+                            info={"pixels": int((area > 0).sum())})
+        carved = agent._guarded(step, solid, target, lambda: agent.cutter.run(depth.remove, solid, [cut], CUT_TIMEOUT),
+                                quiet=True, share=MIN_SHARE)
+        if carved is None:
+            tried.append({"at": round(float(centre[axis] + sign * level), 2), "result": "refused"})
+            break
+        report = verify.check(carved, case_dir, observed)
+        entry = {"at": round(float(centre[axis] + sign * level), 2), "silhouette": round(report.mean("silhouette"), 4),
+                 "iso_lines": round(_iso_lines(report), 4)}
+        tried.append(entry)
+        if report.mean("silhouette") < silhouette - 1e-4:
+            break   # broken through: no deeper level can be right
+        if entry["iso_lines"] > iso + MIN_ISO_GAIN and (best is None or entry["iso_lines"] > best[1]["iso_lines"]):
+            best = (carved, entry, report)
+    info = {"tried": tried, "base": {"silhouette": round(silhouette, 4), "iso_lines": round(iso, 4)}}
+    if best is None:
+        return None, {**info, "result": "no depth makes the isometric lines agree better"}
+    return best[0], {**info, "result": "kept", "at": best[1]["at"], "report": best[2]}
 
 
 def cuts_for(view: verify.Observed, drawing: verify.Drawing, labels: np.ndarray, items: list[dict],
@@ -338,9 +415,27 @@ def apply(agent, solid: TopoDS_Shape, case_dir: Path | None, views: list[Path]) 
             context = _context(case_dir, dims_tuple, solid, target)
             asked = time.time()
             try:
-                floors, answer = ask(view, drawing, labels, items, context, isos, table)
+                floors, answer = ask(view, drawing, labels, items, context, isos, table, select=MODE == "select")
             except Exception as error:
                 step.log(f"{name}: the model call failed: {error!r}", level="warning")
+                continue
+            if MODE == "select":
+                by_number, notes = {item["area"]: item for item in items}, []
+                base = verify.check(solid, case_dir, observed)
+                for opening in floors[:4]:
+                    item = by_number.get(opening["area"])
+                    if item is None or time.time() - started > budget:
+                        continue
+                    carved, info = sweep(agent, step, solid, view, labels, item, dims, case_dir, observed, target,
+                                         base, started + budget)
+                    report = info.pop("report", None)
+                    notes.append({**opening, **info})
+                    if carved is not None:
+                        solid, base, kept = carved, report, kept + 1
+                        score = report.score
+                log.append({"view": name, "areas": [{k: v for k, v in i.items() if k not in ("label", "at")} for i in items],
+                            "answer": answer[:4000], "openings": notes,
+                            "seconds": {"draw": round(asked - view_started, 1), "all": round(time.time() - view_started, 1)}})
                 continue
             cuts, notes = cuts_for(view, drawing, labels, items, floors, dims)
             log.append({"view": name, "areas": [{k: v for k, v in i.items() if k not in ("label", "at")} for i in items],

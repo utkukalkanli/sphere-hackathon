@@ -51,9 +51,12 @@ def main() -> None:
                   f"in {time.time() - started:.0f} s")
             print("  ", [e.get("setup_seconds") or e.get("view_error") or (e["view"], e["seconds"]) for e in model_cuts.last_log])
             for entry in model_cuts.last_log[2:]:
-                for floor in entry["floors"]:
+                for floor in entry.get("floors", []):
                     print(f"  {entry['view']:6s} area {floor['area']:2d} floor {floor['floor']:8.2f}: "
                           f"{floor['result']} ({floor['reason']})")
+                for opening in entry.get("openings", []):
+                    print(f"  {entry['view']:6s} area {opening['area']:2d}: {opening.get('result')} at {opening.get('at')} "
+                          f"({opening['reason']}); tried {opening.get('tried')}")
             if args.out:
                 args.out.mkdir(parents=True, exist_ok=True)
                 vh.write_step(result, args.out / f"{name}.stp")

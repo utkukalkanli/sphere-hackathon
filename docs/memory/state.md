@@ -498,6 +498,11 @@ practice 8 from a single-case run, our volume / true volume:
   tone-off pixels over the 8 views and no more silhouette mismatch, 99.5 % of the true volume left.
   With them nothing wrong was kept on 8 and 9.
 - Cost: 120 to 180 s per part (drawing the 8 views for every check, 20 to 80 s of cuts per view).
+- Second mode (`HULL_MODEL_MODE=select`, now the default): the model only names openings, the
+  depth is swept (12 levels from our surface to the far side, deepest that keeps all 8 silhouettes,
+  best line agreement of the isometric views). Practice 9: the front view's bore mouths named,
+  the isometric line agreement moves by under 0.001 at every depth (0.5995 to 0.6006), nothing
+  kept, 500 s for the one view (each check of practice 9 takes about 25 s). Not a usable step.
 
 ## Known weaknesses
 
