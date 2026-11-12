@@ -16,8 +16,15 @@ reasons in `decisions.md`.
   model has ever been asked.
 - Latest whole-pipeline numbers: sampled IoU 0.8929 on the fixed 24 eval parts (simple 0.9943,
   medium 0.9260, complex 0.7584); practice parts 1, 2, 3, 4 within 3 % of the true volume, 8 at
-  1.06, 5 at 1.19 (with `bowls`), 9 at 1.2, 7 at 1.42 (with `cavities`), 6 at 2.8. The eval
-  sample has not been run with `bowls` or `cavities`, and no full practice run has timed them.
+  1.06, 5 at 1.19 (with `bowls`), 9 at 1.2, 7 at 1.42 (with `cavities`), 6 at 2.8, each case run
+  alone. The eval sample has not been run with `bowls` or `cavities`.
+- **All 9 practice parts at once on the Windows PC (`uzum` b0cbc4a, 4 workers, 2026-11-12 17:43):
+  1076 s, all files valid, score 0.8237**: 1 1.066, 2 1.018, 3 1.000, 4 1.055, 5 1.195, 6 2.766,
+  7 1.552, 8 1.071, 9 1.302. Every case ran out of its share of the time: 1, 8 and 9 skipped every
+  step after the holes, the rest skipped the model step and later (7 lost shading). The biggest
+  costs: `evidence` 20 to 127 s a case, `open_mouths` 89 s on 9. Practice 1 starts last (fewest
+  faces) and gets almost no time. `main` has not been run whole on this PC, so how much of this is
+  the machine is unknown.
 
 ## Pipeline, in run order
 
