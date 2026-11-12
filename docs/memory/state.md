@@ -17,6 +17,13 @@ reasons in `decisions.md`.
   1.000, 1.019, 1.115, 2.683, 1.457, 1.063, 1.201; all one valid solid), put on top of the
   teammate's `d430ae3` ("hidden void step"). Main's code is the teammate's, so these files are
   not what main's image writes. `test_case_10.stp` is local only (main has no input 10).
+- **`main` is at `8a974b2` since 2026-11-12 22:56** (user: send this branch's dashboard to main,
+  with what it reads): `ui/` of `1895e2f` with main's Windows `pid_alive` kept, plus
+  `sources.py`, `drawing.py` and `tools/marks.py`, on top of a teammate's `cd4a181` (outputs 1
+  to 9 of branch `uzum`, which replaced those of `7cef110`). No step of main's pipeline imports
+  the two modules. The push was a submission of main's code and those outputs. On main's tree:
+  pytest 54 passed, the page and the four source pictures of practice 1 served. Main's own steps
+  show as stops from the trace's plan; this branch's steps that main lacks show dimmed.
 - `main` at `fdcc8c6` had this branch's tree. A teammate's other pipeline (LLM CadQuery loop, hull and
   graph engines, vLLM serving script, Brev guides; 12 commits up to `70b1a15`) was on `main` and
   was merged with `-s ours` (user, 2026-11-12): its files are in the history, not in the tree.
