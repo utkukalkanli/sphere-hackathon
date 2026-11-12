@@ -3,7 +3,8 @@
 lines.py lists the lines of a straight view that run through the inside of one face of ours and says
 which of them lie under that face ("below": laid on our surface they land on no line of the
 isometric view). Where such lines close into a figure, the figure is the outline of something the
-part has further down: the floor of a pocket the silhouettes could not show.
+part has further down: the floor of a pocket the silhouettes could not show. A figure that is open
+but ends on other lines at both ends counts too: a pocket that shares a side with its neighbour.
 
 The figure says where; the isometric view says how deep. The outline is slid down along the view
 direction and looked up in the isometric view at every depth. At the depth of the floor it lands on
@@ -34,6 +35,8 @@ from agentic_cad import visual_hull as vh
 
 UNDER = ("below", "unseen")   # the pieces a figure under our surface may be made of ...
 MIN_BELOW = 0.5        # ... and the share of its length that must be "below"
+MIN_OPENING_PX = 6     # an open figure whose two ends lie closer than this is not closed by a shared side
+OWN_LINE_PX = 3.5      # line pixels further than this from a figure's own points belong to another line
 MIN_AREA_PX = 150      # smaller figures are not worth a cut
 EDGE_PX = 3            # the surface over a figure is read this far inside its outline
 LEVEL_PX = 1.5         # the surface over a figure is flat to within this
@@ -70,6 +73,38 @@ def closed(figure: list[tuple]) -> bool:
     if figure[0][0].kind == "circle":
         return True
     return len(figure) >= 2 and float(np.hypot(*(figure[0][1] - figure[-1][2]))) < 1e-6
+
+
+def held(figure: list[tuple], view_lines: np.ndarray) -> bool:
+    """Whether an open figure ends on other lines of the view at both ends: a pocket that shares a
+    side with its neighbour, or one that runs out to a rim on our surface (eval 236), is drawn as
+    sides that end on that other line. It is closed straight across between its two ends, which
+    under a curved rim leaves a little of the pocket uncut. `view_lines` is the view's line mask:
+    the line a figure ends on need not be one of the fitted pieces."""
+    if figure[0][0].kind == "circle":
+        return False
+    own = np.vstack([piece.points for piece, _, _ in figure])
+    # the ends as the pieces have them, not carried on: where the lines of the figure really stop
+    tips = []
+    for (piece, start, end), reference in ((figure[0], figure[0][1]), (figure[-1], figure[-1][2])):
+        a, b = piece.points[0], piece.points[-1]
+        tips.append(a if np.hypot(*(a - reference)) <= np.hypot(*(b - reference)) else b)
+    if np.hypot(*(tips[0] - tips[1])) < MIN_OPENING_PX:
+        return False
+    reach = int(split.JOIN_PX)
+    size = view_lines.shape[0]
+    for tip in tips:
+        col, row = int(round(tip[0])), int(round(tip[1]))
+        rows, cols = np.nonzero(view_lines[max(row - reach, 0):min(row + reach + 1, size),
+                                           max(col - reach, 0):min(col + reach + 1, size)])
+        if len(rows) == 0:
+            return False
+        around = np.column_stack([cols + max(col - reach, 0), rows + max(row - reach, 0)]).astype(float)
+        # line pixels near the end that are not the figure's own line
+        apart = np.hypot(*(around[:, None, :] - own[None, :, :]).transpose(2, 0, 1)).min(axis=1)
+        if not (apart > OWN_LINE_PX).any():
+            return False
+    return True
 
 
 def polygon(figure: list[tuple]) -> np.ndarray:
@@ -125,7 +160,7 @@ def find(view: str, pieces: list[lines.Piece], observed: dict, drawing: verify.D
         for figure in split.figures(members):
             length = sum(piece.length for piece, _, _ in figure)
             under = sum(piece.length for piece, _, _ in figure if piece.verdict == "below")
-            if not closed(figure) or under < MIN_BELOW * length:
+            if under < MIN_BELOW * length or not (closed(figure) or held(figure, here.lines)):
                 continue
             if figure[0][0].kind == "circle":
                 piece = figure[0][0]

@@ -381,6 +381,29 @@ running, sources unchanged during the run. Volume score after each step, then sa
 - Time: 406 s for the 24 parts with 4 processes; per part 7 to 50 s, eval 51 81 s, eval 99 129 s.
   The sum over the parts is 700 s, 29 s a part.
 
+Figures that end on other lines (pockets and split, 2026-11-12 about 03:30), each step
+alone on the solid before it, 24 eval parts, sampled IoU with 20 000 points:
+
+- Pockets now also takes an open figure whose two ends stop on another line of the view and
+  closes it straight across. Eval 236: the two large pockets that run out to the rim are cut,
+  volume 1.354 to 1.254 times the true one (1.320 before this change), IoU 0.740 to 0.796. Eval
+  171: 1.322 to 1.318, IoU 0.7471 to 0.7472. The other 22 parts are not touched; none is lower.
+- Split draws the figures of one face one after the other, each onto what the earlier ones made
+  of the face, so a figure that ends on another one splits too (on a box: a T gives 8 faces, two
+  rectangles sharing a side 8). On the 24 parts it splits the same 10 as before (123, 145, 171,
+  182, 27, 3, 37, 51, 74 and one more face on 182); no part gained a split from it, 181 and 73
+  stay unsplit. Every split solid is one valid solid with the volume unchanged.
+
+- Practice set with these changes, whole pipeline through `scripts/main.py` (run
+  `20261112-064134-d0e0`, 7.5 minutes for the 9 parts, working tree of all sessions): all 9 files
+  read back as one valid solid. Pockets now cuts on three practice parts, where it proposed
+  nothing before: part 5 (4 pockets, 0.02 % of the true volume), part 7 (12 of 13, 0.8 %), part 9
+  (3, 2.5 %). There is no ground truth for them: on part 9 they are slivers beside a bore and
+  along a slanted bank, closed straight across, and nobody has checked them. Faces after split:
+  19 of 17, 22 of 12, 9 of 9, 542 of 178, 208 of 172, 799 of 122, 731 of 628, 275 of 306, 264 of
+  371. Our volume / true volume: 1.003, 1.018, 1.000, 1.028, 1.224, 2.759, 1.936, 1.002, 1.729.
+  Slowest cases: part 7 127 s, part 9 99 s, part 6 77 s.
+
 ## Known weaknesses
 
 - **A solid can be valid in memory and invalid in the file.** Practice part 4 (crankshaft) was

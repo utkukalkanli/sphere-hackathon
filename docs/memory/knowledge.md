@@ -373,6 +373,11 @@ organisers' format:
   (practice 3, the bore) there are two such lines around the axis, seen in opposite views. In
   `facts.json` a full cylinder counts as one entry either way. `split.seams` leaves out the one
   line, or of several the one nearest to where our own face is closed.
+- **One edge with a loose end makes `BRepFeat_SplitShape` drop all the edges added with it**
+  (2026-11-12). A line carried on past the figure it ends on leaves a stub on the far side;
+  `split._draw` keeps only section edges whose ends lie on the border of the face or on another
+  kept edge. `splitter.Modified(face)` gives the faces a face was split into, and those are the
+  same objects in the result, so the next figure can be drawn onto them.
 - **A new later step** is a module with `apply(agent, solid, case_dir, views)` added to `LATER_STEPS`
   in `hull_agent.py` and its label to `STEPS` in `tools/eval_hull.py`.
 - **`Cutter.run(operation, shape, argument, timeout)`** runs any boolean in a spawned child process.

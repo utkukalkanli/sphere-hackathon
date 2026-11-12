@@ -28,13 +28,14 @@ import numpy as np
 from OCP.BRepAlgoAPI import BRepAlgoAPI_Section
 from OCP.BRepAdaptor import BRepAdaptor_Curve, BRepAdaptor_Surface
 from OCP.GeomAbs import (GeomAbs_Cone, GeomAbs_Cylinder, GeomAbs_Sphere, GeomAbs_Torus)
-from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeEdge, BRepBuilderAPI_MakeWire
+from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeEdge, BRepBuilderAPI_MakeVertex, BRepBuilderAPI_MakeWire
 from OCP.BRepCheck import BRepCheck_Analyzer
+from OCP.BRepExtrema import BRepExtrema_DistShapeShape
 from OCP.BRepFeat import BRepFeat_SplitShape
 from OCP.BRepPrimAPI import BRepPrimAPI_MakePrism
 from OCP.GC import GC_MakeArcOfCircle, GC_MakeCircle
 from OCP.gp import gp_Pnt, gp_Vec
-from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE
+from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE, TopAbs_WIRE
 from OCP.TopExp import TopExp_Explorer
 from OCP.TopoDS import TopoDS, TopoDS_Shape
 
@@ -50,6 +51,7 @@ NEAR_PX = 6.0         # an edge drawn onto the face lies this close to where the
 REVOLVED = (GeomAbs_Cylinder, GeomAbs_Cone, GeomAbs_Sphere, GeomAbs_Torus)
 MERIDIAN_DEG = 3.0    # a line whose points lie within this angle around the axis runs from end to end of the face
 SAME_SEAM_DEG = 10.0  # such lines this close around the axis are one line
+TOUCH_MM = 1e-4       # two points this close are the same point of the solid
 SAME_PX = 3.0         # two pieces whose points lie this close in space are the same edge seen twice
 MAX_PIECES = 60       # figures drawn per case, the longest first
 TIMEOUT = float(os.environ.get("HULL_SPLIT_TIMEOUT", 20))
@@ -96,43 +98,112 @@ def _sweep(job: dict) -> TopoDS_Shape | None:
     return prism.Shape() if prism.IsDone() else None
 
 
+def _draw(splitter, face, tool, job: dict) -> int:
+    """Add to the splitter the edges a swept figure leaves on one face; how many."""
+    section = BRepAlgoAPI_Section(face, tool)
+    section.Build()
+    if not section.IsDone():
+        return 0
+    near, found = np.array(job["near"]), []
+    explorer = TopExp_Explorer(section.Shape(), TopAbs_EDGE)
+    while explorer.More():
+        edge = TopoDS.Edge(explorer.Current())
+        explorer.Next()
+        # The sweep also meets the face where it turns away from the camera (the far side of a
+        # cylinder): only what lies where the view shows the line is drawn.
+        curve = BRepAdaptor_Curve(edge)
+        first, last = curve.FirstParameter(), curve.LastParameter()
+        middle = curve.Value((first + last) / 2)
+        if np.linalg.norm(near - [middle.X(), middle.Y(), middle.Z()], axis=1).min() > job["tolerance"]:
+            continue
+        ends = [np.array([q.X(), q.Y(), q.Z()]) for q in (curve.Value(first), curve.Value(last))]
+        found.append((edge, ends))
+    # An edge with an end in the open face splits nothing, and with one such edge among them
+    # OpenCascade drops the others too (a line carried on past the figure it ends on leaves a stub
+    # on the far side). Kept: edges whose ends lie on the border of the face or on another kept edge.
+    wires, explorer = [], TopExp_Explorer(face, TopAbs_WIRE)
+    while explorer.More():
+        wires.append(explorer.Current())
+        explorer.Next()
+
+    def on_border(point: np.ndarray) -> bool:
+        vertex = BRepBuilderAPI_MakeVertex(_point(point)).Vertex()
+        for wire in wires:
+            distance = BRepExtrema_DistShapeShape(vertex, wire)
+            if distance.IsDone() and distance.Value() <= TOUCH_MM:
+                return True
+        return False
+
+    anchored = [[on_border(end) for end in ends] for _, ends in found]
+    keep = [True] * len(found)
+    changed = True
+    while changed:
+        changed = False
+        for i, (_, ends) in enumerate(found):
+            if not keep[i] or np.linalg.norm(ends[0] - ends[1]) <= TOUCH_MM:   # a closed edge needs no anchor
+                continue
+            for which, end in enumerate(ends):
+                held = anchored[i][which] or any(
+                    keep[j] and j != i and min(np.linalg.norm(end - other) for other in found[j][1]) <= TOUCH_MM
+                    for j in range(len(found)))
+                if not held:
+                    keep[i], changed = False, True
+                    break
+    for (edge, _), kept in zip(found, keep):
+        if kept:
+            splitter.Add(edge, face)
+    return sum(keep)
+
+
 def imprint(shape: TopoDS_Shape, jobs: list[dict]) -> TopoDS_Shape | None:
-    """Draw every job's figure onto its face. Runs in the child process (vh.Cutter)."""
+    """Draw every job's figure onto its face. Runs in the child process (vh.Cutter).
+
+    The figures of one face are drawn one after the other, each onto what the earlier ones made of
+    that face. A figure that ends on another one (the stem of a T, a pocket that shares a side with
+    its neighbour) is an open line on the whole face and would split nothing; on the piece of the
+    face the earlier figure left, it runs from border to border."""
     faces = faces_of(shape)
-    splitter, added = BRepFeat_SplitShape(shape), 0
+    pieces_of_face: dict[int, list] = {}   # what has become of each face that is drawn on
+    queues: dict[int, list] = {}
     for job in jobs:
-        if job["face"] >= len(faces):
+        if job["face"] < len(faces):
+            queues.setdefault(job["face"], []).append(job)
+            pieces_of_face[job["face"]] = [faces[job["face"]]]
+    drawn = False
+    while any(queues.values()):
+        splitter, added = BRepFeat_SplitShape(shape), 0
+        for index, queue in queues.items():
+            if not queue:
+                continue
+            job = queue.pop(0)
+            try:
+                tool = _sweep(job)
+            except Exception:
+                tool = None
+            if tool is None:
+                continue
+            here = sum(_draw(splitter, face, tool, job) for face in pieces_of_face[index])
+            if not here and not job.get("again"):
+                # nothing to hold on to yet: once more after the other figures of this face
+                queue.append({**job, "again": True})
+            added += here
+        if not added:
             continue
         try:
-            face, tool = faces[job["face"]], _sweep(job)
+            splitter.Build()
+            result = splitter.Shape()
         except Exception:
             continue
-        if tool is None:
-            continue
-        section = BRepAlgoAPI_Section(face, tool)
-        section.Build()
-        if not section.IsDone():
-            continue
-        near = np.array(job["near"])
-        explorer = TopExp_Explorer(section.Shape(), TopAbs_EDGE)
-        while explorer.More():
-            edge = TopoDS.Edge(explorer.Current())
-            explorer.Next()
-            # The sweep also meets the face where it turns away from the camera (the far side of a
-            # cylinder): only what lies where the view shows the line is drawn.
-            curve = BRepAdaptor_Curve(edge)
-            middle = curve.Value((curve.FirstParameter() + curve.LastParameter()) / 2)
-            if np.linalg.norm(near - [middle.X(), middle.Y(), middle.Z()], axis=1).min() > job["tolerance"]:
-                continue
-            splitter.Add(edge, face)
-            added += 1
-    if not added:
-        return None
-    splitter.Build()
-    result = splitter.Shape()
-    if result is None or result.IsNull() or not BRepCheck_Analyzer(result).IsValid():
-        return None
-    return result
+        if result is None or result.IsNull() or not BRepCheck_Analyzer(result).IsValid():
+            continue   # this round is left out; the next is drawn on the shape as it was
+        for index, parts in pieces_of_face.items():
+            after = []
+            for face in parts:
+                made = [TopoDS.Face(item) for item in splitter.Modified(face)]
+                after += made or [face]
+            pieces_of_face[index] = after
+        shape, drawn = result, True
+    return shape if drawn else None
 
 
 def _meeting(first: lines.Piece, second: lines.Piece, around: np.ndarray) -> np.ndarray:
@@ -151,30 +222,53 @@ def _meeting(first: lines.Piece, second: lines.Piece, around: np.ndarray) -> np.
 
 def figures(pieces: list[lines.Piece]) -> list[list[tuple]]:
     """Pieces of one face in one view, joined where their ends meet: each figure is a run of
-    (piece, start, end) in pixels, end to start, closed or open. Open ends are carried on to reach
-    the border of the face. Where three lines meet the pieces stay single."""
+    (piece, start, end) in pixels, end to start, closed or open. Where three or more ends meet, the
+    two longest pieces are joined and the others end there. Open ends are carried on a little: to
+    reach the border of the face, or the figure they end on (which `imprint` draws first when it is
+    the longer one)."""
     ends = [(index, which, piece.points[0 if which == 0 else -1]) for index, piece in enumerate(pieces)
             if piece.kind != "circle" for which in (0, 1)]
-    partner = {}
-    for i, (index, which, point) in enumerate(ends):
-        close = [j for j, (other, _, at) in enumerate(ends) if other != index and np.hypot(*(at - point)) <= JOIN_PX]
-        partner[i] = close
+    group = list(range(len(ends)))   # ends that lie close together, by the lowest of their numbers
+
+    def root(i: int) -> int:
+        while group[i] != i:
+            group[i] = group[group[i]]
+            i = group[i]
+        return i
+
+    for i in range(len(ends)):
+        for j in range(i + 1, len(ends)):
+            if ends[i][0] != ends[j][0] and np.hypot(*(ends[i][2] - ends[j][2])) <= JOIN_PX:
+                group[root(j)] = root(i)
+    clusters: dict[int, list[int]] = {}
+    for i in range(len(ends)):
+        clusters.setdefault(root(i), []).append(i)
     joined = {}   # (piece, end) -> (other piece, other end, common point)
-    for i, close in partner.items():
-        if len(close) == 1 and partner[close[0]] == [i]:
-            j = close[0]
-            around = (ends[i][2] + ends[j][2]) / 2
-            point = _meeting(pieces[ends[i][0]], pieces[ends[j][0]], around)
-            joined[ends[i][:2]] = (ends[j][0], ends[j][1], point)
+    for members in clusters.values():
+        members.sort(key=lambda i: -pieces[ends[i][0]].length)
+        first = members[0]
+        second = next((i for i in members[1:] if ends[i][0] != ends[first][0]), None)
+        if second is None:
+            continue
+        around = (ends[first][2] + ends[second][2]) / 2
+        point = _meeting(pieces[ends[first][0]], pieces[ends[second][0]], around)
+        joined[ends[first][:2]] = (ends[second][0], ends[second][1], point)
+        joined[ends[second][:2]] = (ends[first][0], ends[first][1], point)
     result, used = [], set()
 
     def free_end(piece: lines.Piece, which: int) -> np.ndarray:
         point = piece.points[0 if which == 0 else -1]
-        if piece.kind != "line":
-            return point
-        along = piece.points[-1] - piece.points[0]
-        along = along / max(float(np.hypot(*along)), 1e-9)
-        return point + (REACH_PX if which else -REACH_PX) * along
+        if piece.kind == "line":
+            along = piece.points[-1] - piece.points[0]
+            along = along / max(float(np.hypot(*along)), 1e-9)
+            return point + (REACH_PX if which else -REACH_PX) * along
+        # an arc is carried on along its circle, away from its middle
+        centre = np.array(piece.centre)
+        middle = piece.points[len(piece.points) // 2]
+        angle = np.arctan2(point[1] - centre[1], point[0] - centre[0])
+        turn = np.angle(np.exp(1j * (angle - np.arctan2(middle[1] - centre[1], middle[0] - centre[0]))))
+        angle += np.sign(turn) * min(REACH_PX / max(piece.radius, 1e-9), 0.3)
+        return centre + piece.radius * np.array([np.cos(angle), np.sin(angle)])
 
     for index, piece in enumerate(pieces):
         if index in used:

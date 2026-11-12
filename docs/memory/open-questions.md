@@ -96,15 +96,13 @@ Remove a question when it is answered, and record the answer in `decisions.md` o
   and `OPENAI_MODEL` are not set anywhere yet, and the endpoint must be public and stay up until
   judging ends.
 - **`context.png` is not used.** Is there anything in it worth using? It is absent for some parts.
-- **Pockets from lines under our surface: what is left to gain?** (2026-11-12) Measured on the 24
-  eval parts (`state.md`): lines under our surface exist on 7 parts only, and 23 % of their length
-  closes into a figure. What does not: seams of a curved surface our blocky hull covers (eval 3, a
-  tyre: more than a third of all such lines, not pockets at all); outlines that share a line with
-  their neighbour, which `split.figures` leaves open where three lines meet (eval 236, the larger
-  rectangles); thin-walled parts (eval 51, 99, 171). Eval 38 closes but our surface over the
-  figure is not one level, and its floor is out of sight of the isometric cameras anyway. Open:
-  is joining at three-way corners worth it for the hidden parts, and rings around listed holes
-  with the cone angles of `facts.json` (eval 123), which are not tried.
+- **Pockets from lines under our surface: what is left to gain?** (2026-11-12) Lines under our
+  surface exist on 7 of the 24 eval parts. Taken now: closed figures and figures that end on
+  another line of the view (eval 236, 171). Not pockets at all: the seams of a curved surface our
+  blocky hull covers (eval 3, a tyre, more than a third of all such lines). Still open: figures
+  on thin-walled parts that do not close (eval 51, 99); eval 38, whose floor no isometric camera
+  sees; a figure closed straight across under a curved rim leaves a sliver uncut; rings around
+  listed holes with the cone angles of `facts.json` (eval 123), not tried.
 - **Does the split step help the score?** It changes the number of faces and edges only. If the
   organisers' score is volume overlap it gains nothing; it is in because the user wants the face
   count right. It also splits few faces so far: figures need joining across pieces the isometric
