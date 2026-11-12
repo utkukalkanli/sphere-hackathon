@@ -53,8 +53,15 @@ Remove a question when it is answered, and record the answer in `decisions.md` o
 - **Nothing checks a round cut against the views.** On practice 6 the "disc" cut of the cap's last
   10 mm came back with the section still square and was kept. The hull cuts have a projection check;
   `rounds.py` and `curved.py` do not.
-- **Hollow parts** (practice 6: a shell, about two thirds of its excess). Only `volume_mm3` and
-  `surface_area_mm2` show it. Not looked at; the user has set it aside for now.
+- **Hollow parts** (practice 6; user asked for a step, 2026-11-12). A probe says the two
+  numbers alone cannot trigger it (`knowledge.md`: volume and surface do not tell a void from
+  missing pockets, with or without a solved wall thickness). A step would have to wait until
+  the views fit everywhere (`tools/check_views.py`) and volume is still missing; then one wall
+  thickness from the volume, the cavity as an inward offset (for a turned part: the profile
+  offset and revolved), a thicker wall than solved to stay inside the true void. Open: the
+  grooves of practice 6 come first; whether the wall is even; how the scorer counts a closed
+  void; how to measure (the eval set has no void; hollowing a ground truth changes only its
+  volume and surface, the views stay as they are, so test parts can be made). Not built.
 - **Curved faces that are not rings around a listed axis** (2026-11-12). `curved.py` only handles
   recesses of revolution about a boss or bore axis along x, y or z. Fillets along straight edges,
   cylindrical pockets seen from the side and anything about a tilted axis are untouched. On the

@@ -79,6 +79,26 @@ truth. What it holds:
   a hole that starts 2 mm down a recess only a quarter of a millimetre wider shows one circle,
   and the area outside it is the face above the recess. Several mouths on one plane in one area
   do not have that excuse (practice 9, three bores a bank).
+- **Volume and surface together do not tell a hidden void from open pockets we have not cut**
+  (2026-11-12, scratch probe; practice solids of the whole pipeline, eval solids after hull and
+  holes). Our volume and our surface over the true ones: practice 6 (the hollow one) 2.76 and
+  0.81; eval 38 1.62 and 0.76, eval 110 1.28 and 0.76, practice 5 1.23 and 0.81, none of which
+  is hollow. A missing pocket lowers the surface as a missing void does. The older note that
+  practice 6 has 0.45 of the true surface was the solid of steps 1 to 4.
+- **Nor does a wall thickness solved from the volume and checked with the surface** (same probe,
+  on voxels, 110 along the longest side; the surface of a cavity at depth t is the derivative of
+  its volume). If all of our excess were one cavity at one wall thickness, our surface over the
+  true one would be: practice 6 1.21 (wall 5.1 mm), against practice 5 1.06, eval 123 1.07, eval
+  109 1.08, eval 110 and 212 1.09, eval 38 1.17. The parts that are not hollow fit the hollow
+  model better than the one that is, because practice 6 still has excess outside (the grooves:
+  tone off on 10 % of its pixels) which the model puts into the cavity.
+- **What does set practice 6 apart needs the outside to be right first**: its bottom view fits
+  (tone off 0.3 %) and the brief's own sizes give the flange about 393 cm3 and the cap about 105
+  cm3 against 378 cm3 for the whole part, so material is missing where no view looks. Of the 122
+  faces the outside accounts for about half (this session's count: 18 grooves with two flat
+  walls each, 36 fin patches, top, bottom, bore floor); 36 B-spline faces and one plane are left
+  for an inner surface. Practice 7 is as thin a shell by volume (wall 18 % of its deepest point,
+  practice 6 13 %, all others 33 % or more) but its cavity is open and the top view shows it.
 - **The cone count of `facts.json` confirms the blind holes of practice 8** (2026-11-12).
   `cones_half_angle_deg` lists 48 faces at 59 degrees, the point of a 118 degree drill, which the
   brief calls chamfers. Two blind holes per listed span in the two groups is 16 + 8 = 24 holes,
