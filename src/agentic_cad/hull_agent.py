@@ -14,6 +14,7 @@ from agentic_cad import spans
 from agentic_cad import iso_support
 from agentic_cad import outline_fit as of
 from agentic_cad import line_cuts
+from agentic_cad import cavities
 from agentic_cad import brief
 from agentic_cad import curved
 from agentic_cad import datums
@@ -52,19 +53,21 @@ HOLES_TIMEOUT = float(os.environ.get("HULL_HOLES_TIMEOUT", 40))
 RETRY_BUDGET = float(os.environ.get("HULL_RETRY_BUDGET", 20))
 
 
-# Steps after the holes, in order; HULL_SKIP=brief,rounds,curved,depth,shading,lines,recheck switches some off.
+# Steps after the holes, in order; HULL_SKIP=brief,rounds,curved,cavities,depth,shading,lines,recheck switches some off.
 # "brief" reads description.md again and cuts what the symmetries it states rule out (brief.py). It runs
 # first, where it cannot be skipped for time (practice 9: 1.88 to 1.67 times the true volume), and
 # again last ("recheck"): the steps between cut one side more than the other (practice 8).
+# "cavities" cuts open cavities under a rim as deep as every silhouette allows (cavities.py).
 # "lines" are the line cuts of the ananas branch (line_cuts.py; practice 5: 1.22 to 1.01).
 # The pockets and split steps were removed on 2026-11-12: on the practice set pockets changed no
 # part (0.0001 of the true volume on part 5) for up to 136 s, and split moves no material.
-LATER_STEPS = {"brief": brief, "rounds": rounds, "curved": curved, "depth": depth, "shading": shading,
-               "lines": line_cuts, "recheck": brief.final}
+LATER_STEPS = {"brief": brief, "rounds": rounds, "curved": curved, "cavities": cavities, "depth": depth,
+               "shading": shading, "lines": line_cuts, "recheck": brief.final}
 SKIP_STEPS = {name for name in os.environ.get("HULL_SKIP", "").split(",") if name}
 # The name each later step gives its trace step, for the plan the dashboard shows before anything has run
 STEP_NAMES = {"rounds": "cut_rounds", "curved": "cut_curved", "depth": "level_faces", "shading": "shading_depth",
-              "brief": "check_brief", "lines": "cut_lines", "recheck": "recheck_brief"}
+              "brief": "check_brief", "lines": "cut_lines", "recheck": "recheck_brief",
+              "cavities": "cut_cavities"}
 
 
 class VisualHullAgent:
