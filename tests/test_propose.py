@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from agentic_cad import evidence, flat, hull_agent, ops, propose
+from agentic_cad import evidence, hull_agent, ops, propose
 from agentic_cad import visual_hull as vh
 
 CASE = Path(__file__).resolve().parents[1] / "artifacts/inputs/test_case_3"   # a flanged bushing, axis along x
@@ -75,8 +75,10 @@ def test_without_an_endpoint_the_step_does_nothing(monkeypatch):
     assert propose.apply(hull_agent.VisualHullAgent(), solid, CASE, []) is solid
 
 
-def _replay(tmp_path, monkeypatch):
-    """Replayed proposals on the bounding box of practice 3: (box, result, agent, slab volume, output)."""
+def test_proposed_cuts_are_judged_one_by_one(tmp_path, monkeypatch):
+    """Replayed proposals on the bounding box of practice 3. A slab off the end of the box where
+    the views show nothing is kept; a window through the flange is refused; what cannot be read
+    is left out; and the kept cut is in the file."""
     dims = dict(zip("xyz", vh.read_dimensions(CASE)))
     x, y, z = dims["x"], dims["y"], dims["z"]
     proposals = {"ops": [
@@ -98,23 +100,6 @@ def _replay(tmp_path, monkeypatch):
     finally:
         agent.close()
     corner = (x + 0) * 0.04 * y * 0.04 * z
-    return box, result, agent, corner, output
-
-
-def test_proposed_cuts_are_judged_one_by_one(tmp_path, monkeypatch):
-    """A slab off the end of the box where the views show nothing is kept; a window through the
-    flange is refused by the judge; what cannot be read is left out; and the kept cut is in the
-    file. The one-colour face check is off here: it would refuse the window before the judge."""
-    monkeypatch.setattr(flat, "ENABLED", False)
-    box, result, agent, corner, output = _replay(tmp_path, monkeypatch)
     assert vh.volume(box) - vh.volume(result) == pytest.approx(corner, rel=1e-6)
     assert [d["accepted"] for d in agent.decisions if d["verdict"].mask > 0] == [False] * 2   # the window, tried twice
     assert output.is_file() and [p.name for p in tmp_path.iterdir() if p.is_file()] == ["test_case_3.stp"]
-
-
-def test_one_colour_faces_refuse_the_window(tmp_path, monkeypatch):
-    """With the one-colour face check on, the window through the flange draws its edges across
-    faces the views show whole and is refused before the judge sees it; the slab is still kept."""
-    box, result, agent, corner, output = _replay(tmp_path, monkeypatch)
-    assert vh.volume(box) - vh.volume(result) == pytest.approx(corner, rel=1e-6)
-    assert not [d for d in agent.decisions if d["verdict"].mask > 0]
