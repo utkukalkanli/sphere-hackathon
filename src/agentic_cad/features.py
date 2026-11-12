@@ -5,6 +5,10 @@ ring groove, polygon pocket, revolved cavity) with absolute coordinates, constra
 endpoint's structured output, so a reply cannot call an API that does not exist. `compile_script` turns the
 list into a script of cadlib calls on top of `base`; each feature is cut on its own and skipped, with the
 reason recorded in `feature_log`, when it would break the part.
+
+Two things keep the list short and the hole count right: any feature can carry a "repeat" (a row or a full
+circle of copies, each cut and checked on its own), and a cylinder says whether it goes "through", in which
+case it is lengthened until it really opens a through-hole (cadlib.cut_through).
 """
 
 from __future__ import annotations
@@ -14,6 +18,8 @@ import math
 
 MAX_FEATURES = 16
 MAX_POINTS = 48
+MAX_REPEAT = 36         # copies of one feature
+MAX_CUTS = 80           # cuts of one list, copies included
 
 _NUM = {"type": "number"}
 _POINT3 = {"type": "array", "items": _NUM, "minItems": 3, "maxItems": 3}
@@ -21,14 +27,26 @@ _POINT2 = {"type": "array", "items": _NUM, "minItems": 2, "maxItems": 2}
 _LABEL = {"type": "string", "maxLength": 120}
 
 
+_COUNT = {"type": "integer", "minimum": 2, "maximum": MAX_REPEAT}
+_REPEAT = {"anyOf": [
+    {"type": "object", "properties": {"count": _COUNT, "step": _POINT3}, "required": ["count", "step"],
+     "additionalProperties": False},
+    {"type": "object", "properties": {"count": _COUNT, "around": {"enum": ["x", "y", "z"]}, "centre": _POINT2},
+     "required": ["count", "around", "centre"], "additionalProperties": False},
+]}
+
+
 def _feature(kind: str, properties: dict) -> dict:
     properties = {"label": _LABEL, "type": {"const": kind}, **properties}
-    return {"type": "object", "properties": properties, "required": list(properties), "additionalProperties": False}
+    # "repeat" is the only optional field: most features are single
+    return {"type": "object", "properties": {**properties, "repeat": _REPEAT}, "required": list(properties),
+            "additionalProperties": False}
 
 
 FEATURES = {
     "box": _feature("box", {"min": _POINT3, "max": _POINT3}),
-    "cylinder": _feature("cylinder", {"diameter": _NUM, "start": _POINT3, "end": _POINT3}),
+    "cylinder": _feature("cylinder", {"diameter": _NUM, "start": _POINT3, "end": _POINT3,
+                                      "through": {"type": "boolean"}}),
     "cone": _feature("cone", {"diameter_start": _NUM, "diameter_end": _NUM, "start": _POINT3, "end": _POINT3}),
     "ring": _feature("ring", {"outer_diameter": _NUM, "inner_diameter": _NUM, "start": _POINT3, "end": _POINT3}),
     "prism": _feature("prism", {"plane": {"enum": ["xy", "xz", "yz"]},
@@ -54,8 +72,10 @@ RESPONSE_FORMAT = {"type": "json_schema", "json_schema": {"name": "cut_features"
 SCHEMA_DOC = """\
 {"type": "box", "min": [x, y, z], "max": [x, y, z]}
     axis-aligned block between two corners: pockets, steps, slots, rectangular cavities
-{"type": "cylinder", "diameter": d, "start": [x, y, z], "end": [x, y, z]}
-    round hole, bore, counterbore or cylindrical recess along the line start -> end (any direction)
+{"type": "cylinder", "diameter": d, "start": [x, y, z], "end": [x, y, z], "through": true|false}
+    round hole, bore, counterbore or cylindrical recess along the line start -> end (any direction).
+    "through": true = a through-hole: it is lengthened along its axis until it comes out of the material, so
+    only its axis and diameter have to be right. "through": false = blind: it is cut exactly from start to end.
 {"type": "cone", "diameter_start": d0, "diameter_end": d1, "start": [x, y, z], "end": [x, y, z]}
     countersink, drill point or tapered bore; either diameter may be 0
 {"type": "ring", "outer_diameter": D, "inner_diameter": d, "start": [x, y, z], "end": [x, y, z]}
@@ -66,6 +86,15 @@ SCHEMA_DOC = """\
     cavity of revolution about the line parallel to `axis` through `centre` (the other two coordinates in
     x<y<z order: axis "x" -> (y, z), "y" -> (x, z), "z" -> (x, y)); profile = closed polygon of
     (position along the axis, radius) points: stepped bores, hollow turned parts
+
+Any feature may also carry "repeat" for identical copies; describe the FIRST copy and add one of:
+"repeat": {"count": n, "step": [dx, dy, dz]}
+    a row: n copies in all, each moved by `step` from the one before (6 holes at 146.05 pitch along X ->
+    {"count": 6, "step": [146.05, 0, 0]})
+"repeat": {"count": n, "around": "x"|"y"|"z", "centre": [c1, c2]}
+    a full circle: n copies in all, equally spaced over 360 deg about the line parallel to `around` through
+    `centre` (same coordinate rule as revolve): bolt circles, radial fins or slots
+Leave "repeat" out for a single feature. Every copy is cut and checked on its own.
 """
 
 
@@ -160,6 +189,59 @@ def expression(feature: dict) -> str:
     raise FeatureError(f"unknown feature type {kind!r}")
 
 
+def copies(feature: dict) -> list[tuple]:
+    """The placements of a feature: [None] for a single one, else one ("move", (dx, dy, dz)) or
+    ("turn", p0, p1, degrees) per copy, the first being the feature as written."""
+    repeat = feature.get("repeat")
+    if repeat is None:
+        return [None]
+    if not isinstance(repeat, dict):
+        raise FeatureError("repeat is not an object")
+    try:
+        count = int(repeat.get("count"))
+    except (TypeError, ValueError):
+        raise FeatureError("repeat.count is not a whole number") from None
+    if not 2 <= count <= MAX_REPEAT:
+        raise FeatureError(f"repeat.count must be 2 to {MAX_REPEAT}")
+    if "step" in repeat:
+        step = _floats(repeat.get("step"), 3, "repeat.step")
+        if math.hypot(*step) < 1e-6:
+            raise FeatureError("repeat.step has no length")
+        return [None] + [("move", tuple(i * v for v in step)) for i in range(1, count)]
+    axis = str(repeat.get("around", "")).lower()
+    if axis not in ("x", "y", "z"):
+        raise FeatureError("repeat needs a step or an axis to go around (x, y or z)")
+    c1, c2 = _floats(repeat.get("centre"), 2, "repeat.centre")
+    index = "xyz".index(axis)
+    p0, p1 = [c1, c2], [c1, c2]
+    p0.insert(index, 0.0)
+    p1.insert(index, 1.0)
+    return [None] + [("turn", tuple(p0), tuple(p1), 360.0 * i / count) for i in range(1, count)]
+
+
+def _placed(point: tuple[float, ...], placement) -> tuple[float, ...]:
+    """`point` after a placement of `copies` (Rodrigues' rotation about an axis-parallel line for a turn)."""
+    if placement is None:
+        return point
+    if placement[0] == "move":
+        return tuple(round(p + d, 6) for p, d in zip(point, placement[1]))
+    _, p0, p1, degrees = placement
+    k = [b - a for a, b in zip(p0, p1)]
+    v = [p - a for p, a in zip(point, p0)]
+    c, s = math.cos(math.radians(degrees)), math.sin(math.radians(degrees))
+    cross = [k[1] * v[2] - k[2] * v[1], k[2] * v[0] - k[0] * v[2], k[0] * v[1] - k[1] * v[0]]
+    dot = sum(a * b for a, b in zip(k, v))
+    return tuple(round(a + v[i] * c + cross[i] * s + k[i] * dot * (1 - c), 6) for i, a in enumerate(p0))
+
+
+def _placed_expression(cutter: str, placement) -> str:
+    if placement is None:
+        return cutter
+    if placement[0] == "move":
+        return f"{cutter}.translate({_t(placement[1])})"
+    return f"{cutter}.rotate({_t(placement[1])}, {_t(placement[2])}, {placement[3]:g})"
+
+
 def parse(reply: str) -> list[dict] | None:
     """The feature list of a reply; None when the reply is not the expected JSON object."""
     text = reply.strip()
@@ -185,18 +267,34 @@ def label(feature: dict, index: int) -> str:
 
 
 def compile_script(features: list[dict], min_volume: float = 0.0, max_holes: int | None = None) -> str:
-    """Script that cuts every usable feature into `base`, one guarded cut per feature."""
+    """Script that cuts every usable feature into `base`, one guarded cut per feature and per copy of it."""
     lines = ["# built from the model's feature list (features.py): the model wrote no code",
              "body, feature_log = base, []"]
     limits = f"{min_volume:.1f}, {max_holes if max_holes is not None else 'None'}"
+    cuts = 0
     for index, feature in enumerate(features):
         name = label(feature, index)
         try:
             cutter = expression(feature)
+            placements = copies(feature)
+            through = feature.get("type") == "cylinder" and feature.get("through") is True
+            ends = _segment(feature) if through else None
         except FeatureError as exc:
             lines.append(f"feature_log.append({f'{name} -> rejected: {exc}'!r})")
             continue
-        lines.append(f"body = cut_feature(body, lambda: {cutter}, {name!r}, feature_log, {limits})")
+        if cuts + len(placements) > MAX_CUTS:
+            lines.append(f"feature_log.append({f'{name} -> rejected: more than {MAX_CUTS} cuts in the list'!r})")
+            continue
+        cuts += len(placements)
+        for number, placement in enumerate(placements):
+            which = name if len(placements) == 1 else f"{name} [copy {number + 1} of {len(placements)}]"
+            if through:
+                start, end = (_placed(point, placement) for point in ends)
+                lines.append(f"body = cut_through(body, {float(feature['diameter']):g}, {_t(start)}, {_t(end)}, "
+                             f"{which!r}, feature_log, {limits})")
+            else:
+                lines.append(f"body = cut_feature(body, lambda: {_placed_expression(cutter, placement)}, {which!r}, "
+                             f"feature_log, {limits})")
     lines.append("result = body")
     return "\n".join(lines) + "\n"
 

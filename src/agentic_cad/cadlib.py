@@ -165,35 +165,97 @@ def try_cut(body, cutter, min_volume=0.0, max_holes=None) -> cq.Workplane:
     return body
 
 
+def _cut_outcome(body, cutter, min_volume=0.0, max_holes=None):
+    """(solid after the cut, mm3 removed, through-holes after, None) when the cut is acceptable, else
+    (None, 0, None, reason). Raises when the kernel cannot build the cut."""
+    out = body.cut(cutter)
+    solids = out.val().Solids()
+    before, after = body.val().Volume(), out.val().Volume()
+    if after >= before - 1e-6:
+        return None, 0.0, None, "it removes nothing (it lies outside the part or in material that is already gone)"
+    if len(solids) != 1 or not out.val().isValid():
+        return None, 0.0, None, "it would split the part into pieces"
+    if after < min_volume:
+        return None, 0.0, None, (f"it would leave {after:.0f} mm3, less than the part's volume: it is too large "
+                                 "or in the wrong place")
+    holes = through_holes(solids[0])
+    if max_holes is not None and holes > max(max_holes, through_holes(body.val().Solids()[0])):
+        return None, 0.0, None, "it would open more through-holes than the part has: it must stay blind"
+    return out, before - after, holes, None
+
+
 def cut_feature(body, make_cutter, label, log, min_volume=0.0, max_holes=None) -> cq.Workplane:
     """try_cut for one feature of a feature list (features.py), with the outcome appended to `log`: the cut is
     skipped, and the reason recorded, when the cutter cannot be built or the cut would break the part."""
     try:
-        cutter = make_cutter()
-        out = body.cut(cutter)
-        solids = out.val().Solids()
-        before, after = body.val().Volume(), out.val().Volume()
+        out, removed, _, reason = _cut_outcome(body, make_cutter(), min_volume, max_holes)
     except Exception as exc:
         log.append(f"{label} -> skipped: the geometry could not be built ({type(exc).__name__})")
         return body
-    if after >= before - 1e-6:
-        reason = "it removes nothing (it lies outside the part or in material that is already gone)"
-    elif len(solids) != 1 or not out.val().isValid():
-        reason = "it would split the part into pieces"
-    elif after < min_volume:
-        reason = (f"it would leave {after:.0f} mm3, less than the part's volume: it is too large or in the "
-                  "wrong place")
-    elif max_holes is not None and through_holes(solids[0]) > max(max_holes, through_holes(body.val().Solids()[0])):
-        reason = "it would open more through-holes than the part has: it must stay blind"
-    else:
-        log.append(f"{label} -> cut, removed {before - after:.0f} mm3")
-        return out
-    log.append(f"{label} -> skipped: {reason}")
-    return body
+    if out is None:
+        log.append(f"{label} -> skipped: {reason}")
+        return body
+    log.append(f"{label} -> cut, removed {removed:.0f} mm3")
+    return out
+
+
+def _material_span(solid, p0, p1):
+    """(t0, t1) along the line p0 -> p1 (0 at p0, mm) of the material the segment p0..p1 lies in or touches: from
+    where the line enters the solid to where it leaves it. None when the segment is not in material."""
+    from OCP.gp import gp_Dir, gp_Lin, gp_Pnt
+    from OCP.IntCurvesFace import IntCurvesFace_ShapeIntersector
+
+    a, b = cq.Vector(*p0), cq.Vector(*p1)
+    length, step = (b - a).Length, (b - a).normalized()
+    probe = IntCurvesFace_ShapeIntersector()
+    probe.Load(solid.wrapped, 1e-6)
+    probe.Perform(gp_Lin(gp_Pnt(*a.toTuple()), gp_Dir(*step.toTuple())), -1e7, 1e7)
+    crossings = sorted(probe.WParameter(i) for i in range(1, probe.NbPnt() + 1))
+    lo = hi = None
+    for t0, t1 in zip(crossings, crossings[1:]):
+        if t1 - t0 < 1e-6 or t1 < -1e-6 or t0 > length + 1e-6:
+            continue
+        if solid.isInside(a + step * ((t0 + t1) / 2)):
+            lo, hi = (t0 if lo is None else min(lo, t0)), (t1 if hi is None else max(hi, t1))
+    return None if lo is None else (lo, hi)
+
+
+def cut_through(body, d, p0, p1, label, log, min_volume=0.0, max_holes=None) -> cq.Workplane:
+    """A round hole that has to go through (features.py, "through": true). The hole is tried as given, then
+    lengthened to where its axis leaves the material it is in, then through the whole part; the shortest one
+    that opens a new through-hole and passes the checks of cut_feature is kept. If none does, the hole is cut
+    as given, so a wrong "through" costs nothing."""
+    a, b = cq.Vector(*p0), cq.Vector(*p1)
+    step = (b - a).normalized()
+    solid = body.val().Solids()[0]
+    tries = [(a, b, "as given")]
+    try:
+        span = _material_span(solid, p0, p1)
+    except Exception:
+        span = None
+    if span is not None:
+        for margin in (max(0.5, 0.05 * d), 0.5 * d + 0.5):
+            lo, hi = min(span[0] - margin, 0.0), max(span[1] + margin, (b - a).Length)
+            tries.append((a + step * lo, a + step * hi, f"lengthened to {hi - lo:.1f} mm"))
+    reach = body.val().BoundingBox().DiagonalLength
+    tries.append((a - step * reach, b + step * reach, "taken through the whole part"))
+    before = through_holes(solid)
+    for start, end, how in tries:
+        try:
+            out, removed, holes, _ = _cut_outcome(body, cyl_between(d, start.toTuple(), end.toTuple()), min_volume,
+                                                  max_holes)
+        except Exception:
+            continue
+        if out is not None and holes > before:
+            log.append(f"{label} -> cut through ({how}), removed {removed:.0f} mm3")
+            return out
+    return cut_feature(body, lambda: cyl_between(d, p0, p1), label + " (no length opened a through-hole)", log,
+                       min_volume, max_holes)
 
 
 HELPERS = {f.__name__: f for f in (box, cyl, tube, cone, cyl_between, cone_between, tube_between, sphere, prism,
-                                   revolve, arc_points, polar_points, try_fillet, try_chamfer, try_cut, cut_feature)}
+                                   revolve, arc_points, polar_points, try_fillet, try_chamfer, try_cut, cut_feature,
+                                   cut_through)}
 
 HELPER_DOC = """\
 box(x0, y0, z0, x1, y1, z1)                 axis-aligned box between two corners

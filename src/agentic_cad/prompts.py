@@ -333,6 +333,10 @@ and stops (centre +- length/2 along its axis).
 3. Start a feature 1 mm outside the face it enters from, so no skin is left; stop it at the stated depth.
 4. Prefer a few large, certain features over many doubtful ones: material removed in the wrong place is \
 worse than a missing feature. Never remove material that an outline shows.
+5. Through-holes are counted exactly. You are told how many the part has and how many the solid has now. \
+When some are missing, list each missing one as a cylinder with "through": true (the brief says which holes \
+go through); when none is missing, every cylinder is "through": false and must stay blind.
+6. Identical features in a row or on a circle are ONE feature with "repeat", not one entry per copy.
 
 ## Example (a different part)
 {{"plan": "base is 31400 mm3 too heavy. The top pocket (68 x 38 x 17 = 43900 minus what the outlines already \
@@ -340,9 +344,11 @@ show) accounts for most of it, the counterbore and the blind cross bore for the 
  "features": [
   {{"label": "top pocket 68 x 38, floor at Z = 4", "type": "box", "min": [6, 6, 4], "max": [74, 44, 22]}},
   {{"label": "counterbore d16, 9 deep from the top", "type": "cylinder", "diameter": 16, \
-"start": [40, 25, 12], "end": [40, 25, 22]}},
+"start": [40, 25, 12], "end": [40, 25, 22], "through": false}},
   {{"label": "blind cross bore d10 from the X = 0 face", "type": "cylinder", "diameter": 10, \
-"start": [-1, 25, 12], "end": [30, 25, 12]}}
+"start": [-1, 25, 12], "end": [30, 25, 12], "through": false}},
+  {{"label": "4 mounting holes d5 through the floor, 20 mm pitch along X", "type": "cylinder", "diameter": 5, \
+"start": [10, 25, 0], "end": [10, 25, 4], "through": true, "repeat": {{"count": 4, "step": [20, 0, 0]}}}}
  ]}}
 """
 
@@ -350,13 +356,28 @@ show) accounts for most of it, the counterbore and the blind cross bore for the 
 FEATURE_SYSTEM_PROMPT = _feature_system_prompt()
 
 
+def through_hole_line(wanted, have) -> str:
+    """What the model is told about the through-hole count of the solid it is improving."""
+    if not isinstance(wanted, (int, float)) or not isinstance(have, (int, float)):
+        return ""
+    wanted, have = int(wanted), int(have)
+    if have < wanted:
+        return (f"Through-holes: the part has {wanted}, the solid has {have} now: {wanted - have} missing. Find them "
+                'in the brief and list each as a cylinder with "through": true.')
+    return (f"Through-holes: the part has {wanted} and the solid has {have}: none is missing, so every cylinder "
+            'is "through": false.')
+
+
 def feature_message(description: str, facts: dict, base_lines: list[str], bores: list[str], best: str | None,
-                    best_lines: list[str], failures: list[str]) -> str:
+                    best_lines: list[str], failures: list[str], holes_now: int | None = None) -> str:
     text = "\n".join(p["text"] for p in initial_message(description, facts, [], None, use_images=False, image_px=0)[:-1])
     text += "\n\n# The solid `base` you start from\n" + "\n".join(base_lines)
     if bores:
         text += "\nAlready cut into `base` from the facts sheet (do not list these again):\n" + "\n".join(
             f"- {line}" for line in bores[:40])
+    hole_line = through_hole_line(facts.get("through_holes_genus"), holes_now)
+    if hole_line:
+        text += "\n\n# " + hole_line
     if best:
         text += ("\n\n# Best feature list so far\n" + best + "\nIts result:\n" + "\n".join(best_lines)
                  + "\nImprove it: keep the features that were cut, fix or drop the skipped ones, and add what "

@@ -121,14 +121,24 @@ def cut_bores(case: Case, base: Attempt) -> tuple[Attempt, list[str]]:
 
 # -- stage 3 ----------------------------------------------------------------------------------------
 
-def _better(candidate: Attempt, best: Attempt, floor_rank: float) -> bool:
+def _holes_off(attempt: Attempt, wanted: int | None) -> int | None:
+    """How far the attempt's through-hole count is from the part's; None when either is unknown."""
+    have = attempt.report.get("through_holes")
+    return None if wanted is None or not isinstance(have, (int, float)) else abs(int(have) - wanted)
+
+
+def _better(candidate: Attempt, best: Attempt, floor_rank: float, wanted_holes: int | None = None) -> bool:
     """A carved solid replaces the best one when it is a valid single solid with the right envelope, keeps
-    the outline, and is closer to the target volume."""
+    the outline, and has a through-hole count closer to the part's or, at the same count, is closer to the
+    target volume."""
     ev, ref = candidate.evaluation, best.evaluation
     if not _usable(candidate) or ev.rank < floor_rank:
         return False
     if ev.bbox_err is not None and ev.bbox_err > TOL_BBOX:
         return False
+    missing, ref_missing = _holes_off(candidate, wanted_holes), _holes_off(best, wanted_holes)
+    if missing is not None and ref_missing is not None and missing != ref_missing:
+        return missing < ref_missing      # the hole count is scored on its own: a hole gained beats volume
     if ev.volume_err is None or ref.volume_err is None:
         return ev.rank > ref.rank
     return abs(ev.volume_err) < abs(ref.volume_err) - MIN_GAIN
@@ -163,8 +173,12 @@ def carve(case: Case, base: Attempt, bores: list[str], description: str, views: 
         if idle >= s.patience:
             return "no improvement"
         best_lines = case.best.evaluation.lines + (case.best.report.get("feature_log") or []) if best_code else []
-        build_message = prompts.feature_message if by_features else prompts.carve_message
-        message = build_message(description, case.facts, base.evaluation.lines, bores, best_code, best_lines, failures)
+        if by_features:
+            message = prompts.feature_message(description, case.facts, base.evaluation.lines, bores, best_code,
+                                              best_lines, failures, case.best.report.get("through_holes"))
+        else:
+            message = prompts.carve_message(description, case.facts, base.evaluation.lines, bores, best_code,
+                                            best_lines, failures)
         system = prompts.FEATURE_SYSTEM_PROMPT if by_features else prompts.CARVE_SYSTEM_PROMPT
         content = [*images, {"type": "text", "text": message}] if images else message
         messages = [{"role": "system", "content": system}, {"role": "user", "content": content}]
@@ -208,8 +222,9 @@ def carve(case: Case, base: Attempt, bores: list[str], description: str, views: 
             attempts = [a for a in pool.map(one, range(len(clients))) if a is not None]
 
         improved = False
-        for attempt in sorted(attempts, key=lambda a: abs(a.evaluation.volume_err or 9.0)):
-            if _better(attempt, case.best, floor_rank):
+        order = sorted(attempts, key=lambda a: (_holes_off(a, max_holes) or 0, abs(a.evaluation.volume_err or 9.0)))
+        for attempt in order:
+            if _better(attempt, case.best, floor_rank, max_holes):
                 case.keep(attempt)
                 best_code = features.dumps(lists[attempt.number]) if attempt.number in lists else attempt.code
                 improved = True

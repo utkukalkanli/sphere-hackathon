@@ -144,7 +144,7 @@ def run(script: Path, out_dir: Path, case_dir: Path | None, stem: str, image_siz
             return report
 
         if isinstance(namespace.get("feature_log"), list):   # per-feature outcome of a compiled feature list
-            report["feature_log"] = [str(line)[:300] for line in namespace["feature_log"][:40]]
+            report["feature_log"] = [str(line)[:300] for line in namespace["feature_log"][:100]]
         solid, count = to_single_solid(find_result(namespace, shown), report["notes"])
         bb = solid.BoundingBox()
         solid = solid.translate(cq.Vector(-bb.xmin, -bb.ymin, -bb.zmin))

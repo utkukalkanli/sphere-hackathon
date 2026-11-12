@@ -44,11 +44,14 @@ RUN python -c "import cadquery as cq; cq.exporters.export(cq.Workplane().box(1, 
 #     OPENAI_MODEL=<model> \
 #     VLM_BASE_URL=http://<your Brev instance>:8001/v1 \
 #     VLM_MODEL=<vision model>            # graph engine; without it the agent works from text only
-# Loop settings (defaults shown; see src/agentic_cad/config.py). The hull engine needs a text model only;
+# Loop settings (see src/agentic_cad/config.py). The model stage runs in feature mode on every part: the model
+# fills in the JSON schema of features.py (60 eval parts: 0.900 against 0.884 without a model, from the hole
+# count). The hull engine needs a text model only;
 # the legacy engine needs one that accepts images unless AGENT_USE_IMAGES=0.
 ENV AGENT_ENGINE=hull \
     AGENT_LLM_STAGE=1 \
-    AGENT_CARVE_MIN_EXCESS=1.0 \
+    AGENT_CARVE_MODE=features \
+    AGENT_CARVE_MIN_EXCESS=0 \
     AGENT_CANDIDATES=4 \
     AGENT_PATIENCE=4 \
     AGENT_MAX_STEPS=16 \
