@@ -59,8 +59,16 @@ Remove a question when it is answered and record the answer in `decisions.md`, `
   number was picked on practice 4. On the 24 eval parts the rule cuts next to nothing, so they
   neither confirm nor refute it; a set with turned or cast parts that have rounded edges would.
   Left on practice 4: steps of 0.3 mm between the faces of one web (the hull's faces are a
-  little off square), and about 115 px lost from the front outline, cause not checked (perhaps
-  a lobe that the level-face rule itself cuts 2.5 mm low).
+  little off square), and the lobe of the top web, which the level-face rule itself cuts 2.5 mm
+  too low (next entry).
+- **A level face is cut to a level our solid has only at its edge.** (2026-11-12, practice 4.)
+  The top web's lobe has tone 180, the facing tone came out 182 (the flat faces beside it have
+  186), so it counts as a level face; our solid over it is at 192.4 with a patch at 189.87
+  towards the tip, and the whole lobe goes down to 189.87. The front view has its top edge at
+  192.4 up to 20 mm from the tip. The rim round the lobe hid this in every outline until the
+  rim cuts took it away (118 px of the front view, 41 of the left). Untried: asking that a
+  level cut leaves each straight outline alone with the rims gone; a narrower tone tolerance
+  round the tone of the largest flat faces.
 - **Depth of blind recesses**, the largest loss. Still not found: floors no isometric camera
   sees (eval 38 inside the channel before the supported cuts; deep or narrow pockets), small
   floors, floors only partly in sight (eval 236, 171), slanted faces with no neighbour of known
