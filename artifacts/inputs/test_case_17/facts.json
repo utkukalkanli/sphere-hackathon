@@ -1,0 +1,166 @@
+{
+ "bounding_box_mm": {
+  "x": 63.5,
+  "y": 165.1,
+  "z": 508.0
+ },
+ "volume_mm3": 1046479.0,
+ "surface_area_mm2": 336681.0,
+ "solids": 1,
+ "through_holes_genus": 8,
+ "faces": 323,
+ "edges": 818,
+ "face_types": {
+  "BSPLINE": 98,
+  "CYLINDER": 92,
+  "PLANE": 49,
+  "TORUS": 42,
+  "CONE": 42
+ },
+ "cylindrical_holes_and_bores": [
+  {
+   "diameter": 6.76,
+   "axis": "X",
+   "count": 8,
+   "lengths": [
+    7.62
+   ],
+   "centres": [
+    [
+     3.81,
+     154.94,
+     497.84
+    ],
+    [
+     3.81,
+     154.94,
+     390.43
+    ],
+    [
+     3.81,
+     154.94,
+     96.53
+    ],
+    [
+     3.81,
+     154.94,
+     10.16
+    ],
+    [
+     3.81,
+     10.16,
+     10.16
+    ],
+    [
+     3.81,
+     10.16,
+     158.29
+    ],
+    [
+     3.81,
+     10.16,
+     319.23
+    ],
+    [
+     3.81,
+     10.16,
+     497.84
+    ]
+   ]
+  },
+  {
+   "diameter": 6.0,
+   "axis": "Z",
+   "count": 1,
+   "lengths": [
+    442.57
+   ],
+   "centres": [
+    [
+     54.15,
+     9.35,
+     254.0
+    ]
+   ]
+  }
+ ],
+ "cylindrical_shafts_and_bosses": [
+  {
+   "diameter": 10.0,
+   "axis": "Z",
+   "count": 1,
+   "lengths": [
+    441.8
+   ],
+   "centres": [
+    [
+     58.5,
+     5.0,
+     254.0
+    ]
+   ]
+  }
+ ],
+ "partial_cylinders_arcs": [
+  {
+   "diameter": 6.0,
+   "type": "concave",
+   "faces": 1
+  },
+  {
+   "diameter": 10.0,
+   "type": "convex",
+   "faces": 1
+  },
+  {
+   "diameter": 19.46,
+   "type": "convex",
+   "faces": 8
+  }
+ ],
+ "fillets_rounds_from_cylinders": [
+  {
+   "radius": 1.15,
+   "type": "concave fillet",
+   "faces": 6
+  },
+  {
+   "radius": 3.0,
+   "type": "concave fillet",
+   "faces": 8
+  },
+  {
+   "radius": 5.0,
+   "type": "convex round",
+   "faces": 8
+  },
+  {
+   "radius": 7.5,
+   "type": "convex round",
+   "faces": 6
+  },
+  {
+   "radius": 19.05,
+   "type": "concave fillet",
+   "faces": 4
+  },
+  {
+   "radius": 25.4,
+   "type": "convex round",
+   "faces": 4
+  }
+ ],
+ "fillets_from_tori_minor_radii": {
+  "3.0": 21,
+  "5.0": 21
+ },
+ "cones_half_angle_deg": {
+  "5.0": 42
+ },
+ "_note": "positions in mm from the bounding-box min corner, in the frame of the 8 views",
+ "_vertex_extent_check": [
+  63.5,
+  165.1,
+  508.0
+ ]
+}
