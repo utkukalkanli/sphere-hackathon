@@ -102,6 +102,36 @@ Plan phase 1 (2026-11-12, uncommitted on `feat/phase0-safe-runs`):
   140 s (shading 79 s), 9 about 75 s, 6 about 60 s, measured with four other processes running.
   Not run: the image, the 24-part `eval_hull.py`.
 
+Plan phase 2 (2026-11-12, uncommitted on `feat/phase0-safe-runs`): one evidence table per case
+(`src/agentic_cad/evidence.py`, `VisualHullAgent.evidence(case_dir)`).
+
+- The views of a case are read once (`verify.observe`) and shared by isometric support, rounds,
+  curved, level faces, shading, pockets and split; the solid's drawings are kept per solid
+  (`evidence.drawings`), the lines the solid lacks too (`evidence.lines`), and the areas of a view
+  (`regions.segment`, `regions._measure`) are remembered on the view itself. `spans.py` and
+  `mouths.py` (another session's) still read the views themselves. The hand-over of lines from
+  pockets to split (`agent.lines_found`) is still there: split would tidy the solid again and
+  miss the cache.
+- **No output changed**: the whole pipeline without any clock, from the tree before and the tree
+  after, on the 23 eval parts (the fixed 24 without 99) and the 9 practice parts: the same volume
+  after every step and the same face count on all 32 (largest relative difference 0). Time summed
+  over the 32: 1045 s before, 786 s after, but the first run shared the laptop with a 24-part
+  eval, so the gain is not measured cleanly.
+- `evidence.rows(solid)`: one row per region of the straight views (kind by tone, the solid's
+  depth under it and its spread, length of lines under our surface in or along it, neighbouring
+  facing regions that are coplanar in the solid, tone misfit, whether the isometric view confirms
+  the solid's face). `evidence.marked()`: each straight view with the regions outlined and
+  numbered. No step decides by the flags. With tracing on, `refine` attaches both in a trace step
+  "evidence" before the later steps, computed on a copy of the solid (practice 1: 13 regions, 3 s;
+  practice 7: 423 regions, 171 with lines below, 10 with a coplanar neighbour, 17 s). With
+  `TRACE=0` (the image) nothing of it is computed. The step is in the plan the dashboard shows;
+  how the dashboard draws a stop without a solid was not looked at in a browser.
+- Whole pipeline on the fixed 24 eval parts just before this phase (`tools/eval_hull.py --iou`,
+  commit cbc80bb plus the other session's hole steps as they were in the tree, 4 processes, 479 s):
+  volume score 0.8970, sampled IoU 0.8925 (simple 0.9943, medium 0.9260, complex 0.7572), 295
+  faces per solid. Lowest: 51 (0.14), 99 (0.44), 171 (0.76), 236 (0.80), 110 (0.86). The last
+  whole-pipeline run before that gave 0.885 and 0.882.
+
 ## Git
 
 - `main`: template, eval set and the first dashboard. It has no `artifacts/outputs`, so **nothing

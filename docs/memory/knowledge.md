@@ -443,6 +443,12 @@ organisers' format:
   same objects in the result, so the next figure can be drawn onto them.
 - **A new later step** is a module with `apply(agent, solid, case_dir, views)` added to `LATER_STEPS`
   in `hull_agent.py` and its label to `STEPS` in `tools/eval_hull.py`.
+- **A step takes the views and the drawings from the agent** (2026-11-12, `evidence.py`):
+  `evidence = agent.evidence(case_dir, dims)`, then `evidence.observed`, `evidence.drawings(solid)`
+  (draws a view when it is first asked for), `evidence.lines(solid)`, `evidence.regions()`,
+  `evidence.rows(solid)`. Drawings and lines are found again by the solid's identity, so a solid
+  that was copied or tidied is another solid. Nothing returned may be written into: the views and
+  their label images are shared by every step of the case.
 - **`Cutter.run(operation, shape, argument, timeout)`** runs any boolean in a spawned child process.
   The operation must be a module-level function and the argument picklable. Use it for every new
   geometric step.

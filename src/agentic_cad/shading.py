@@ -780,7 +780,8 @@ def apply(agent, solid: TopoDS_Shape, case_dir: Path | None, views: list[Path]) 
         if target and vh.volume(solid) < MIN_EXCESS * target:
             step.log("the solid already has the part's volume; nothing to look for")
             return solid
-        observed = verify.observe(case_dir, dims)
+        evidence = agent.evidence(case_dir, dims)
+        observed = evidence.observed
         if not any(name.startswith("iso") for name in observed):
             step.log("no isometric view with a known scale; nothing to match depths against")
             return solid
@@ -818,7 +819,7 @@ def apply(agent, solid: TopoDS_Shape, case_dir: Path | None, views: list[Path]) 
                 if view not in observed:
                     continue
                 if drawings is None:
-                    drawings = Drawings(current, observed, dims)
+                    drawings = evidence.drawings(current)
                 pockets = find(view, observed, drawings, dims)
                 if DEEP:
                     pockets += find_deep(view, observed, drawings, dims, skip=tuple(p.region for p in pockets))

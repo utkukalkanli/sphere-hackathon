@@ -456,12 +456,13 @@ def apply(agent, solid: TopoDS_Shape, case_dir: Path | None, views: list[Path]) 
             base, observed, drawings, found = cached
         else:
             base = vh.tidy(solid)
-            observed = verify.observe(case_dir, dims)
+            evidence = agent.evidence(case_dir, dims)
+            observed = evidence.observed
             if not any(name in observed for name in lines.ISOMETRIC):
                 step.log("no isometric view with a known scale; no line can be confirmed")
                 return solid
-            drawings = shading.Drawings(base, observed, dims)
-            found = lines.find(observed, drawings, dims)
+            drawings = evidence.drawings(base)
+            found = evidence.lines(base)
         count, wanted = len(faces_of(base)), facts.get("faces")
         step.metric(faces=count, **({"faces_of_part": wanted} if wanted else {}))
         every = [p for group in found.values() for p in group]

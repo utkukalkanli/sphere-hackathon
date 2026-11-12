@@ -51,7 +51,10 @@ def tone_of(image: np.ndarray) -> np.ndarray:
 
 def segment(observed: verify.Observed) -> tuple[np.ndarray, np.ndarray]:
     """The areas between the lines: a label per pixel (0: background or line) and OpenCV's statistics
-    per label."""
+    per label. Remembered on the view: several steps ask for the same one. Do not write into them."""
+    known = getattr(observed, "_segments", None)
+    if known is not None:
+        return known
     # Where a bright face meets a dark one the renderer's line does not stand out and is not found
     # as a line; the jump in tone itself is the boundary there.
     tones = tone_of(observed.image)
@@ -66,6 +69,7 @@ def segment(observed: verify.Observed) -> tuple[np.ndarray, np.ndarray]:
     faint = (closed - bright >= np.maximum(DARK_LINE_MIN, DARK_LINE_SHARE * closed)) & observed.mask
     open_area = (observed.mask & ~observed.lines & ~jump & ~faint).astype(np.uint8)
     _, labels, stats, _ = cv2.connectedComponentsWithStats(open_area, connectivity=4)
+    observed._segments = (labels, stats)
     return labels, stats
 
 
@@ -76,7 +80,10 @@ def _readable(observed: verify.Observed) -> np.ndarray:
 
 def _measure(observed: verify.Observed) -> tuple[np.ndarray, list[tuple]]:
     """The label image of a view and, per area large enough, largest first: label, area, box, median
-    tone and spread (8th to 92nd percentile)."""
+    tone and spread (8th to 92nd percentile). Remembered on the view."""
+    known = getattr(observed, "_measured", None)
+    if known is not None:
+        return known
     labels, stats = segment(observed)
     tones = tone_of(observed.image)
     readable = _readable(observed)
@@ -99,6 +106,7 @@ def _measure(observed: verify.Observed) -> tuple[np.ndarray, list[tuple]]:
             rows, cols = np.nonzero(core if core.sum() >= MIN_REGION_PX // 4 else inside)
             spread = _without_falloff(values, cols + x, rows + y, size, spread, allowed)
         measured.append((int(label), area, (x, y, w, h), int(middle), int(round(spread))))
+    observed._measured = (labels, measured)
     return labels, measured
 
 

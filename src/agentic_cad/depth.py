@@ -416,14 +416,14 @@ def apply(agent, solid: TopoDS_Shape, case_dir: Path | None, views: list[Path]) 
             return solid
         dims = dict(zip("xyz", vh.read_dimensions(case_dir)))
         target = vh.read_volume(case_dir)
-        observed = verify.observe(case_dir, dims)
+        evidence = agent.evidence(case_dir, dims)
+        observed = evidence.observed
         straight = [name for name in verify.ORTHO_VIEWS if name in observed]
         if not straight:
             step.log("no straight view could be read")
             return solid
         score = recall = None
         rater = judge.Judge(case_dir, dims, observed) if judge.local() else None
-        deflection = 0.3 * min(view.mm_per_px for view in observed.values())
         levelled = 0
         facing = regions.facing_tone({name: regions._measure(observed[name])[1] for name in straight})
 
@@ -461,7 +461,7 @@ def apply(agent, solid: TopoDS_Shape, case_dir: Path | None, views: list[Path]) 
             if agent.out_of_time():
                 step.log("out of time for this case; the remaining views are not looked at", level="warning")
                 break
-            drawing = verify.draw(verify.tessellate(solid, deflection), name, dims, observed[name].mm_per_px)
+            drawing = evidence.drawings(solid)[name]
             cuts = find(observed[name], drawing, dims, observed, facing)
             if not cuts:
                 continue

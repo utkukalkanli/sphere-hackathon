@@ -438,7 +438,7 @@ def apply(agent, solid: TopoDS_Shape, case_dir: Path | None, views: list[Path]) 
             step.log("the solid already has the volume of the part")
             return solid
         dims = dict(zip("xyz", vh.read_dimensions(case_dir)))
-        observed = verify.observe(case_dir, dims)
+        observed = agent.evidence(case_dir, dims).observed
         before = score = None
         carved, kept, proposals = solid, 0, []
         for _ in range(MAX_PASSES):   # a cut can end at the next ring of the same recess

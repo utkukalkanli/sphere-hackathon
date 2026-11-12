@@ -91,6 +91,11 @@ Remove a question when it is answered, and record the answer in `decisions.md` o
   (96 GB VRAM) within the 20 minutes, and which step calls them. `OPENAI_BASE_URL`, `OPENAI_API_KEY`
   and `OPENAI_MODEL` are not set anywhere yet, and the endpoint must be public and stay up until
   judging ends.
+- **What should read the evidence table?** (2026-11-12, plan phase 2.) `evidence.rows` flags
+  regions with lines under our surface and facing neighbours that are coplanar in our solid, and
+  nothing uses the flags: cuts from coplanar pairs gained 0.004 outside the parts they were
+  developed on. They are meant for ordering proposals and as a model's input (plan phase 3). Not
+  measured: how right the flags are against the ground truth.
 - **`context.png` is not used.** Is there anything in it worth using? It is absent for some parts.
 - **How deep is a blind hole that `facts.json` lists only as a span?** (2026-11-12, practice 8,
   `knowledge.md`.) `spans.py` cuts a blind hole from each end to half of the room it has (5.05 mm

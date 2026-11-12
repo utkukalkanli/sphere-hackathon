@@ -68,7 +68,7 @@ def _solids(shape: TopoDS_Shape) -> list[TopoDS_Shape]:
 def choose(agent, step, hull: TopoDS_Shape, carved: TopoDS_Shape, case_dir: Path, dims: dict,
            target: float) -> TopoDS_Shape | None:
     """The hull with as much of (hull - carved) removed as the views support, or None for nothing."""
-    observed = verify.observe(case_dir, dims)
+    observed = agent.evidence(case_dir, dims).observed
     base = views_score(hull, case_dir, observed)
     whole = views_score(carved, case_dir, observed)
     step.metric(views_before=round(base, 4), views_all_removed=round(whole, 4))

@@ -227,15 +227,16 @@ def apply(agent, solid: TopoDS_Shape, case_dir: Path | None, views: list[Path]) 
         if target and vh.volume(solid) < MIN_EXCESS * target:
             step.log("the solid already has the part's volume; nothing to look for")
             return solid
-        observed = verify.observe(case_dir, dims)
+        evidence = agent.evidence(case_dir, dims)
+        observed = evidence.observed
         if not any(name in observed for name in lines.ISOMETRIC):
             step.log("no isometric view with a known scale; no depth can be found")
             return solid
         # On the solid with its same-surface faces merged, as the export writes it: then the split
         # step, which comes next and needs the same lines, does not have to find them again.
         solid = vh.tidy(solid)
-        drawings = shading.Drawings(solid, observed, dims)
-        found = lines.find(observed, drawings, dims)
+        drawings = evidence.drawings(solid)
+        found = evidence.lines(solid)
         if not any(piece.verdict == "below" for pieces in found.values() for piece in pieces):
             step.log("no line of the views lies under our surface")
             agent.lines_found = (solid, observed, drawings, found)

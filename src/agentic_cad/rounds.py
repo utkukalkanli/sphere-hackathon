@@ -347,7 +347,7 @@ def apply(agent, solid: TopoDS_Shape, case_dir: Path | None, views: list[Path]) 
         step.attach("rounds.json", [{"axis": r.axis, "position": r.position, "spans": r.spans,
                                      "evidence": r.evidence, "profile_from": r.silhouette.name} for r in rounds])
         target = vh.read_volume(case_dir)
-        observed = verify.observe(case_dir, dims)
+        observed = agent.evidence(case_dir, dims).observed
         before = verify.check(solid, case_dir, observed).score
         weak = [r for r in rounds if r.evidence == "disc"]
         rounds = [r for r in rounds if r.evidence != "disc"]

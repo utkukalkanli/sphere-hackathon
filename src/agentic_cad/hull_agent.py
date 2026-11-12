@@ -15,9 +15,12 @@ from agentic_cad import spans
 from agentic_cad import iso_support
 from agentic_cad import outline_fit as of
 from agentic_cad import pockets
+from OCP.BRepBuilderAPI import BRepBuilderAPI_Copy
+
 from agentic_cad import curved
 from agentic_cad import datums
 from agentic_cad import depth
+from agentic_cad import evidence as evidence_table
 from agentic_cad import export
 from agentic_cad import rounds
 from agentic_cad import shading
@@ -77,7 +80,32 @@ class VisualHullAgent:
         self._iso = None  # an isometric silhouette whose scale is already confirmed, for _cut_direction
         self.keep_faces = False  # set by the split step: the export must not merge its faces again
         self.lines_found = None  # handed from the pockets step to the split step: the lines of an unchanged solid
+        self._evidence = None  # what the inputs of the case in hand say (evidence.py)
         self._sound: bool | None = None  # whether the solid so far reads back valid from its file, if asked
+
+    def evidence(self, case_dir: Path, dims: dict | None = None) -> "evidence_table.Evidence":
+        """The views of a case and what the steps derive from them, read once for the case."""
+        if self._evidence is None or self._evidence.case_dir != case_dir:
+            self._evidence = evidence_table.Evidence(case_dir, dims or dict(zip("xyz", vh.read_dimensions(case_dir))))
+        return self._evidence
+
+    def _show_evidence(self, solid, case_dir: Path | None) -> None:
+        """For the dashboard only: the regions of the views with what the solid has under them, as a
+        table and as marked views. On a copy of the solid, so that nothing here can reach a step."""
+        if case_dir is None or trace.current_case().dir is None:
+            return
+        with trace.step("evidence", kind="io", description=(
+                "The areas between the lines of each view, numbered, with what the solid has under them")) as step:
+            try:
+                table = self.evidence(case_dir)
+                rows = table.rows(BRepBuilderAPI_Copy(solid, True, False).Shape())
+                step.attach("regions.json", rows)
+                for view, picture in table.marked().items():
+                    step.attach(f"regions_{view}.png", picture)
+                step.metric(regions=len(rows), with_lines_below=sum(1 for row in rows if row["below_px"] > 0),
+                            coplanar=sum(1 for row in rows if row["coplanar_with"]))
+            except Exception as error:
+                step.log(f"raised {error!r}; the steps do not need it", level="warning")
 
     def out_of_time(self) -> bool:
         return self.deadline is not None and time.time() > self.deadline
@@ -139,6 +167,7 @@ class VisualHullAgent:
         steps.append({"name": "cut_iso"} if self.use_iso else {"name": "cut_iso", "off": "the isometric cut is switched off"})
         steps.append({"name": "check_views"})
         steps.append({"name": "cut_holes"} if self.use_holes else {"name": "cut_holes", "off": "the hole step is switched off"})
+        steps.append({"name": "evidence"})
         for name in LATER_STEPS:
             step = {"name": STEP_NAMES.get(name, name)}
             if name in SKIP_STEPS:
@@ -155,6 +184,7 @@ class VisualHullAgent:
         (export.checkpoint; onto `output_path` if given, so a run that is killed keeps the steps
         done so far). A step whose solid does not survive that is dropped, it alone."""
         self.keep_faces, self.lines_found = False, None
+        self._show_evidence(solid, case_dir)
         names = [name for name in LATER_STEPS if name not in skip and name not in SKIP_STEPS]
         for index, name in enumerate(names):
             module = LATER_STEPS[name]
