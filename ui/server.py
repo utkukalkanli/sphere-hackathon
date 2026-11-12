@@ -124,7 +124,50 @@ def list_cases(dataset: str) -> list[dict]:
             "truth": truth,
             "output": output,
         })
-    return sorted(cases, key=lambda c: c["number"])
+    return add_scores(dataset, sorted(cases, key=lambda c: c["number"]))
+
+
+def eval_scores() -> dict[str, dict]:
+    """Newest result of tools/eval_hull.py per case: the score after each step and the sampled IoU."""
+    best: dict[str, tuple] = {}  # the run with the most steps (not an ablation), then the newest
+    for path in (RUNS / "_eval_cache").glob("result_*_test_case_*.json"):
+        try:
+            row = json.loads(path.read_text())
+            true = float(row["true"])
+            steps = [round(min(v, true) / max(v, true), 4) for v in row["volumes"].values() if v and true]
+            rank = (len(steps), path.stat().st_mtime)
+        except Exception:
+            continue
+        if steps and (row["name"] not in best or rank > best[row["name"]][0]):
+            best[row["name"]] = (rank, {"score": row.get("iou", steps[-1]), "steps": steps, "iou": "iou" in row})
+    return {name: score for name, (_, score) in best.items()}
+
+
+def run_scores(dataset: str) -> dict[str, dict]:
+    """Volume score after each step of the newest traced run of every case."""
+    scores: dict[str, dict] = {}
+    for run in list_runs():  # newest first
+        if run.get("dataset") != dataset:
+            continue
+        for case in run["cases"]:
+            volumes = [s["volume_cm3"] for s in case.get("stages", []) if s.get("volume_cm3")]
+            if volumes and case["name"] not in scores:
+                scores[case["name"]] = {"cm3": volumes}
+    return scores
+
+
+def add_scores(dataset: str, cases: list[dict]) -> list[dict]:
+    """`score` per case: 1 is the part itself. The eval cache where it has the case, else the traces."""
+    cached = eval_scores() if DATASETS[dataset]["truth"] else {}
+    traced = run_scores(dataset)
+    for case in cases:
+        score = cached.get(case["name"])
+        true = ((case.get("facts") or {}).get("volume_mm3") or 0) / 1000
+        if score is None and true and case["name"] in traced:
+            steps = [round(min(v, true) / max(v, true), 4) for v in traced[case["name"]]["cm3"]]
+            score = {"score": steps[-1], "steps": steps, "iou": False}
+        case["score"] = score
+    return cases
 
 
 def dataset_of(info: dict) -> str | None:

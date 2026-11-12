@@ -24,6 +24,7 @@ const ICON = {
   diff: icon('<rect x="2.5" y="2.5" width="8" height="8" rx="1"/><rect x="5.5" y="5.5" width="8" height="8" rx="1" stroke-dasharray="2 1.7"/>'),
   faces: icon('<path d="M8 2.5 13 5v6l-5 2.5L3 11V5z"/><path d="M3 5l5 2.5L13 5M8 7.5v6"/>'),
   cut: icon('<path d="M2.5 11.5 8 9l5.5 2.5M2.5 4.5 8 2l5.5 2.5L8 7z"/><path d="M2.5 8 8 10.5 13.5 8" stroke-dasharray="2 1.7"/>'),
+  order: icon('<path d="M3 4h10M3 8h7M3 12h4"/>'),
   ghost: icon('<path d="M3 5.5 8 3l5 2.5v5L8 13l-5-2.5z" stroke-dasharray="2 1.7"/>'),
   play: icon('<path d="M5 3.5v9l7-4.5z" fill="currentColor"/>'),
   stop: icon('<rect x="4" y="4" width="8" height="8" rx="1" fill="currentColor"/>'),
@@ -82,7 +83,20 @@ const isImage = (name) => /\.(png|jpe?g|gif|webp|svg)$/i.test(name);
 const isStep = (name) => /\.(stp|step)$/i.test(name);
 
 const dataset = () => S.datasets.find((d) => d.id === S.dataset);
-const cases = () => S.cases[S.dataset] || [];
+const cases = () => ordered(S.cases[S.dataset] || []);
+// Worst first: the cases with a score by how far they are from the part, then the rest by number
+let worstFirst = true;
+try { worstFirst = localStorage.getItem('order') !== 'number'; } catch { /* private mode */ }
+function ordered(list) {
+  if (!worstFirst) return list;
+  const loss = (c) => (c.score ? 1 - c.score.score : -1);
+  return [...list].sort((a, b) => (loss(b) >= 0) - (loss(a) >= 0) || loss(b) - loss(a) || a.number - b.number);
+}
+function toggleOrder() {
+  worstFirst = !worstFirst;
+  try { localStorage.setItem('order', worstFirst ? 'loss' : 'number'); } catch { /* private mode */ }
+  renderBar();
+}
 const currentCase = () => cases().find((c) => c.name === S.caseName);
 const currentRun = () => S.runs.find((r) => r.id === S.runId);
 const datasetRuns = () => S.runs.filter((r) => !r.dataset || r.dataset === S.dataset);
@@ -325,10 +339,11 @@ function renderBar() {
       <button class="icon" data-move="-1" title="Previous case (↑)" aria-label="Previous case">${ICON.prev}</button>
       <select id="case-select" aria-label="Test case">
         ${S.datasets.map((d) => `<optgroup label="${esc(d.label)} (${d.count})">
-          ${(S.cases[d.id] || []).map((c) => `<option value="${d.id}/${c.name}" ${d.id === S.dataset && c.name === S.caseName ? 'selected' : ''}>
-            ${esc(`${c.number} · ${generic(c) ? envelope(c) || c.name : c.title}${c.tier ? ` · ${c.tier}` : ''}`)}${d.id === S.dataset && inRun.has(c.name) ? ' •' : ''}</option>`).join('')}</optgroup>`).join('')}
+          ${ordered(S.cases[d.id] || []).map((c) => `<option value="${d.id}/${c.name}" ${d.id === S.dataset && c.name === S.caseName ? 'selected' : ''}>
+            ${esc(`${c.score ? `${c.score.score.toFixed(2)} · ` : ''}${c.number} · ${generic(c) ? envelope(c) || c.name : c.title}${c.tier ? ` · ${c.tier}` : ''}`)}${d.id === S.dataset && inRun.has(c.name) ? ' •' : ''}</option>`).join('')}</optgroup>`).join('')}
       </select>
       <button class="icon" data-move="1" title="Next case (↓)" aria-label="Next case">${ICON.next}</button>
+      <button class="icon" data-order aria-pressed="${worstFirst}" title="Worst cases first (by overlap with the ground truth, or by volume where there is none)" aria-label="Worst cases first">${ICON.order}</button>
     </div>
     <label class="field"><span>Run</span>
       <select id="run-select">
@@ -859,6 +874,7 @@ document.addEventListener('click', async (event) => {
   if (d.ghost !== undefined) return toggleGhost();
   if (d.faces !== undefined) return toggleFaces();
   if (d.cut !== undefined) return cycleSection();
+  if (d.order !== undefined) return toggleOrder();
   if (d.diff !== undefined) return toggleDiff();
   if (d.lightbox) return openOverlay(d.lightbox);
   if (d.sel) return selectStep(d.sel);
