@@ -15,8 +15,9 @@ Everything so far is deterministic. No model is called anywhere yet.
 | 4. Level faces: in each straight view, an area between the dark lines with the flat tone of a face looking at the camera is one face at one depth. Where it covers several flat levels of our solid, the whole area is cut down to the lowest (if that level covers at least 5 % of the area) | `src/agentic_cad/depth.py` | committed on `feat/visual-hull`, measured (below) |
 | Verifier (not a step): draws a candidate solid from the 8 cameras and compares silhouettes, face-boundary lines, volume and area with the inputs. Steps 3 and 4 keep a cut only if its score does not drop | `src/agentic_cad/verify.py`, `tools/check_verify.py` | committed on `feat/visual-hull`, measured (below) |
 | 5. Depth from shading: in each straight view, an area with the tone of a face square to the camera, enclosed by lines, is slid down along the view direction and projected into the isometric view that sees that side. The depth is taken where the pixels it lands on show that side's tone and its outline lands on dark lines; the column above it is cut down to there. Only points certainly visible from the isometric camera count. Up to 3 passes over the six views. Slanted flat faces (one even tone that is not the facing tone) are handled too, but only where one straight edge borders a face square to the view whose depth the solid already has: the plane is hung on that edge and only its slope is searched (`HULL_SHADING_SLANTED=0` switches this off). A second search (`HULL_SHADING_DEEP=0` switches it off) takes floors the first cannot judge, by tone alone: regions of at least 10000 px, the depth where the largest share of the region lands on the right tone (the shallowest of equally good ones), all such floors lowered together and each kept only if what is then certainly visible shows the tone. A face whose present surface already agrees with the isometric view is never touched. Curved faces are not done | `src/agentic_cad/shading.py`, `tools/check_shading.py` | uncommitted, hooked into `LATER_STEPS`, measured (below) |
-| Pockets under our surface (between steps 5 and 6): a closed figure of lines that a straight view draws inside one flat face of ours, and that lie under that face (`lines.py`: "below"), is the outline of a pocket floor. The outline is slid down along the view direction; the depth is taken where at least half of it lands on lines of the isometric view and 0.25 more than at a usual depth. The column over the figure is cut down to there, kept only if the verifier does not rate the solid lower and the part's volume is left. `HULL_SKIP=pockets` switches it off | `src/agentic_cad/pockets.py` | committed on `feat/visual-hull` (8268262), hooked into `LATER_STEPS` after shading, measured (below) |
-| 6. Split faces (moves no material): a line of a straight view that runs through the inside of one face of ours, and that the isometric view confirms to lie on our surface, is drawn onto that face as an edge. Pieces whose ends meet are joined into one figure first. Kept only if the volume is unchanged and the verifier does not rate it lower. Runs on the merged solid and stays last; the export then skips `tidy` (`agent.keep_faces`). `HULL_SKIP=split` switches it off | `src/agentic_cad/split.py`, `src/agentic_cad/lines.py`, `tools/check_lines.py` | committed on `feat/visual-hull` (8268262), hooked into `LATER_STEPS` last, measured (below) |
+| Line cuts (after step 5): pockets read from the lines inside the straight views, their depth from the side views; turned parts as profiles revolved about a round outline (from `ananas`). Kept only if the verifier does not rate the result lower. At most 120 s and 0.6 of the case's time left (`LINE_BUDGET`, `LINE_CUT_TIMEOUT`); `HULL_SKIP=lines` | `src/agentic_cad/line_cuts.py`, `revolve.py`, `edges.py`, `views.py` | committed on `nar` (845a062), measured (below) |
+| Brief symmetries (first and last of the later steps, "brief" and "recheck"): symmetries `description.md` states plainly (mirror plane, revolution, n-fold) are read; the solid is intersected with its mirrored or rotated copy, refused only below 99 % of the true volume (since 2026-11-12 afternoon kept even if the verifier rates it lower, decisions.md; that change is another session's, uncommitted at this writing) | `src/agentic_cad/brief.py`, `tests/test_brief.py` | committed on `nar` (845a062), measured (below) |
+| Removed 2026-11-12: the pockets and split steps (decisions.md) | | |
 
 Unused inputs so far: the text of `description.md` (only its Envelope line is read, as a fallback),
 `context.png`, the shading of slanted and curved faces (step 5 uses the tone of flat faces only), and
@@ -71,10 +72,37 @@ Guards around every cut (`hull_agent.py`):
   of step 1 (44 MB).
 - `feat/visual-hull` also has step 2, `tools/eval_hull.py`, the isometric cut switched off, and the
   practice outputs of steps 1 + 2 without the isometric cut.
+- `nar` (pushed, the working branch since 2026-11-12 afternoon): `feat/phase0-safe-runs` plus the
+  brief symmetry step, the line cuts and the parallel cases of `ananas`, without pockets and split.
+  Another session works on `nar` in the same folder at the same time.
+- `ananas` (pushed): the line cuts and the model step; its useful parts are now in `nar`.
 - GitHub Actions variables for team-d are set (`ECR_REPOSITORY_URI`, `S3_SUBMISSION_URI`,
   `AWS_REGION`), so a push to `main` submits.
 
 ## Measurements
+
+Practice set, whole pipeline of `nar` at 845a062 (brief first and last, line cuts, no pockets or
+split, 4 cases at once), Windows PC, 2026-11-12 13:31, run `20261112-133113-6d9b`; our volume / true
+volume, score = mean of min/max:
+
+| | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | score |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `nar` before (a889456 + later steps) | 1.003 | 1.018 | 1.000 | 1.028 | 1.224 | 2.759 | 1.936 | 1.002 | 1.729 | 0.803 |
+| `ananas` (077ba58) | 1.002 | 1.140 | 1.011 | 1.121 | 1.009 | 2.623 | 2.033 | 1.008 | 1.393 | 0.8145 |
+| `nar` 845a062 | 1.003 | 1.018 | 1.000 | 1.028 | 1.008 | 2.712 | 2.002 | 1.060 | 1.605 | 0.820 |
+
+- What each step did in this run: brief 9 1.88 -> 1.67, 3 1.085 -> 1.018 (rounds would have got
+  there anyway); line cuts 5 1.224 -> 1.008, 6 2.766 -> 2.712, nothing on 2, 4, 8, 9 (skipped on 7
+  for time); recheck 8 1.064 -> 1.060. Brief refused by the verifier on 2 (revolution) and 6
+  (four-fold), see knowledge.md.
+- 8 is 1.060 against 1.002 before: the blind-hole spans of `spans.py` (1.002 -> 1.067 when they came
+  in), not this work.
+- 7 and 9 vary between runs with the time each step gets: an earlier run of the same pipeline with
+  pockets gave 7 1.973, 9 1.548 (shading cut more there).
+- Run time: 17.5 minutes for the 9 (13:31:09 to 13:48:38), over the 17 minute budget and close to
+  the organisers' 20. With 4 cases and their boolean children at once every step is slower than
+  alone: level faces 247 s on part 7, 208 s on 9. Line cuts got no time on 7.
+- Before the trim (same code with pockets and split), 15.6 minutes; pockets changed 5 by 0.0001.
 
 Score used locally: `min(ours, true) / max(ours, true)` of the volumes. While our solid still
 contains the whole part this equals the overlap (IoU); a 40-part check with sampled points against
