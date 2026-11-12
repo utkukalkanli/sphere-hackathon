@@ -1,6 +1,7 @@
 """Local dashboard for the Prompt-to-CAD pipeline. Standard library only.
 
     uv run python ui/server.py            # http://localhost:8765
+    uv run python ui/server.py --practice-only --port 8766   # the 9 practice parts only
 
 Shows the test cases of the practice set (artifacts/inputs) and the local eval set (datasets/eval:
 brief, views, facts, expected .stp), the traces written by agentic_cad.trace under runs/, and the
@@ -47,6 +48,7 @@ DATASETS = {
              "index": EVAL / "index.csv"},
 }
 FILE_ROOTS = {"artifacts": ARTIFACTS, "eval": EVAL, "runs": RUNS}
+SHOWN = set(DATASETS)  # --practice-only leaves out the eval set
 
 NAME_RE = re.compile(r"^[A-Za-z0-9_-][A-Za-z0-9._-]*$")
 PROCS: dict[str, subprocess.Popen] = {}
@@ -81,7 +83,7 @@ def read_index(path: Path | None) -> dict[str, dict]:
 def list_datasets() -> list[dict]:
     result = []
     for key, ds in DATASETS.items():
-        if ds["inputs"].is_dir():
+        if key in SHOWN and ds["inputs"].is_dir():
             count = sum(1 for d in ds["inputs"].glob("test_case_*") if (d / "description.md").is_file())
             result.append({"id": key, "label": ds["label"], "count": count, "has_truth": bool(ds["truth"]),
                            "committed": bool(ds["outputs"]), "inputs_url": ds["inputs_url"]})
@@ -251,9 +253,26 @@ def case_summary(case_dir: Path) -> dict:
 
 def pid_alive(pid) -> bool:
     try:
-        os.kill(int(pid), 0)
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if os.name == "nt":
+        # On Windows os.kill(pid, 0) is not a probe: it calls TerminateProcess with exit code 0,
+        # which silently killed every run the dashboard had not started itself
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            return False
+        try:
+            code = ctypes.c_ulong()
+            return bool(kernel32.GetExitCodeProcess(handle, ctypes.byref(code))) and code.value == 259  # STILL_ACTIVE
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
         return True
-    except (OSError, TypeError, ValueError):
+    except OSError:
         return False
 
 
@@ -288,7 +307,8 @@ def run_summary(run_dir: Path) -> dict | None:
 def list_runs() -> list[dict]:
     if not RUNS.is_dir():
         return []
-    runs = [summary for d in RUNS.iterdir() if d.is_dir() and (summary := run_summary(d))]
+    runs = [summary for d in RUNS.iterdir() if d.is_dir() and (summary := run_summary(d))
+            and summary.get("dataset") in SHOWN | {None}]
     return sorted(runs, key=lambda r: r.get("started_at") or 0, reverse=True)
 
 
@@ -516,7 +536,10 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--practice-only", action="store_true", help="show the 9 practice parts, not datasets/eval")
     args = parser.parse_args()
+    if args.practice_only:
+        SHOWN.intersection_update({"practice"})
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     print(f"dashboard: http://localhost:{args.port}   (traces: {RUNS})")
     try:

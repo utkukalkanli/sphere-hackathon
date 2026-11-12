@@ -79,6 +79,20 @@ blind, symmetry planes. Example, practice part 1: "plate 14.0 mm thick in Y, rea
 mm, recess Ø25.4 with axis parallel to X centred at Z = 25.4, Y = 7.0". It always has an
 `**Envelope:** X x Y x Z mm` line.
 
+**What the practice briefs say about symmetry** (read 2026-11-12, `brief.py`): plain statements on
+1 (planes X and Z), 2 (revolution about Y), 3 (revolution about X), 6 (four-fold about Z), 8 (plane
+X), 9 (plane Z). Hedged or negated on 4 ("no plane or rotational symmetry"), 5 ("for the main
+circular features"), 7 ("roughly symmetric"); 6 also says "symmetric about the Z axis in its outer
+profile", which the fins break. A stated plane is always the middle of the bounding box. The eval
+set's template briefs state no symmetry, so the step can only be judged on the practice parts.
+
+- **A boolean can fail on a solid in memory and work on the same solid read back from its .stp**
+  (practice 8, 2026-11-12: the mirror common gave no result in the pipeline and worked in 13 s on
+  the stage file). `brief.as_filed` retries that way.
+- **Intersecting with rotated copies leaves facets the verifier punishes**: on practice 2 (revolution,
+  16 copies) and 6 (four-fold) the common removed real excess (1.4 and 112 cm3) but the verifier's
+  score dropped (0.565 to 0.558, 0.152 to 0.129), so it was not kept. Mirror planes do not have this.
+
 **The views** are 1024 px, orthographic, white background, the part in flat tan shading with dark
 lines on the face boundaries. Pockets and cavities are visible as shading and edges, especially in
 the two isometric views.

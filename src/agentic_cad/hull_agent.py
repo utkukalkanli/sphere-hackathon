@@ -13,14 +13,14 @@ from agentic_cad import holes as hl
 from agentic_cad import spans
 from agentic_cad import iso_support
 from agentic_cad import outline_fit as of
-from agentic_cad import pockets
+from agentic_cad import line_cuts
+from agentic_cad import brief
 from agentic_cad import curved
 from agentic_cad import datums
 from agentic_cad import depth
 from agentic_cad import export
 from agentic_cad import rounds
 from agentic_cad import shading
-from agentic_cad import split
 from agentic_cad import trace
 from agentic_cad import visual_hull as vh
 
@@ -52,14 +52,19 @@ HOLES_TIMEOUT = float(os.environ.get("HULL_HOLES_TIMEOUT", 40))
 RETRY_BUDGET = float(os.environ.get("HULL_RETRY_BUDGET", 20))
 
 
-# Steps after the holes, in order; HULL_SKIP=rounds,curved,depth,shading,pockets,split switches some off.
-# "split" moves no material and must stay last: a later cut or merge would undo it.
-LATER_STEPS = {"rounds": rounds, "curved": curved, "depth": depth, "shading": shading, "pockets": pockets,
-               "split": split}
+# Steps after the holes, in order; HULL_SKIP=brief,rounds,curved,depth,shading,lines,recheck switches some off.
+# "brief" reads description.md again and cuts what the symmetries it states rule out (brief.py). It runs
+# first, where it cannot be skipped for time (practice 9: 1.88 to 1.67 times the true volume), and
+# again last ("recheck"): the steps between cut one side more than the other (practice 8).
+# "lines" are the line cuts of the ananas branch (line_cuts.py; practice 5: 1.22 to 1.01).
+# The pockets and split steps were removed on 2026-11-12: on the practice set pockets changed no
+# part (0.0001 of the true volume on part 5) for up to 136 s, and split moves no material.
+LATER_STEPS = {"brief": brief, "rounds": rounds, "curved": curved, "depth": depth, "shading": shading,
+               "lines": line_cuts, "recheck": brief.final}
 SKIP_STEPS = {name for name in os.environ.get("HULL_SKIP", "").split(",") if name}
 # The name each later step gives its trace step, for the plan the dashboard shows before anything has run
 STEP_NAMES = {"rounds": "cut_rounds", "curved": "cut_curved", "depth": "level_faces", "shading": "shading_depth",
-              "pockets": "cut_pockets", "split": "split_faces"}
+              "brief": "check_brief", "lines": "cut_lines", "recheck": "recheck_brief"}
 
 
 class VisualHullAgent:
@@ -74,8 +79,6 @@ class VisualHullAgent:
         self._stage = 0
         self.deadline: float | None = None  # time.time() after which the case's later steps are skipped
         self._iso = None  # an isometric silhouette whose scale is already confirmed, for _cut_direction
-        self.keep_faces = False  # set by the split step: the export must not merge its faces again
-        self.lines_found = None  # handed from the pockets step to the split step: the lines of an unchanged solid
         self._sound: bool | None = None  # whether the solid so far reads back valid from its file, if asked
 
     def out_of_time(self) -> bool:
@@ -108,7 +111,7 @@ class VisualHullAgent:
     def checkpoint(self, solid, output_path: Path | None) -> bool:
         """Make `solid` the case's answer on disk, if its file reads back as one valid solid
         (export.checkpoint). Remembers the outcome for `refine`."""
-        self._sound = export.checkpoint(solid, output_path, self.keep_faces)
+        self._sound = export.checkpoint(solid, output_path)
         if not self._sound:
             trace.log("the solid does not survive being written and read; the file is left as it was", level="warning")
         return self._sound
@@ -149,7 +152,6 @@ class VisualHullAgent:
         After every step that changed the solid its file is written and read back
         (export.checkpoint; onto `output_path` if given, so a run that is killed keeps the steps
         done so far). A step whose solid does not survive that is dropped, it alone."""
-        self.keep_faces, self.lines_found = False, None
         names = [name for name in LATER_STEPS if name not in skip and name not in SKIP_STEPS]
         for index, name in enumerate(names):
             module = LATER_STEPS[name]
@@ -158,24 +160,24 @@ class VisualHullAgent:
                 for late in names[index:]:
                     trace.skipped(STEP_NAMES.get(late, late), "the case had used its share of the run's time")
                 break
-            kept = (self.keep_faces, dict(self.volumes))
+            kept = dict(self.volumes)
             try:
                 result = module.apply(self, solid, case_dir, views)
             except Exception as error:
                 trace.log(f"{name} raised {error!r}; keeping the solid as it was", level="error")
-                self.keep_faces, self.volumes, self.lines_found = *kept, None
+                self.volumes = kept
                 continue
             if result is None or result is solid:
                 continue
-            if export.checkpoint(result, output_path, self.keep_faces):
+            if export.checkpoint(result, output_path):
                 solid, self._sound = result, True
                 continue
             if self._sound is None:  # nobody has asked yet whether the solid before this step survives
-                self._sound = export.checkpoint(solid, None, kept[0])
+                self._sound = export.checkpoint(solid, None)
             if self._sound:
                 trace.log(f"the solid {name} made does not survive being written and read; the step is dropped",
                           level="error")
-                self.keep_faces, self.volumes, self.lines_found = *kept, None
+                self.volumes = kept
             else:  # not this step's fault: go on with it, a later step may still give a file that reads
                 trace.log(f"neither the solid before {name} nor the one after it survives being written and "
                           "read; the file is left as it was", level="warning")
@@ -200,7 +202,7 @@ class VisualHullAgent:
 
     def build_hull(self, prompt: str, views: list[Path]):
         case_dir = views[0].parent.parent if views else None
-        self.volumes, self._stage, self._sound, self.keep_faces = {}, 0, None, False
+        self.volumes, self._stage, self._sound = {}, 0, None
 
         with trace.step("bounding_box", kind="io") as step:
             x, y, z = vh.read_dimensions(case_dir, prompt)

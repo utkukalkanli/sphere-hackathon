@@ -1,10 +1,13 @@
 import argparse
 import atexit
+import json
+import multiprocessing
 import os
 import signal
 import sys
 import time
 import traceback
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -12,7 +15,7 @@ from agentic_cad import export
 from agentic_cad import trace
 from agentic_cad import visual_hull
 from agentic_cad.hull_agent import VisualHullAgent
-from agentic_cad.trace import Tracer
+from agentic_cad.trace import CaseTrace, Tracer
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_INPUTS = REPO_ROOT / "artifacts/inputs"
@@ -67,12 +70,71 @@ def write_fallback(test_case: TestCase, output_path: Path) -> bool:
         return False
 
 
-def excess(test_case: TestCase, solid) -> float:
-    """Our volume over the part's true one: how much the later steps have to gain on this case."""
+def case_workers(count: int) -> int:
+    """How many test cases run at once: CASE_WORKERS, else up to 4 and at most one per core. Each
+    case also starts a child process for its booleans, so this is about twice as many processes
+    (more than 4 ran the Windows PC out of memory once)."""
+    if os.environ.get("CASE_WORKERS"):
+        return max(1, int(os.environ["CASE_WORKERS"]))
+    return max(1, min(4, os.cpu_count() or 1, count))
+
+
+def size(test_case: TestCase) -> int:
+    """The part's face count from facts.json: the cases with most faces take longest, so they start first."""
     try:
-        return visual_hull.volume(solid) / visual_hull.read_volume(test_case.views[0].parent.parent)
+        return int(json.loads((test_case.views[0].parent.parent / "facts.json").read_text()).get("faces") or 0)
     except Exception:
-        return 0.0
+        return 0
+
+
+_STARTED = None   # in a worker: shared count of the cases that have started (see `_init_worker`)
+
+
+def _init_worker(counter) -> None:
+    global _STARTED
+    _STARTED = counter
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+
+
+def solve(agent: VisualHullAgent, test_case: TestCase, output_path: Path, deadline: float) -> str:
+    """Hull, holes and later steps of one case; each step that improved the solid has already
+    replaced its file. Never raises. Returns "ok" when this case's own solid is on disk."""
+    try:
+        if deadline - time.time() < MIN_CASE_SECONDS:
+            raise TimeoutError("the run is out of time")
+        agent.deadline = deadline
+        solid = agent.carve(test_case.description, test_case.views)
+        result = "ok" if agent.checkpoint(solid, output_path) else "fallback"
+        case_dir = test_case.views[0].parent.parent if test_case.views else None
+        solid = agent.refine(solid, case_dir, test_case.views, output_path=output_path)
+        agent.finish(solid, output_path)
+        return result
+    except Exception:
+        error = traceback.format_exc()
+        print(f"{test_case.name} FAILED, its last good file stays:\n{error}")
+        trace.log(error, level="error")
+        return "fallback"
+
+
+def run_case(job: tuple) -> tuple[str, str]:
+    """One test case in a worker process. Its time share is set when it starts: the time left,
+    shared among the rounds of cases still to start."""
+    test_case, output_path, run_dir, started, count, workers = job
+    with _STARTED.get_lock():
+        index = _STARTED.value
+        _STARTED.value += 1
+    rounds_left = -(-(count - index) // workers)
+    left = RUN_BUDGET - (time.time() - started)
+    deadline = time.time() + max(left / max(rounds_left, 1), 0.0)
+    agent = VisualHullAgent()
+    try:
+        tracer = Tracer.attached(Path(run_dir)) if run_dir else None
+        with CaseTrace(tracer, test_case.name) as case:
+            result = solve(agent, test_case, Path(output_path), deadline)
+            case.output(Path(output_path))
+        return test_case.name, result
+    finally:
+        agent.close()
 
 
 def main(args):
@@ -83,18 +145,14 @@ def main(args):
     export.clean(args.output_dir)
     atexit.register(export.clean, args.output_dir)
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
-    agent = VisualHullAgent()
     test_cases = load_test_cases(args.input_dir)
     if args.only:
         test_cases = [tc for tc in test_cases if tc.name in args.only]
     outputs = {tc.name: args.output_dir / f"{tc.name}.stp" for tc in test_cases}
     started = time.time()
 
-    def share(cases_left: int) -> float:
-        return (RUN_BUDGET - (time.time() - started)) / cases_left
-
-    # Every case has a valid file from the first seconds on, and from then on only ever a better one:
-    # the run can crash or be stopped at any moment. So the passes go over all cases in turn.
+    # Every case has a valid file from the first seconds on, and from then on only ever a better one
+    # (export.checkpoint): the run can crash or be stopped at any moment.
     # 1. The bounding box of every case. It also replaces a stale file from an earlier run.
     results: dict[str, str] = {}
     for test_case in test_cases:
@@ -104,57 +162,32 @@ def main(args):
             outputs[test_case.name].unlink(missing_ok=True)  # not this run's answer
             results[test_case.name] = "failed"
 
+    # 2. Every case from hull to last step, several at once: one case uses one core, and the run has
+    # 20 minutes for all of them. The largest parts start first. A worker that dies leaves the file
+    # of that case's last good step.
+    workers = case_workers(len(test_cases))
+    order = sorted(test_cases, key=lambda tc: -size(tc))
     # Records every step under runs/ for the dashboard (ui/); a no-op where it can't write
-    with Tracer(meta={"input_dir": args.input_dir, "output_dir": args.output_dir}) as tracer:
-        traces = {tc.name: tracer.case(tc.name) for tc in test_cases}
-
-        # 2. Hull and holes of every case: seconds each, and most of what a case scores
-        carved = []  # (test case, solid, what the agent needs back for the later steps)
-        for index, test_case in enumerate(test_cases):
-            print(f"processing {test_case.name}")
-            case, output_path = traces[test_case.name], outputs[test_case.name]
-            case.more = True
-            with case:
+    with Tracer(meta={"input_dir": args.input_dir, "output_dir": args.output_dir, "workers": workers}) as tracer:
+        run_dir = str(tracer.dir) if tracer.dir else None
+        jobs = [(tc, str(outputs[tc.name]), run_dir, started, len(order), workers) for tc in order]
+        print(f"processing {len(jobs)} test cases, {workers} at a time")
+        counter = multiprocessing.get_context("spawn").Value("i", 0)
+        with ProcessPoolExecutor(workers, mp_context=multiprocessing.get_context("spawn"),
+                                 initializer=_init_worker, initargs=(counter,)) as pool:
+            futures = {pool.submit(run_case, job): job[0].name for job in jobs}
+            for future in as_completed(futures):
+                name = futures[future]
                 try:
-                    left = share(len(test_cases) - index)
-                    if left < MIN_CASE_SECONDS:
-                        raise TimeoutError("the run is out of time")
-                    agent.deadline = time.time() + left
-                    solid = agent.carve(test_case.description, test_case.views)
-                    if agent.checkpoint(solid, output_path):
-                        results[test_case.name] = "ok"
-                    carved.append((test_case, solid, agent.state()))
-                except Exception:
-                    error = traceback.format_exc()
-                    print(f"{test_case.name} FAILED, its bounding box stays:\n{error}")
-                    trace.log(error, level="error")
-                    case.more = False
-                    case.output(output_path)
+                    name, result = future.result()
+                except Exception:  # its process died (a crash inside OpenCascade): its last file stays
+                    print(f"{name} FAILED in its worker process:")
+                    traceback.print_exc()
+                    continue
+                if results.get(name) != "failed" or result == "ok":
+                    results[name] = result
+                print(f"{name}: {result}")
 
-        # 3. The later steps, where there is most to gain first: that only matters when time runs short.
-        # The time left is shared equally among the cases still to do; a case past its share skips the
-        # rest of its steps and keeps the file of the last one that went through.
-        carved.sort(key=lambda entry: -excess(entry[0], entry[1]))
-        for index, (test_case, solid, state) in enumerate(carved):
-            print(f"refining {test_case.name}")
-            case, output_path = traces[test_case.name], outputs[test_case.name]
-            case.more = False
-            with case:
-                try:
-                    agent.resume(state)
-                    agent.deadline = time.time() + max(share(len(carved) - index), 0.0)
-                    case_dir = test_case.views[0].parent.parent if test_case.views else None
-                    solid = agent.refine(solid, case_dir, test_case.views, output_path=output_path)
-                    agent.finish(solid, output_path)
-                    if output_path.is_file():
-                        results[test_case.name] = "ok"
-                except Exception:
-                    error = traceback.format_exc()
-                    print(f"{test_case.name}: the later steps FAILED, the file of the last good step stays:\n{error}")
-                    trace.log(error, level="error")
-                case.output(output_path)
-
-    agent.close()
     problems = {name: result for name, result in results.items() if result != "ok"}
     if problems:
         print(f"Pipeline finished; {len(problems)} of {len(results)} cases did not go through: {problems}")

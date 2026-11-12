@@ -5,6 +5,30 @@ the entry and say what changed.
 
 ## Pipeline
 
+- **`nar` is the working branch; the useful parts of `ananas` come into it, not the other way**
+  (2026-11-12, user agreed). `nar` was cut from `feat/phase0-safe-runs`. Of `ananas` it takes the line
+  cuts (`line_cuts.py`, `revolve.py`, `edges.py`, `views.py`) as a later step, judged by `nar`'s
+  verifier, and the parallel cases. Not taken: the model step (`features.py`, `llm_cuts.py`): no
+  endpoint, and on the eval sample it gained 0.0006.
+- **The brief is read again for the symmetries it states, first and last among the later steps**
+  (2026-11-12, user: "read description.md again before the final shape and fix what disagrees").
+  `brief.py`: plain statements only ("symmetric about the plane X = 9.5", "mirror-symmetric about
+  the central Y-Z plane", "a body of revolution about Y", "four-fold symmetric about Z"); negated,
+  hedged and off-centre ones are ignored. The solid is intersected with its mirrored or rotated
+  copy, kept only at 99 % of the true volume or more and if the verifier does not rate it lower.
+  First, because last it was skipped for time; again last, because the steps between cut one side
+  of a symmetric part more than the other (practice 8). Other statements of the brief (hole depths,
+  blind or through, plate thicknesses) are not read yet.
+- **The pockets and split steps are removed** (2026-11-12, user: "delete what makes no
+  difference"). Measured on the practice set with all steps: pockets changed no part (0.0001 of the
+  true volume on part 5) and took up to 136 s; split moves no material, so no volume or overlap
+  score can see it, and took 4 to 28 s. `lines.py` and `tools/check_lines.py` went with them. They
+  are in git history (commit 8268262 and later) if a face-based score ever makes split worth it.
+- **Test cases run in parallel processes, up to 4, after the boxes of all cases** (2026-11-12;
+  from `ananas`). Pass 1 still writes every case's box first. Then each case runs whole (hull to
+  last step) in a worker; its time share is set when it starts: the time left of the 17 minutes,
+  divided by the rounds of cases still to start. The cases with most faces start first. A worker that
+  dies leaves that case's last checkpointed file.
 - **The isometric views must be used, but never as a cut on their own: only together with
   supporting data** (2026-11-12, user: "I do not want the isometric cut used alone; with supporting
   data it works; if they give us isometric images we must use them". The user had decided this
