@@ -173,6 +173,12 @@ def main() -> None:
                         "iso_excess": os.environ.get("HULL_ISO_EXCESS", "1.5"),
                         "iso_pieces": os.environ.get("HULL_ISO_PIECES", "1"),
                         "iso_gain": os.environ.get("HULL_ISO_MIN_GAIN", "0.01")})
+    # any other HULL_ switch set for this run gives results of its own
+    known = {"HULL_OUTLINE", "HULL_DATUMS", "HULL_TRACE", "HULL_THIN_GUARD", "HULL_THIN_SHARE", "HULL_TIGHT_SHARE",
+             "HULL_ISO_EXCESS", "HULL_ISO_PIECES", "HULL_ISO_MIN_GAIN"}
+    switches = {key: value for key, value in os.environ.items() if key.startswith("HULL_") and key not in known}
+    if switches:
+        result_key = digest(result_key, switches)
     CACHE.mkdir(parents=True, exist_ok=True)
     jobs = [{"name": n, "options": options, "hull_key": hull_key, "result_key": result_key,
              "cache": not args.no_cache} for n in names]

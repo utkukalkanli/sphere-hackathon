@@ -20,6 +20,13 @@ part is round there:
 
 The profile that is revolved is the fitted outline of one side view, so cylinders, cones and tori
 come out as such. The caller accepts the result only if the verifier does not rate it lower.
+
+The other side view never agrees with that profile to the pixel. Where its strip is the narrower one
+the revolved body stands a fraction of a pixel outside the hull, along the lines where the circle
+touches the square, and the hull's flat faces would stay there as narrow strips between two edges
+that no view draws. Those slivers of the revolved body are put on first ("fill"), so that the
+stretch ends as the revolved body alone. They are told from what earlier steps removed (holes) by
+their thickness.
 """
 
 from __future__ import annotations
@@ -32,12 +39,14 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from OCP.BRepAlgoAPI import BRepAlgoAPI_Common, BRepAlgoAPI_Cut
+from OCP.BRepAlgoAPI import BRepAlgoAPI_Common, BRepAlgoAPI_Cut, BRepAlgoAPI_Fuse
 from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace, BRepBuilderAPI_MakePolygon
 from OCP.BRepCheck import BRepCheck_Analyzer
+from OCP.BRepGProp import BRepGProp
+from OCP.GProp import GProp_GProps
 from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox, BRepPrimAPI_MakeRevol
 from OCP.gp import gp_Ax1, gp_Dir, gp_Pnt
-from OCP.TopAbs import TopAbs_FACE
+from OCP.TopAbs import TopAbs_FACE, TopAbs_SOLID
 from OCP.TopExp import TopExp_Explorer
 from OCP.TopoDS import TopoDS, TopoDS_Shape
 from OCP.collections import List_TopoDS_Shape
@@ -58,6 +67,7 @@ LATHE_FACES = {"PLANE", "CYLINDER", "CONE", "TORUS", "SPHERE"}
 MAX_AXES = 24          # more axis lines than this are not looked at (largest bosses first)
 TIMEOUT = float(os.environ.get("HULL_ROUNDS_TIMEOUT", 40))
 SCORE_SLACK = 0.003    # the verifier's score may drop by this much through a cut and still pass
+FILL = os.environ.get("HULL_ROUNDS_FILL", "1") != "0"   # put on the slivers of the revolved body outside the hull
 LINES_SLACK = 0.002    # ... and its line term, for a cut that only the disc seen along the axis speaks for
 
 
@@ -69,6 +79,7 @@ class Round:
     spans: list[tuple[float, float]]  # stretches along the axis (mm) to make round
     reach: float                      # half-width of the square that is cut down, a little more than the profile
     evidence: str                     # "boss", "turned" or "disc"
+    tolerance: float = 0.0            # mm: how far the two side views may disagree (TOLERANCE_PX)
 
 
 def _profile(silhouette: vh.Silhouette, axis: str, dims: dict[str, float]):
@@ -235,7 +246,7 @@ def find(case_dir: Path, views: list[Path], dims: dict[str, float]) -> list[Roun
                     spans.append((max(0.0, start), min(dims[axis], stop)))
             if spans:
                 rounds.append(Round(axis, dict(line["position"]), chosen, spans,
-                                    float(np.maximum(widths[0], widths[1])[accepted].max()) + 4 * tolerance, evidence))
+                                    float(np.maximum(widths[0], widths[1])[accepted].max()) + 4 * tolerance, evidence, float(tolerance)))
     return rounds
 
 
@@ -247,8 +258,9 @@ def _faces(shape: TopoDS_Shape) -> list:
     return result
 
 
-def _tool(item: Round) -> list[TopoDS_Shape]:
-    """What to remove for one axis line: per span, a square bar around the axis minus the revolved profile."""
+def _tool(item: Round) -> list[tuple[TopoDS_Shape, list[TopoDS_Shape]]]:
+    """What to remove for one axis line: per span, a square bar around the axis minus the revolved
+    profile, and with it the revolved bodies themselves."""
     spec = vh.ORTHO[item.silhouette.name]
     across = spec["v"] if spec["u"] == item.axis else spec["u"]
     # put the outline in the plane through the axis, so that it can be revolved about it
@@ -289,8 +301,45 @@ def _tool(item: Round) -> list[TopoDS_Shape]:
         operation.SetTools(pieces)
         operation.Build()
         if operation.IsDone():
-            tools.append(operation.Shape())
+            tools.append((operation.Shape(), keep))
     return tools
+
+
+def _slivers(shape: TopoDS_Shape, body: TopoDS_Shape, limit: float) -> list[TopoDS_Shape]:
+    """The pieces of a revolved body outside `shape` that are on average thinner than `limit` (mm).
+
+    Thin ones are where the other side view is a fraction of a pixel narrower than the revolved
+    profile; a piece that a hole or another earlier cut left is as thick as that cut."""
+    outside = BRepAlgoAPI_Cut(body, shape)
+    if not outside.IsDone():
+        return []
+    found, explorer = [], TopExp_Explorer(outside.Shape(), TopAbs_SOLID)
+    while explorer.More():
+        piece = TopoDS.Solid(explorer.Current())
+        surface = GProp_GProps()
+        BRepGProp.SurfaceProperties_s(piece, surface)
+        size = vh.volume(piece)
+        if size > 0 and surface.Mass() > 0 and 2 * size / surface.Mass() <= limit:
+            found.append(piece)
+        explorer.Next()
+    return found
+
+
+def _filled(shape: TopoDS_Shape, slivers: list[TopoDS_Shape]) -> TopoDS_Shape | None:
+    arguments, pieces = List_TopoDS_Shape(), List_TopoDS_Shape()
+    arguments.Append(shape)
+    for piece in slivers:
+        pieces.Append(piece)
+    operation = BRepAlgoAPI_Fuse()
+    operation.SetArguments(arguments)
+    operation.SetTools(pieces)
+    operation.Build()
+    if not operation.IsDone():
+        return None
+    solid = vh.largest_solid(operation.Shape())
+    if solid is None or not BRepCheck_Analyzer(solid).IsValid():
+        return None
+    return solid
 
 
 def cut_rounds(shape: TopoDS_Shape, rounds: list[Round]) -> TopoDS_Shape | None:
@@ -299,6 +348,10 @@ def cut_rounds(shape: TopoDS_Shape, rounds: list[Round]) -> TopoDS_Shape | None:
     The result must also survive being written as a .stp: a revolved profile can leave a face that
     is valid here and broken in the file. If all axis lines together do not, they are cut one at a
     time and only those that do are kept."""
+    if FILL:   # first as the revolved bodies alone; if that fails, as before
+        solid = _cut(shape, rounds, fill=True)
+        if solid is not None and vh.volume(solid) < vh.volume(shape) and export.reads_back_valid(solid):
+            return solid
     solid = _cut(shape, rounds)
     if solid is not None and export.reads_back_valid(solid):
         return solid
@@ -312,13 +365,20 @@ def cut_rounds(shape: TopoDS_Shape, rounds: list[Round]) -> TopoDS_Shape | None:
     return current if kept else None
 
 
-def _cut(shape: TopoDS_Shape, rounds: list[Round]) -> TopoDS_Shape | None:
-    tools = List_TopoDS_Shape()
+def _cut(shape: TopoDS_Shape, rounds: list[Round], fill: bool = False) -> TopoDS_Shape | None:
+    tools, slivers = List_TopoDS_Shape(), []
     for item in rounds:
-        for tool in _tool(item):
+        for tool, bodies in _tool(item):
             tools.Append(tool)
+            if fill and item.tolerance > 0:
+                for body in bodies:
+                    slivers += _slivers(shape, body, item.tolerance)
     if tools.Size() == 0:
         return None
+    if slivers:
+        shape = _filled(shape, slivers)
+        if shape is None:
+            return None
     arguments = List_TopoDS_Shape()
     arguments.Append(shape)
     operation = BRepAlgoAPI_Cut()
@@ -330,6 +390,8 @@ def _cut(shape: TopoDS_Shape, rounds: list[Round]) -> TopoDS_Shape | None:
     solid = vh.largest_solid(operation.Shape())
     if solid is None or vh.volume(solid) <= 0 or not BRepCheck_Analyzer(solid).IsValid():
         return None
+    if slivers:   # the revolved faces come back in pieces, one per sliver: make them one again
+        solid = vh.tidy(solid)
     return solid
 
 

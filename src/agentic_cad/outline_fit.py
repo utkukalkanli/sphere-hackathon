@@ -165,7 +165,13 @@ def fit_loop(contour: np.ndarray, to_mm, px: float, known: dict | None = None, a
         span = np.abs(points[-1] - points[0])
         length = float(np.hypot(*span))
         for axis in (0, 1):  # axis 0: constant a (vertical line), axis 1: constant b (horizontal line)
-            if span[axis] <= max(AXIS_DRIFT_PX * px, AXIS_DRIFT * length) and span[1 - axis] > 3 * px:
+            # The ends are corner pixels: at a concave corner the outline's pixel lies a row inside
+            # the edge, at a convex one the render rounds a row off. So the drift is also taken
+            # over the middle of the run, where a truly level edge stays on one row.
+            low, high = np.percentile(points[:, axis], (10, 90))
+            limit = max(AXIS_DRIFT_PX * px, AXIS_DRIFT * length)
+            if (span[axis] <= limit or (high - low <= 0.5 * px and span[axis] <= 2 * CORNER_PX * px)) \
+                    and span[1 - axis] > 3 * px:
                 value = float(np.median(points[:, axis]))
                 for key in (first % total, last % total):
                     vertex[key][axis] = value

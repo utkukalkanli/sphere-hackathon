@@ -11,7 +11,13 @@ reasons in `decisions.md`.
 - **First submission: 2026-11-12, commit `fdcc8c6` on `main`** (CI run 43239297964: tests and
   submit green). The deterministic pipeline, model step off. No score seen yet: the leaderboard's
   address is not in the README.
-- `main` now has this branch's tree. A teammate's other pipeline (LLM CadQuery loop, hull and
+- **Latest submission: 2026-11-12 22:23, commit `7cef110` on `main`** (user: push only the
+  outputs, no merge): outputs 1 to 9 of a laptop run of `feat/model-step` with its uncommitted
+  `depth.py`, `outline_fit.py`, `rounds.py` (model step off; volume over true 1.003, 1.019,
+  1.000, 1.019, 1.115, 2.683, 1.457, 1.063, 1.201; all one valid solid), put on top of the
+  teammate's `d430ae3` ("hidden void step"). Main's code is the teammate's, so these files are
+  not what main's image writes. `test_case_10.stp` is local only (main has no input 10).
+- `main` at `fdcc8c6` had this branch's tree. A teammate's other pipeline (LLM CadQuery loop, hull and
   graph engines, vLLM serving script, Brev guides; 12 commits up to `70b1a15`) was on `main` and
   was merged with `-s ours` (user, 2026-11-12): its files are in the history, not in the tree.
 - Work goes on on `feat/phase0-safe-runs` (same commit as `main`). Plan phases 0 to 3
@@ -399,6 +405,11 @@ image, emulated, took 10.5 minutes at phase 0.
   Chrome against the committed dashboard: eval 99 solid on screen 20.6 to 11.4 s and its IoU
   58 to 11.7 s after opening; eval 6 16.8 to 8.4 s and 32.6 to 8.6 s; practice 7 3.2 to 2.1 s.
   What is left is the reading of one large file.
+- A case's trace is fetched until an answer asked for after the run's end is in (uncommitted,
+  2026-11-12). Before, it was asked for once when the run ended; if that request was lost (one
+  still under way, the case not on screen at that moment) a finished case stayed "interrupted"
+  until a reload (user saw it on practice 6, whose runs were all `ok` on disk). Finished runs
+  show "ok" in headless Chrome; the lost request itself was not reproduced.
 - Not yet looked at in a browser by the user: the picture zoom controls, the run list per case,
   the "evidence" stop (it has no solid). The left view's changes were driven in headless Chrome
   (clicks, keys, no page errors), not seen by the user.

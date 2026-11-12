@@ -55,10 +55,16 @@ MIN_STRETCH_PX = 10      # shorter stretches say nothing
 ONE_PLANE_DEG = 3.0      # our solid's surface over an area is one plane if its normals stay within this
 AREAS = os.environ.get("HULL_DEPTH_AREAS", "drawing")   # "drawing": the faces of drawing.py; "pixels": between line pixels
 SUPPORT = os.environ.get("HULL_DEPTH_SUPPORT", "1") != "0"   # also level faces our solid has no flat level under
+SEAM_PX = int(os.environ.get("HULL_DEPTH_SEAM", 3))   # how far a cut reaches over its area's border where the solid ends up no higher
+RIMS = os.environ.get("HULL_DEPTH_RIMS", "1") != "0"         # also lower the narrow faces along a face of known level
+ALONE = float(os.environ.get("HULL_DEPTH_ALONE", 0.75))   # share of the pixels around a block of ours that must lie a step lower for it to stand alone
+RIM_PX = 20              # a face up to this wide (2 x area / perimeter) is a strip along its neighbours
+RIM_SHARE = 0.25         # a neighbour counts when it runs along this share of the strip's length
+STEPS = os.environ.get("HULL_DEPTH_STEPS", "1") != "0"       # also take away what stands on a face that is not flat
 FACING = 0.9995          # cosine: our solid's face looks straight at the camera
 TIMEOUT = float(os.environ.get("HULL_DEPTH_TIMEOUT", 30))
 SCORE_SLACK = 0.003      # the verifier's score may drop by this much through a cut and still pass
-MAX_SINGLE = 6           # when a view's cuts are refused together, this many are tried one by one
+MAX_TRIES = 12           # a view's cuts are tried together, then in halves: this many tries in all
 
 
 def facing_tone(view: verify.Observed) -> np.ndarray | None:
@@ -136,6 +142,50 @@ def lowest_level(depth: np.ndarray, facing: np.ndarray, tolerance: float) -> flo
     if (depth > level + tolerance).sum() < MIN_LEVEL_PX:
         return None  # nothing stands above it
     return level
+
+
+def step_level(depth: np.ndarray, jump: float) -> float | None:
+    """The height up to which a face of any shape can be told from what our solid has standing on it.
+
+    An area between the lines of a view is one face, and one face is one unbroken surface: wherever
+    the part steps in depth, the view draws a line. So if our solid's surface over the area (away from
+    its lines) is in two parts with a jump between them, one of the two is not that face; our solid
+    contains the part, so it is the upper one, and the face goes on from where the lower part ends.
+    How far it rises there is not known: see `standing`.
+
+    The jump is one that would make the verifier draw an edge (`jump`, in mm) and is larger than the
+    rise of the lower part itself. As with the levels, the lower part must be a real share of the
+    area. Returns the height at which the lower part ends."""
+    values = np.sort(depth)
+    if len(values) < MIN_LEVEL_PX / MIN_LEVEL_SHARE:
+        return None
+    gaps = np.nonzero(np.diff(values) > jump)[0]
+    for index in gaps:
+        below, above = index + 1, len(values) - index - 1
+        if below < max(MIN_LEVEL_PX, MIN_LEVEL_SHARE * len(values)) or above < MIN_LEVEL_PX:
+            continue
+        # A face seen nearly edge-on (the flank of a cylinder near its outline) also changes depth by
+        # more than that from one pixel to the next. A step is higher than all the face rises below it.
+        if values[index + 1] - values[index] > values[index] - values[int(MIN_LEVEL_SHARE * below)]:
+            return float(values[index])
+    return None
+
+
+def _alone(piece: np.ndarray, surface: np.ndarray, jump: float) -> bool:
+    """Whether what our solid has over these pixels stands above everything around it: on ALONE of
+    the pixels just outside, the solid (as it will be after this view's cuts) is lower by a step, or
+    there is none.
+
+    A face may rise: where the higher part of our solid over a face runs on into something as high
+    beside it, the face can be a slope up to that, and cutting it at the foot took real material
+    (eval 171: three quarters of what a first version removed). A block that touches nothing of its
+    own height is what a levelled neighbour left standing."""
+    around = (cv2.dilate(piece.astype(np.uint8), np.ones((9, 9), np.uint8)) > 0) & ~piece
+    if not around.any():
+        return False
+    foot = float(np.percentile(surface[piece], 100 * MIN_LEVEL_SHARE))
+    beside = np.where(np.isfinite(surface[around]), surface[around], -np.inf)
+    return float((beside < foot - jump).mean()) >= ALONE
 
 
 def support_level(depth: np.ndarray, normal: np.ndarray, tolerance: float) -> float | None:
@@ -220,7 +270,7 @@ def find(view: verify.Observed, drawing: verify.Drawing, dims: dict[str, float],
     def to_mm(pixels: np.ndarray) -> np.ndarray:
         return np.column_stack([(pixels[:, 0] + 0.5 - half) * view.mm_per_px, (half - 0.5 - pixels[:, 1]) * view.mm_per_px])
 
-    cuts = []
+    cuts, planned = [], []
     surface = np.where(drawing.mask, drawing.depth, np.nan)   # the solid's surface as it will be after the cuts
     levels: dict[int, float] = {}                              # flat faces square to the camera whose level is known
     for label in chosen:
@@ -247,18 +297,93 @@ def find(view: verify.Observed, drawing: verify.Drawing, dims: dict[str, float],
             if facing[inside].mean() >= 0.9 and np.ptp(np.percentile(drawing.depth[inside], (5, 95))) <= tolerance:
                 levels[label] = float(np.median(drawing.depth[inside]))   # already one level: slanted faces can hang on it
             continue
-        outlines = vh.trace_outlines(area.astype(np.uint8) * 255, to_mm, view.mm_per_px)
-        if not outlines:
-            continue
         levels[label] = level
         surface[area] = np.fmin(surface[area], level)
-        cuts.append(vh.Silhouette(name=f"area_{label}", views=[view.name], mask=area.astype(np.uint8) * 255,
+        planned.append((f"area_{label}", area, level, {"supported": supported}))
+    if STEPS or RIMS:
+        planned += standing(view, labels, levels, surface, core, drawing.depth)
+    # Each area is cut along an outline fitted to it alone, and two such outlines do not meet exactly:
+    # between two faces cut side by side a wall a fraction of a pixel thick was left standing, as high
+    # as the block that was taken off them (practice part 4). So a cut also takes the pixels within
+    # SEAM_PX of its area over which the solid, once all of this view's cuts are made, is no higher
+    # than the cut's own level: there it removes nothing but such a wall.
+    low = np.where(np.isfinite(surface), surface, -np.inf)
+    for name, area, level, info in planned:
+        mask = area
+        if SEAM_PX:
+            near = cv2.dilate(area.astype(np.uint8), np.ones((2 * SEAM_PX + 1, 2 * SEAM_PX + 1), np.uint8)) > 0
+            mask = area | (near & (low <= level + tolerance))
+        outlines = vh.trace_outlines(mask.astype(np.uint8) * 255, to_mm, view.mm_per_px)
+        if not outlines:
+            continue
+        cuts.append(vh.Silhouette(name=name, views=[view.name], mask=mask.astype(np.uint8) * 255,
                                   outlines=outlines, origin=centre + level * towards, right=right, up=up,
                                   direction=towards, depth=reach,
-                                  info={"level": round(level, 3), "pixels": int(area.sum()), "supported": supported}))
+                                  info={"level": round(level, 3), "pixels": int(area.sum()), **info}))
     if SUPPORT and levels:
         cuts += slanted_cuts(view, labels, levels, surface, core, dims, to_mm)
     return cuts
+
+
+def standing(view: verify.Observed, labels: np.ndarray, levels: dict[int, float], surface: np.ndarray,
+             core: np.ndarray, depth: np.ndarray) -> list[tuple]:
+    """What a levelled face leaves standing beside it: blocks of our solid on the faces next to it
+    that are not flat faces square to the camera, so that nothing above gave them a level.
+
+    Two readings say how high such a face can be:
+
+    - a step (`step_level`): our solid's surface over the face is in two parts with a jump between
+      them and no line in the view. The upper part is not that face; the face goes on from where
+      the lower part ends.
+    - a rim: a narrow face along a face of known level is the round or chamfer on its edge. It meets
+      that face in the line between them, and where everything on its other side is lower it falls
+      away from the face: it is no higher than the highest of the level faces along it.
+
+    Neither holds for a face that rises (a slope up to a higher neighbour, the rounded top of a rib
+    beside a wall), so only blocks that stand alone are cut (`_alone`). A block usually lies over
+    several faces (practice part 4: a corner of a crank web's lobe and the rim around it, 146 mm
+    high), so the pieces are joined before that is asked. The caller tries these cuts apart from the
+    others, under the strict rule."""
+    jump = verify.DEPTH_JUMP_PX * view.mm_per_px
+    target = np.full(labels.shape, np.nan)   # per pixel of a block, the level its face can have
+    names = {}
+    for label in np.unique(labels[labels > 0]):
+        area = labels == label
+        if label in levels or area.sum() < MIN_AREA_PX:
+            continue
+        level = None
+        if STEPS and (area & core).any():
+            level = step_level(depth[area & core], jump)
+            names[label] = "step"
+        if level is None and RIMS and levels:
+            contours, _ = cv2.findContours(area.astype(np.uint8), cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
+            perimeter = sum(len(contour) for contour in contours)
+            width = 2 * float(area.sum()) / max(perimeter, 1)
+            if width <= RIM_PX:
+                # the level faces along it: across the line between them, over a real share of its length
+                near = cv2.dilate(area.astype(np.uint8), np.ones((9, 9), np.uint8)) > 0
+                beside = [levels[other] for other in np.unique(labels[near & (labels != label) & (labels > 0)])
+                          if other in levels and (near & (labels == other)).sum() >= RIM_SHARE * perimeter / 2 * 4]
+                if beside:
+                    level = max(beside)
+                    names[label] = "rim"
+        if level is None:
+            continue
+        high = area & np.isfinite(surface) & (surface > level + jump)
+        target[high] = level
+    found = []
+    count, blocks = cv2.connectedComponents(np.isfinite(target).astype(np.uint8), connectivity=8)
+    for block in range(1, count):
+        whole = blocks == block
+        if whole.sum() < MIN_LEVEL_PX or not _alone(whole, surface, jump):
+            continue
+        for label in np.unique(labels[whole]):
+            piece = whole & (labels == label)
+            level = float(target[piece].max())
+            found.append((f"{names[label]}_{label}", piece, level, {"supported": False, names[label]: True}))
+    for _, piece, level, _ in found:
+        surface[piece] = np.fmin(surface[piece], level)
+    return found
 
 
 def slanted_cuts(view: verify.Observed, labels: np.ndarray, levels: dict[int, float], surface: np.ndarray,
@@ -447,12 +572,12 @@ def apply(agent, solid: TopoDS_Shape, case_dir: Path | None, views: list[Path]) 
         levelled = 0
         facing = regions.facing_tone({name: regions._measure(observed[name])[1] for name in straight})
 
-        def attempt(current, cuts):
+        def attempt(current, cuts, strict=False):
             nonlocal score, recall
             carved = agent._guarded(step, current, target, lambda: agent.cutter.run(remove, current, cuts, TIMEOUT), quiet=True)
             if carved is None or vh.volume(carved) >= vh.volume(current) * (1 - 1e-6):
                 return None
-            if rater is not None and not any(c.info.get("planes") for c in cuts):  # column cuts only
+            if rater is not None and not strict and not any(c.info.get("planes") for c in cuts):  # column cuts only
                 verdict = rater.rate(current, carved)
                 judge.note(agent, "depth", current, carved, verdict.accepted, verdict)
                 if not verdict.accepted:
@@ -470,6 +595,13 @@ def apply(agent, solid: TopoDS_Shape, case_dir: Path | None, views: list[Path]) 
             # instead: make more of the views' lines boundaries of the solid, and leave the outline alone.
             supported = any(c.info.get("supported") for c in cuts) and report.mean("recall") >= recall + MIN_RECALL_GAIN \
                 and report.mean("silhouette") >= verify.check(current, case_dir, observed).mean("silhouette") - 1e-4
+            if strict:   # a reading of one area alone: nothing may get worse
+                good = after >= score and report.mean("silhouette") >= verify.check(current, case_dir, observed).mean("silhouette") - 1e-4
+                judge.note(agent, "depth", current, carved, good)
+                if not good:
+                    return None
+                score, recall = after, report.mean("recall")
+                return carved
             judge.note(agent, "depth", current, carved, not (after < score - SCORE_SLACK and not supported))
             if after < score - SCORE_SLACK and not supported:
                 step.log(f"the verifier rates the result lower ({score:.3f} to {after:.3f}); not kept", level="warning")
@@ -485,18 +617,31 @@ def apply(agent, solid: TopoDS_Shape, case_dir: Path | None, views: list[Path]) 
             cuts = find(observed[name], drawing, dims, observed, facing)
             if not cuts:
                 continue
+            # what rests on a reading of one area alone (steps, rims) is tried apart, under the strict rule
+            strips = [c for c in cuts if c.info.get("rim") or c.info.get("step")]
+            cuts = [c for c in cuts if not (c.info.get("rim") or c.info.get("step"))]
             slanted = sum(1 for c in cuts if c.info.get("planes"))
             step.log(f"{name}: {len(cuts) - slanted} flat face(s) to level, {slanted} slanted face(s) standing on one: "
                      + ", ".join(f"{c.info['pixels']} px to {c.info['level']} mm" + (f" at {c.info['slope_deg']} deg" if c.info.get("planes") else "")
                                  for c in cuts[:8]))
-            carved = attempt(solid, cuts)
-            if carved is not None:
-                solid, levelled = carved, levelled + len(cuts)
-            elif len(cuts) > 1:
-                for cut in sorted(cuts, key=lambda c: -c.info["pixels"])[:MAX_SINGLE]:
-                    carved = attempt(solid, [cut])
+            for group, strict in ((cuts, False), (strips, True)):
+                if not group:
+                    continue
+                # A group that is refused (or whose boolean fails) is halved and each half tried again,
+                # so that one bad cut costs only itself; the largest faces first, MAX_TRIES tries a group.
+                tries = MAX_TRIES
+                waiting = [sorted(group, key=lambda c: -c.info["pixels"])]
+                while waiting and tries > 0:
+                    some = waiting.pop(0)
+                    tries -= 1
+                    carved = attempt(solid, some, strict)
                     if carved is not None:
-                        solid, levelled = carved, levelled + 1
+                        solid, levelled = carved, levelled + len(some)
+                    elif len(some) > 1:
+                        waiting += [some[:len(some) // 2], some[len(some) // 2:]]
+            if strips:
+                step.log(f"{name}: {len(strips)} face(s) under a step of ours or along a level face: "
+                         + ", ".join(f"{c.info['pixels']} px to {c.info['level']} mm" for c in strips[:8]))
         step.metric(faces_levelled=levelled)
         if levelled == 0:
             step.log("no flat face covers more than one level of the solid")

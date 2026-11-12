@@ -944,7 +944,9 @@ function buildTrace(events) {
   return t;
 }
 
-async function fetchTrace(run, name) {
+// `final`: asked when the run was already over, so what comes back is the whole trace. Until such an
+// answer is in, a trace without its end is still being read, not interrupted.
+async function fetchTrace(run, name, final = false) {
   const key = `${run}/${name}`;
   const entry = traces.get(key) || { events: [], loading: false };
   traces.set(key, entry);
@@ -955,6 +957,7 @@ async function fetchTrace(run, name) {
     entry.events.push(...data.events);
     entry.loaded = true;
     entry.failed = null;
+    if (final) entry.final = true;
   } catch (error) { entry.failed = error.message; } finally { entry.loading = false; }
   if (S.runId === run && S.caseName === name) renderSteps(currentCase());
 }
@@ -1028,12 +1031,12 @@ function renderSteps(c) {
   let note = '', status = '', running = false;
   if (run) {
     const key = `${run.id}/${c.name}`, entry = traces.get(key);
-    if (!entry) fetchTrace(run.id, c.name);
+    if (!entry) fetchTrace(run.id, c.name, run.status !== 'running');
     if (!entry || !entry.loaded) note = entry && entry.failed ? `<p class="note bad">Could not load the trace: ${esc(entry.failed)}</p>` : '<p class="note pulse">Loading the trace…</p>';
     else if (!entry.events.length) note = '<p class="note">Not part of this run.</p>';
     else {
       const t = buildTrace(entry.events), base = `/files/runs/${run.id}/${c.name}`;
-      running = run.status === 'running' && t.status === 'running';
+      running = t.status === 'running' && (run.status === 'running' || !entry.final);
       const now = Date.now() / 1000;
       const state = running ? 'running' : t.status === 'running' ? 'interrupted' : t.status;
       status = `<span class="state ${state}">${state}</span> ${duration((t.end || (running ? now : t.last)) - t.start)}`;
@@ -1546,7 +1549,7 @@ async function poll() {
     if (run && S.caseName) {
       const entry = traces.get(`${run.id}/${S.caseName}`);
       const pending = entry && entry.loaded && !entry.events.length && runCase(run, S.caseName);
-      if (entry && (run.status === 'running' || pending || wasRunning.includes(run.id))) fetchTrace(run.id, S.caseName);
+      if (entry && (run.status === 'running' || pending || !entry.final)) fetchTrace(run.id, S.caseName, run.status !== 'running');
     }
     document.body.classList.remove('offline');
   } catch (error) {
