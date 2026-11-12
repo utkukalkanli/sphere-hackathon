@@ -361,30 +361,39 @@ def total(mismatch: dict[str, tuple[int, int]], views=None) -> int:
 def carve(solid, views: list[Path], dims: tuple[float, float, float], target: float | None, cutter,
           view_set, known_for, step, budget: float, cut_timeout: float, min_volume_share: float = MIN_VOLUME_SHARE,
           diameters: dict | None = None):
-    """Try the regions of every straight view as pockets; return the solid with the cuts that help."""
-    deadline = time.monotonic() + budget
+    """Try the regions of every straight view as pockets; return the solid with the cuts that help.
+
+    For a part that looks turned (a round outline in some view) the order matters: a pocket read from
+    half a shaft (a tangent line splits it) can take what the turned cut needs, and a turned cut can
+    block a flange's pocket. So both orders are run from the same start, and the one whose result
+    agrees better with the isometric views is kept."""
     dims = np.array(dims, float)
     line_views = edges.LineViews(views, dims, edges.cameras_for(view_set))
+    turned = revolve.whole_part_options(views, dims)
+    if turned:  # two passes share the time limit
+        budget /= 2
+    args = (views, dims, target, cutter, view_set, known_for, step, budget, cut_timeout, min_volume_share,
+            diameters or {}, line_views, turned)
+    first = _carve_once(solid, *args, turned_first=False)
+    if not turned:
+        return first[0], first[1]
+    step.log("the part looks turned: trying the turned cut before the pockets as well")
+    second = _carve_once(solid, *args, turned_first=True)
+    chosen = min((first, second), key=lambda result: (result[3], result[2]))
+    step.log(f"pockets first: iso mismatch {first[3]} px, turned first: {second[3]} px; "
+             f"keeping {'turned' if chosen is second else 'pockets'} first")
+    return chosen[0], chosen[1]
+
+
+def _carve_once(solid, views, dims, target, cutter, view_set, known_for, step, budget, cut_timeout,
+                min_volume_share, diameters, line_views, turned, turned_first: bool):
+    """One pass of `carve`. Returns (solid, cuts kept, line mismatch, iso line mismatch)."""
+    deadline = time.monotonic() + budget
     mismatch = line_views.mismatch(solid)
     current, current_iso = total(mismatch), total(mismatch, ISO_VIEWS)
     step.log(f"line mismatch before: {current} px " + ", ".join(f"{k} {a}+{b}" for k, (a, b) in mismatch.items()))
     missing_now = view_set.missing(solid)
-
-    grow = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * edges.TOLERANCE_PX + 1,) * 2)
-    drawn = line_views.drawn(solid)
-    candidates = []
-    for view in line_views.views:
-        if view.name not in ORTHO_VIEWS:
-            continue
-        part = vh.part_mask(vh.find_view(views, view.name))
-        if part is None or part.shape != view.lines.shape:
-            continue
-        missing = view.lines & ~cv2.dilate(drawn[view.name].astype(np.uint8), grow).astype(bool)
-        depths = depth_candidates(view.name, line_views, dims)
-        for unexplained, curved, region in regions(view, part, missing):
-            candidates.append((unexplained, curved, view.name, region, depths))
-    candidates.sort(key=lambda item: -item[0])  # most unexplained lines first; shading-only ones last
-    step.log(f"{len(candidates)} region(s) to try, {sum(1 for c in candidates if c[1])} of them shaded like a cylinder")
+    kept = 0
 
     def evaluate(operation, argument, label: str):
         """Try one cut on the current solid: ((score, iso, solid, missing), None) if it passes the
@@ -413,7 +422,40 @@ def carve(solid, views: list[Path], dims: tuple[float, float, float], target: fl
             return None, "iso"
         return (score, iso, carved, now), None
 
-    tried = kept = 0
+    def try_turned():
+        """The part as a turned part. Judged by the isometric views: a revolved profile has a circle at
+        every kink, which the straight views count as extra lines although the part looks right."""
+        nonlocal solid, current, current_iso, missing_now, kept
+        for label, spec in turned:
+            outcome, reason = evaluate(revolve.cut_revolved, spec, label)
+            if outcome is not None and outcome[1] < current_iso - max(MIN_GAIN_PX, MIN_GAIN * current_iso):
+                step.log(f"{label}: iso mismatch {current_iso} -> {outcome[1]} px (all views {current} -> {outcome[0]}), "
+                         f"volume {vh.volume(solid):.0f} -> {vh.volume(outcome[2]):.0f} mm3")
+                current, current_iso, solid, missing_now = outcome
+                kept += 1
+            else:
+                step.log(f"{label}: not kept ({reason or 'too little gain'})")
+
+    if turned_first:
+        try_turned()
+
+    grow = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * edges.TOLERANCE_PX + 1,) * 2)
+    drawn = line_views.drawn(solid)
+    candidates = []
+    for view in line_views.views:
+        if view.name not in ORTHO_VIEWS:
+            continue
+        part = vh.part_mask(vh.find_view(views, view.name))
+        if part is None or part.shape != view.lines.shape:
+            continue
+        missing = view.lines & ~cv2.dilate(drawn[view.name].astype(np.uint8), grow).astype(bool)
+        depths = depth_candidates(view.name, line_views, dims)
+        for unexplained, curved, region in regions(view, part, missing):
+            candidates.append((unexplained, curved, view.name, region, depths))
+    candidates.sort(key=lambda item: -item[0])  # most unexplained lines first; shading-only ones last
+    step.log(f"{len(candidates)} region(s) to try, {sum(1 for c in candidates if c[1])} of them shaded like a cylinder")
+
+    tried = 0
     for unexplained, curved, view, region, depths in candidates:
         if time.monotonic() > deadline:
             step.log("out of time: the result now depends on the machine's speed", level="warning")
@@ -436,7 +478,7 @@ def carve(solid, views: list[Path], dims: tuple[float, float, float], target: fl
         if curved:  # shaded like a cylinder: try cylinders first, flat pockets after (a light gradient
             # on a flat face looks the same, so the flat ones are not dropped)
             options = [(label, cut_curved, spec, False)
-                       for label, spec in curved_options(view, region, silhouette, curved, dims, depths, diameters or {})
+                       for label, spec in curved_options(view, region, silhouette, curved, dims, depths, diameters)
                        ] + options
         best = None
         flat_blocked = False
@@ -463,17 +505,7 @@ def carve(solid, views: list[Path], dims: tuple[float, float, float], target: fl
                      f"volume {vh.volume(solid):.0f} -> {vh.volume(carved):.0f} mm3")
             solid, current, current_iso, missing_now = carved, score, iso, now
             kept += 1
-    # a part whose outline is round along an axis: try it as a turned part, after the pockets. Judged
-    # by the isometric views: a revolved profile has a circle at every kink, which the straight views
-    # count as extra lines although the part looks right from every side.
-    for label, spec in revolve.whole_part_options(views, dims):
-        outcome, reason = evaluate(revolve.cut_revolved, spec, label)
-        if outcome is not None and outcome[1] < current_iso - max(MIN_GAIN_PX, MIN_GAIN * current_iso):
-            step.log(f"{label}: iso mismatch {current_iso} -> {outcome[1]} px (all views {current} -> {outcome[0]}), "
-                     f"volume {vh.volume(solid):.0f} -> {vh.volume(outcome[2]):.0f} mm3")
-            current, current_iso, solid, missing_now = outcome
-            kept += 1
-        else:
-            step.log(f"{label}: not kept ({reason or 'too little gain'})")
+    if not turned_first:
+        try_turned()
     step.metric(regions=len(candidates), tried=tried, kept=kept, line_mismatch=current)
-    return solid, kept
+    return solid, kept, current, current_iso

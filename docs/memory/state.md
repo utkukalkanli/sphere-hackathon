@@ -1,6 +1,6 @@
 # Project state
 
-Last updated: 2026-11-12, about 01:00 CET (cases run in parallel; exact-HLR fallback).
+Last updated: 2026-11-12, about 01:40 CET (turned parts: both orders tried).
 
 ## Pipeline
 
@@ -113,7 +113,8 @@ set is no longer used, see decisions.md). Score = mean of min/max over the 9 par
 | + 10 tries per region | 1.002 | 1.120 | 1.001 | 1.163 | 1.013 | 3.318 | 2.195 | 1.008 | 1.724 | 0.785 |
 | + region depths, circles (5c71e2c) | 1.002 | 1.120 | 1.001 | 1.130 | 1.009 | 3.318 | 2.142 | 1.008 | 1.403 | 0.804 |
 | + turned parts, cone bosses (9745498) | 1.002 | 1.120 | 1.001 | 1.130 | 1.011 | 2.845 | 2.142 | 1.008 | 1.403 | 0.810 |
-| + parallel cases, 60 tries, exact HLR fallback (current) | 1.002 | 1.120 | 1.001 | 1.121 | 1.009 | 2.845 | 2.033 | 1.008 | 1.393 | 0.814 |
+| + parallel cases, 60 tries, exact HLR fallback (d312797) | 1.002 | 1.120 | 1.001 | 1.121 | 1.009 | 2.845 | 2.033 | 1.008 | 1.393 | 0.814 |
+| + turned parts: both orders, the better iso kept (current) | 1.002 | 1.140 | 1.011 | 1.121 | 1.009 | 2.623 | 2.033 | 1.008 | 1.393 | 0.8145 |
 
 - Run time of the current version: `scripts/main.py` runs the cases in parallel processes (up to 4,
   `CASE_WORKERS`); all 9 take 311 s with 3 workers on the Windows PC (about 7 minutes one at a time).
@@ -121,6 +122,13 @@ set is no longer used, see decisions.md). Score = mean of min/max over the 9 par
   minutes (`LINE_BUDGET`, at most 180 s; 83 s if only one case runs at a time). With a fixed 90 s
   limit, part 4 ran into it under parallel load and came out worse (1.152): the limit decides the
   result when it is hit.
+- Turned parts, both orders (current): on 2 and 3 the turned cut first wins by far on the iso views
+  (2: 13225 -> 5102 px, 3: 6431 -> 1771 px; 3 also all views 12295 -> 4526) but leaves a little
+  more volume (2: 1.120 -> 1.140, 3: 1.001 -> 1.011). Pockets first had cut half of part 2's stem
+  (a tangent line splits it into a region that looked like a flat pocket): less volume, wrong
+  material. So the volume score understates this version; it is probably the better one.
+  The profile smoothing used np.roll, which carried the valve head's radius to the stem's end
+  (a fake disc); fixed.
 - Turned parts: recognised on 2 (about y), 3 (about x) and 6 (about z), not on the crankshaft 4.
   Kept on 6 (3.32 -> 2.84). Rejected on 2 and 3 because the revolved profile opened background in a
   view ("too much"): the radius read from the silhouettes is not quite safe there. On 6 most of the

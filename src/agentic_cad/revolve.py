@@ -99,7 +99,8 @@ def profile(views: list[Path], axis: int, centre: dict[int, float], dims: np.nda
     if not seen or radius.max() <= 0:
         return None
     pixel = dims.max() / 1000
-    radius = np.maximum(np.maximum(radius, np.roll(radius, 1)), np.roll(radius, -1)) + pixel  # never thinner
+    padded = np.pad(radius, 1, mode="edge")  # not np.roll: it would carry one end's radius to the other
+    radius = np.maximum(np.maximum(padded[:-2], padded[1:-1]), padded[2:]) + pixel  # never thinner
     radius = np.maximum(radius, pixel)
     # fewer points: drop those on a straight line between their neighbours (within half a pixel)
     points = np.column_stack([heights, radius])

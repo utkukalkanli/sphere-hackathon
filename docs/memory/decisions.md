@@ -22,6 +22,9 @@ the entry and say what changed.
 - **Turned parts and cones: a profile from the side views revolved about the axis of a round
   outline, judged by the iso views** (2026-11-12, user asked for cones, tried on part 6). Tried after
   the pockets (tried first, it blocked the flange pocket of part 3). Practice score 0.804 -> 0.810.
+  Changed 2026-11-12: for a turned part both orders run from the same start (each with half the
+  time limit) and the one that agrees better with the iso views is kept; on parts 2 and 3 that is
+  turned first, which has a slightly worse volume ratio but far better line agreement.
 - **Model-planned cuts are step 4, after the holes and the line cuts, and off without `OPENAI_MODEL`** (2026-11-11,
   user asked to bring back the useful parts of 9364253). The model only gives numbers; every cut is
   checked against the true volume and all eight views, so a wrong answer is rejected, not submitted.
