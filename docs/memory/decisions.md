@@ -81,6 +81,10 @@ kept beside its successor. Older wording: `git show bda2104:docs/memory/decision
 - **Later steps keep a cut only if the verifier's score does not drop** (2026-11-11; confirmed
   2026-11-12 by measurement: on the cuts the steps propose the score rule kept no wrong cut that
   could be graded, the local rule refused more than half of the right ones).
+- **The model is asked where, not how deep** (2026-11-12, measurement in `state.md`). The served
+  model cannot read millimetres off the views and copies whatever numbers it is given; it can
+  name the region where our solid is filled and the part is not. Depths are found by cutting and
+  judging, and only in flat regions square to the view: a column has a flat floor.
 - **A model's cut must pass the local judge and make the views fit strictly better**
   (2026-11-12). A model's cuts are guesses; the score rule passes most wrong arbitrary cuts. A
   cut no view sees stays out even when it is right.
@@ -128,5 +132,9 @@ kept beside its successor. Older wording: `git show bda2104:docs/memory/decision
 - **Tracing is off in the Docker image** (`ENV TRACE=0`).
 
 ## Repo
+
+- **First submission 2026-11-12 without the model, and `main` takes this branch's tree** (user).
+  The endpoint is a tunnel on one laptop, which the image cannot reach. `main` held a teammate's
+  other pipeline; it was merged with `-s ours` so that nothing of this branch changed.
 
 - **Feature branches; merge to `main` only to submit, when the user says so** (2026-11-11).
