@@ -56,6 +56,19 @@ SIMPLIFY_PX = 0.6      # Douglas-Peucker tolerance for outlines kept as traced p
 # (straight lines only) or "pixels" (the traced polygon, staircase edges and all)
 OUTLINE = os.environ.get("HULL_OUTLINE", "arcs")
 MIN_AREA_PX = 12.0     # outlines smaller than this are rendering noise
+# Where the outline of a silhouette runs: "centres" (through the centres of its border pixels, the
+# default) or "edges" (along the outer edges of the part's pixels). Edges keep thin walls a pixel
+# thicker but measured worse on ordinary parts: the dark line drawn around the part already widens
+# the mask (docs/memory/state.md, "Edge tracing").
+TRACE = os.environ.get("HULL_TRACE", "centres")
+# ... except for a silhouette made of thin walls (a grille, a mesh): when more than this share of its
+# pixels lies in walls at most 2 px thick, it is traced along the edges. Through the centres such a
+# wall has no thickness left and the fitted holes cut it through (eval 51: 14 %, every other
+# silhouette of the eval sample and the practice set under 0.1 %). HULL_THIN_SHARE=1 switches it off.
+THIN_SHARE = float(os.environ.get("HULL_THIN_SHARE", 0.01))
+# With edges only: a fitted loop that covers a pixel of a wall at most 2 px thick is replaced by the
+# traced one. Off by default: it also fires on sharp tips and gave staircase outlines.
+THIN_GUARD = os.environ.get("HULL_THIN_GUARD", "0") == "1"
 FRAME_MARGIN = 1.04    # the renders leave 4 % around the framed extent (half the image = extent * 1.04)
 CHECK_BAND_PX = 3      # how far a solid's projection may stray from the silhouette it was cut with
 CHECK_AREA = 0.002     # ... over at most this share of the silhouette's area
@@ -142,29 +155,65 @@ def _loop_is_valid(loop: list) -> bool:
         return False
 
 
+def edge_grid(mask: np.ndarray) -> np.ndarray:
+    """The mask on a grid twice as fine whose odd cells are the pixels and whose even cells are the
+    edges and corners between them, with every edge of a part pixel filled. An outline traced on it
+    runs along the pixel edges: cell a of 2w + 1 lies at a / (2w) of the width."""
+    grid = np.zeros((2 * mask.shape[0] + 1, 2 * mask.shape[1] + 1), np.uint8)
+    grid[1::2, 1::2] = mask
+    return cv2.dilate(grid, np.ones((3, 3), np.uint8))
+
+
+def thin_cells(mask: np.ndarray) -> np.ndarray:
+    """On the edge grid: the pixels of walls at most 2 px thick (what a 3 x 3 opening removes)."""
+    opened = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+    grid = np.zeros((2 * mask.shape[0] + 1, 2 * mask.shape[1] + 1), np.uint8)
+    grid[1::2, 1::2] = ((mask > 0) & (opened == 0)).astype(np.uint8) * 255
+    return grid
+
+
+def _eats(loop: list, contour: np.ndarray, to_mm, thin: np.ndarray) -> bool:
+    """Whether a fitted loop puts a thin-wall pixel on the other side than the traced outline does."""
+    x, y, w, h = cv2.boundingRect(contour)
+    x0, y0 = max(x - 4, 0), max(y - 4, 0)
+    window = thin[y0:y + h + 4, x0:x + w + 4]
+    if not window.any():
+        return False
+    # to_mm is linear per axis: invert it from two points
+    probe = to_mm(np.array([[0.0, 0.0], [1.0, 1.0]]))
+    points = (outline_fit.sample(loop, 0.02) - probe[0]) / (probe[1] - probe[0])
+    fitted, traced = np.zeros_like(window), np.zeros_like(window)
+    cv2.fillPoly(fitted, [np.round(points - [x0, y0]).astype(np.int32)], 255)
+    cv2.fillPoly(traced, [(contour.reshape(-1, 2) - [x0, y0]).astype(np.int32)], 255)
+    return bool(((fitted != traced) & (window > 0)).any())
+
+
 def trace_outlines(mask: np.ndarray, to_mm, px: float, known: dict | None = None,
-                   mode: str | None = None) -> list[dict]:
+                   mode: str | None = None, scale: float = 1.0, thin: np.ndarray | None = None) -> list[dict]:
     """Outlines of the part in a mask (255 = part), each with its holes, as loops of lines and arcs.
-    `to_mm` maps Nx2 pixels to mm, `px` is the size of a pixel in mm, `known` holds radii and circles
-    from facts.json that fitted circles may snap to."""
+    `to_mm` maps Nx2 cells of the mask to mm, `px` is the size of a pixel in mm, `known` holds radii
+    and circles from facts.json that fitted circles may snap to. `scale`: cells of the mask per
+    pixel. `thin`: cells no fitted loop may move to the other side (see thin_cells)."""
     mode = mode or OUTLINE
     contours, hierarchy = cv2.findContours(mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE)
     if hierarchy is None:
         return []
 
     def loop_of(contour) -> list | None:
-        if cv2.contourArea(contour) < MIN_AREA_PX:
+        if cv2.contourArea(contour) < MIN_AREA_PX * scale * scale:
             return None
         loop = []
         if mode != "pixels":
             try:
-                loop = outline_fit.fit_loop(contour, to_mm, px, known, arcs=mode == "arcs")
+                loop = outline_fit.fit_loop(contour, to_mm, px, known, arcs=mode == "arcs", scale=scale)
                 if loop and not _loop_is_valid(loop):
                     loop = []  # moving the corners made it cross itself
+                if loop and thin is not None and _eats(loop, contour, to_mm, thin):
+                    loop = []  # it would cut through a thin wall
             except Exception:
                 loop = []  # fall back to the traced polygon below
         if not loop:
-            points = cv2.approxPolyDP(contour, SIMPLIFY_PX, True).reshape(-1, 2).astype(float)
+            points = cv2.approxPolyDP(contour, SIMPLIFY_PX * scale, True).reshape(-1, 2).astype(float)
             if len(points) < 3:
                 return None
             points = [tuple(map(float, p)) for p in to_mm(points)]
@@ -190,7 +239,7 @@ def trace_outlines(mask: np.ndarray, to_mm, px: float, known: dict | None = None
 
 
 def ortho_silhouette(name: str, views: list[Path], dims: dict[str, float], known: dict | None = None,
-                     mode: str | None = None) -> Silhouette | None:
+                     mode: str | None = None, trace: str | None = None) -> Silhouette | None:
     spec = ORTHO[name]
     masks, used = [], []
     for index, view in enumerate(spec["views"]):
@@ -215,9 +264,20 @@ def ortho_silhouette(name: str, views: list[Path], dims: dict[str, float], known
     mask = part.astype(np.uint8) * 255
 
     du, dv = dims[spec["u"]], dims[spec["v"]]
-    px = (du / (width - 1) + dv / (height - 1)) / 2
-    outlines = trace_outlines(mask, lambda p: np.column_stack(
-        [p[:, 0] / (width - 1) * du, (height - 1 - p[:, 1]) / (height - 1) * dv]), px, known, mode)
+    if trace is None and TRACE == "centres":
+        opened = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+        if ((mask > 0) & (opened == 0)).sum() > THIN_SHARE * (mask > 0).sum():
+            trace = "edges"
+    if (trace or TRACE) == "edges":
+        # The part's pixels fill the box face from edge to edge, and every outline runs along pixel edges
+        px = (du / width + dv / height) / 2
+        outlines = trace_outlines(edge_grid(mask), lambda p: np.column_stack(
+            [p[:, 0] / (2 * width) * du, (2 * height - p[:, 1]) / (2 * height) * dv]), px, known, mode,
+            scale=2.0, thin=thin_cells(mask) if THIN_GUARD else None)
+    else:
+        px = (du / (width - 1) + dv / (height - 1)) / 2
+        outlines = trace_outlines(mask, lambda p: np.column_stack(
+            [p[:, 0] / (width - 1) * du, (height - 1 - p[:, 1]) / (height - 1) * dv]), px, known, mode)
     if not outlines:
         return None
     margin = 0.05 * max(dims.values())

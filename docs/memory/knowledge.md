@@ -130,6 +130,29 @@ the two isometric views.
   (practice parts, same date): 100 % on parts 1, 2, 3 (volume within 2 % of the truth), 96 % on 5,
   86 % on 8, 61 to 62 % on 4 and 7, 47 % on 9, 26 % on 6. An area that is flat in the view and not
   confirmed is a place where the solid is wrong or hidden from the isometric camera. Not used yet.
+- **The facing tone does not prove a face is square to the camera, even on a large even area**
+  (practice 6, left view, 2026-11-12): the flank of a fin, 71000 px with the tone of a facing face
+  to within 3 levels, is not one. Taken for one it was cut flat to the solid's lowest point, 30 mm
+  into the cone, and the verifier accepted it. What tells a level face: seen from a camera at right
+  angles it is one straight stretch, and the view draws a line (or the outline) along it. The flat
+  triangles of practice 6 have that line along 100 % of their stretch; the false one along 9 %.
+- **"The solid contains the part" gives depths without any other source** (2026-11-12). A level
+  face is no higher than the solid's lowest point over its area; a flat face through a known edge is
+  no steeper than the steepest plane through that edge inside the solid. Both cuts can only remove
+  what is not part, as long as the area really is that kind of face. On practice 6 the flanks of the
+  fins come out at 82 to 83 degrees and the planes touch the cone along the whole ridge (0.3 to 3 mm
+  over 35 mm of radius).
+- **The verifier's score drops for a right cut whose neighbours are still uncut** (practice 6: 14
+  triangles and 15 flanks cut, volume 3.31 to 2.99, score 0.227 to 0.206). The walls left standing
+  next to a cut are edges the views do not draw, so precision falls (front view 0.94 to 0.44), while
+  recall rises in every view (0.61 to 0.74): more of the views' lines have become face boundaries.
+- **Lines between two dark faces are missed** (practice 6, top view: faces of tone 55 to 70, line
+  30 to 45). `regions.segment` now also takes what a 5 px closing fills in by 8 levels and 15 % of
+  the tone; that separates most flanks, not those in the darkest third of the view. An area made
+  of two faces bends around a corner: `depth.py` skips areas under 90 % of their convex outline.
+- **Eval part 99 does not give the same solid twice**: hull, holes and rounds scored 0.250 in one
+  run and 0.406 in the next (volume 3.77 and 2.32 times the truth), with other sessions loading the
+  machine. A before/after on that part means nothing unless both use one solid.
 - **The facing tone has to be taken from even areas, not from pixels.** The commonest tone of a
   view, or the middle one of the six, is wrong on round parts, whose side views show no flat face
   (it called 3.4 % of the truly facing area slanted). The tone that most of the even area of the six

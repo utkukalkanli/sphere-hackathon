@@ -13,6 +13,7 @@ from agentic_cad import holes as hl
 from agentic_cad import outline_fit as of
 from agentic_cad import pockets
 from agentic_cad import curved
+from agentic_cad import datums
 from agentic_cad import depth
 from agentic_cad import export
 from agentic_cad import rounds
@@ -23,6 +24,17 @@ from agentic_cad import visual_hull as vh
 
 # A cut that leaves less than this share of the part's true volume removed real material: undo it
 MIN_VOLUME_SHARE = 0.97
+# A silhouette cut may go this far below it, as a last resort, when its result matches the view it
+# was cut from: then nothing is wrong with the cut, the outline is a pixel tight on a thin part, and
+# leaving the direction uncut costs far more (eval 75: overlap 0.67 uncut, 0.92 cut)
+TIGHT_VOLUME_SHARE = float(os.environ.get("HULL_TIGHT_SHARE", 0.90))
+# The isometric views are never carved with on their own. When the three straight cuts leave more
+# than this many times the true volume (facts.json), the box is carved again with the isometric
+# silhouette first, its scale confirmed on the hull of the straight cuts, and the result is kept only
+# if it still fills all three straight silhouettes. A large value switches it off.
+ISO_EXCESS = float(os.environ.get("HULL_ISO_EXCESS", 1.5))
+# ... and only while the case has used less than this many seconds
+ISO_BUDGET = float(os.environ.get("HULL_ISO_BUDGET", 40))
 # Seconds one cut may take before it is abandoned and the previous solid kept. The whole run over all
 # test cases has a 20 minute limit; the straight cuts normally take 1-3 s, the diagonal one 5-40 s.
 CUT_TIMEOUT = float(os.environ.get("HULL_CUT_TIMEOUT", 30))
@@ -53,6 +65,7 @@ class VisualHullAgent:
         self.volumes: dict[str, float] = {}  # volume in mm3 after each step of the last case
         self._stage = 0
         self.deadline: float | None = None  # time.time() after which the case's later steps are skipped
+        self._iso = None  # an isometric silhouette whose scale is already confirmed, for _cut_direction
         self.keep_faces = False  # set by the split step: the export must not merge its faces again
         self.lines_found = None  # handed from the pockets step to the split step: the lines of an unchanged solid
 
@@ -171,6 +184,10 @@ class VisualHullAgent:
                 step.log("every direction cut cleanly in this order; using this solid")
                 break
 
+        if (not self.use_iso and target and vh.volume(solid) > ISO_EXCESS * target and not self.out_of_time()
+                and time.time() - started < ISO_BUDGET):
+            solid, silhouettes = self._with_iso(box, solid, silhouettes, troubled, names, views, dims, target)
+
         with trace.step("check_views", kind="check") as step:
             worst = self._check(step, solid, silhouettes)
             if worst is not None and worst > vh.CHECK_AREA and vh.OUTLINE != "pixels":
@@ -189,6 +206,41 @@ class VisualHullAgent:
             if worst is not None:
                 step.metric(worst_mismatch=round(worst, 5))
         return solid
+
+    def _with_iso(self, box, solid, silhouettes: list, troubled: list, names: list[str], views: list[Path],
+                  dims: dict, target: float):
+        """Carve the box again with the isometric silhouette first (on the box that cut is cheap; after
+        the straight cuts it can take minutes). Kept only if every cut went through as cleanly as
+        before, less is left, and the solid still fills the three straight silhouettes."""
+        with trace.step("isometric_support", kind="code", description=(
+                "The straight cuts left much more than the true volume: the box is carved again with "
+                "the isometric silhouette first, and kept if it still matches the straight views")) as step:
+            try:
+                self._iso = vh.iso_silhouette(views, dims, solid)
+                if self._iso is None:
+                    step.log("the scale of the isometric views could not be confirmed on the hull; nothing done")
+                    return solid, silhouettes
+                step.log(self._iso.info)
+                kept, before = dict(self.volumes), vh.volume(solid)
+                again, again_silhouettes, again_troubled = self._carve(box, ["iso", *names], views, dims, target)
+                after = vh.volume(again)
+                straight = [s for s in again_silhouettes if s.name != "iso"]
+                worst = self._check(step, again, straight)
+                self.volumes = kept
+                if (len(again_troubled) > len(troubled) or len(straight) < len(silhouettes) or after >= before
+                        or (worst is not None and worst > vh.CHECK_AREA)):
+                    step.log(f"not kept: {after / target:.3f} of the true volume against {before / target:.3f}, "
+                             f"unclean cuts {again_troubled}, worst mismatch {worst}")
+                    return solid, silhouettes
+                step.metric(volume_cm3=round(after / 1000, 3), removed_cm3=round((before - after) / 1000, 3),
+                            vs_true_volume=round(after / target, 3))
+                self._record(step, again, "iso")
+                return again, again_silhouettes
+            except Exception as error:
+                step.log(f"raised {error!r}; keeping the hull of the straight cuts", level="warning")
+                return solid, silhouettes
+            finally:
+                self._iso = None
 
     def _check(self, step, solid, silhouettes: list) -> float | None:
         """Largest disagreement between the solid's projection and any silhouette it was cut with."""
@@ -210,10 +262,12 @@ class VisualHullAgent:
         """Cut `box` along `names` in this order. Returns the solid, the silhouettes that were cut, and
         the directions that did not cut cleanly with their fitted outline."""
         solid, silhouettes, troubled = box, [], []
+        aligned = self._aligned(names, views, dims) if (mode or vh.OUTLINE) != "pixels" else {}
         for name in names:
             with trace.step(f"cut_{name}", kind="code") as step:
                 try:
-                    carved, silhouette, clean = self._cut_direction(step, name, views, dims, solid, target, mode)
+                    carved, silhouette, clean = self._cut_direction(step, name, views, dims, solid, target, mode,
+                                                                    aligned.get(name))
                 except Exception as error:  # one direction failing must not lose the others
                     step.fail(f"this direction raised {error!r}; keeping the previous solid")
                     troubled.append(name)
@@ -226,23 +280,45 @@ class VisualHullAgent:
                     self._record(step, solid, name)
         return solid, silhouettes, troubled
 
+    def _aligned(self, names: list[str], views: list[Path], dims: dict) -> dict:
+        """The straight silhouettes with their outlines on coordinates shared by all three (datums.py),
+        for the directions where that changed anything. Empty when it is switched off or fails."""
+        if not datums.ON:
+            return {}
+        case_dir = views[0].parent.parent if views else None
+        try:
+            aligned, report = datums.aligned_silhouettes(views, dims, names, lambda name: hl.outline_hints(
+                case_dir, vh.ORTHO[name]["u"], vh.ORTHO[name]["v"], vh.ORTHO[name]["along"]))
+        except Exception as error:
+            trace.log(f"datums raised {error!r}; cutting with the outlines as fitted", level="warning")
+            return {}
+        if report:
+            trace.log(f"shared datums: {report['merged']} of {report['datums']} coordinates merged, "
+                      f"{report['refused']} outline(s) left as fitted")
+        return aligned
+
     def _cut_direction(self, step, name: str, views: list[Path], dims: dict, solid, target: float | None,
-                       mode: str | None = None):
+                       mode: str | None = None, aligned=None):
         """Cut along one direction. Returns (solid or None, the silhouette it was cut with, whether the
         fitted outline cut cleanly)."""
         case_dir = views[0].parent.parent if views else None
 
-        def silhouette_for(outline_mode: str | None):
+        def silhouette_for(outline_mode: str | None, tracing: str | None = None):
             if name == "iso":
-                return vh.iso_silhouette(views, dims, solid)
+                return self._iso or vh.iso_silhouette(views, dims, solid)
             spec = vh.ORTHO[name]
             hints = hl.outline_hints(case_dir, spec["u"], spec["v"], spec["along"])
-            return vh.ortho_silhouette(name, views, dims, hints, outline_mode)
+            return vh.ortho_silhouette(name, views, dims, hints, outline_mode, tracing)
 
-        def attempt(silhouette):
+        tight = []  # cuts that match their view and only leave a little less than the true volume
+
+        def attempt(silhouette, share: float = MIN_VOLUME_SHARE):
             """The cut, kept only if the result looks like the silhouette from this direction."""
-            carved = self._guarded(step, solid, target, lambda: self.cutter.cut(solid, silhouette, timeout), quiet=True)
+            carved = self._guarded(step, solid, target, lambda: self.cutter.cut(solid, silhouette, timeout),
+                                   quiet=True, share=share, refused=tight)
             if carved is None:
+                if tight and tight[-1][1] is None:
+                    tight[-1] = (tight[-1][0], silhouette)
                 return None
             error = vh.projection_error(carved, silhouette)
             if error is not None and max(error) > vh.CHECK_AREA:
@@ -264,6 +340,12 @@ class VisualHullAgent:
             step.log(silhouette.info)
         step.attach(f"silhouette_{name}.png", vh.preview(silhouette))
         timeout = ISO_CUT_TIMEOUT if name == "iso" else CUT_TIMEOUT
+        if aligned is not None:  # the same outline on the coordinates the three directions share
+            carved = attempt(aligned)
+            if carved is not None:
+                step.metric(outline="shared datums")
+                return carved, aligned, True
+            step.log("cutting with the outline on shared datums failed; trying it as fitted", level="warning")
         carved = attempt(silhouette)
         if carved is not None:
             return carved, silhouette, True
@@ -276,6 +358,16 @@ class VisualHullAgent:
                 if carved is not None:
                     step.metric(outline="traced pixels")
                     return carved, traced, False
+        # Every outline left less than the true volume, but a cut that matches its view is still far
+        # better than no cut
+        for carved, used in (t for t in tight if t[1] is not None):  # the fitted outline first
+            if target and vh.volume(carved) >= TIGHT_VOLUME_SHARE * target:
+                error = vh.projection_error(carved, used)
+                if error is None or max(error) <= vh.CHECK_AREA:
+                    step.log(f"keeping a cut that leaves {vh.volume(carved) / target:.3f} of the true volume: "
+                             "it matches its view", level="warning")
+                    step.metric(outline="tight", vs_true_volume=round(vh.volume(carved) / target, 3))
+                    return carved, used, used is silhouette
         step.fail("the cut gave no valid solid; keeping the previous one")
         return None, None, False
 
@@ -312,9 +404,11 @@ class VisualHullAgent:
 
     # -- shared --------------------------------------------------------------------------------
 
-    def _guarded(self, step, solid, target: float | None, operation, quiet: bool = False):
+    def _guarded(self, step, solid, target: float | None, operation, quiet: bool = False,
+                 share: float = MIN_VOLUME_SHARE, refused: list | None = None):
         """Run a cut; return the new solid, or None (previous one is kept) when it fails, times out
-        or would leave less material than the part really has."""
+        or would leave less material than the part really has. A valid result refused only for its
+        volume is appended to `refused` as (solid, None)."""
         before = vh.volume(solid)
         try:
             carved = operation()
@@ -326,7 +420,9 @@ class VisualHullAgent:
                 step.fail("the cut gave no valid solid; keeping the previous one")
             return None
         after = vh.volume(carved)
-        if target and after < MIN_VOLUME_SHARE * target:
+        if target and after < share * target:
+            if refused is not None:
+                refused.append((carved, None))
             message = (f"the cut would leave {after:.0f} mm3, less than the part's {target:.0f} mm3; "
                        "keeping the previous solid")
             step.log(message, level="warning") if quiet else step.fail(message)

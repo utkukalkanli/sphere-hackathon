@@ -87,9 +87,11 @@ def _snap(points: np.ndarray, centre: np.ndarray, radius: float, px: float, know
     return centre, radius
 
 
-def fit_loop(contour: np.ndarray, to_mm, px: float, known: dict | None = None, arcs: bool = True) -> list[tuple]:
+def fit_loop(contour: np.ndarray, to_mm, px: float, known: dict | None = None, arcs: bool = True,
+             scale: float = 1.0) -> list[tuple]:
     """contour: the dense closed pixel outline from cv2.findContours (CHAIN_APPROX_NONE).
-    to_mm maps Nx2 pixel coordinates to mm, px is the size of a pixel in mm."""
+    to_mm maps Nx2 contour coordinates to mm, px is the size of a pixel in mm, `scale` is how many
+    contour units make one pixel (2 when the outline was traced on the grid of pixel edges)."""
     dense = to_mm(contour.reshape(-1, 2).astype(float))
     count = len(dense)
 
@@ -101,7 +103,7 @@ def fit_loop(contour: np.ndarray, to_mm, px: float, known: dict | None = None, a
             return [("circle", (float(centre[0]), float(centre[1])), float(radius))]
 
     # Corners: the vertices of a coarse polygon, as positions in the dense outline
-    polygon = cv2.approxPolyDP(contour, CORNER_PX, True).reshape(-1, 2)
+    polygon = cv2.approxPolyDP(contour, CORNER_PX * scale, True).reshape(-1, 2)
     if len(polygon) < 3:
         return []
     pixels = contour.reshape(-1, 2)

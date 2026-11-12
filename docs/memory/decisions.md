@@ -34,6 +34,14 @@ the entry and say what changed.
 - **The file is checked, not only the solid** (2026-11-12). A step that makes curved faces asks
   `export.reads_back_valid`; the final export asks it too and falls back to the solid before the
   later steps. Found on practice part 4, which was valid in memory and invalid in the `.stp`.
+- **Depths the solid itself implies are taken without asking the isometric view** (2026-11-12,
+  after the user asked for the grooves of practice 6). The solid contains the part, so a level face
+  is cut to the solid's lowest point over it and a flat face to the steepest plane through a known
+  edge. What decides that an area is such a face is a line, not a tone: tones named a fin's flank a
+  level face. These cuts live in the level-face step because they are the same argument.
+- **Round on a disc's evidence only if the views' lines do not fit worse** (2026-11-12). Dropping
+  the lathe-faces condition outright would round a square body under a round flange; the line term
+  refused 3 of 10 such proposals on the eval set and none of the 6 it let through got worse.
 - **`normals.py` is not wired into the shading step** (2026-11-12; the user asked for it, the
   measurement said no). As an extra "leave this face alone" test it cost eval 38 three correct cuts
   (IoU 0.639 to 0.610) and gained nothing on the other 23 parts. It stays a measurement
@@ -124,7 +132,7 @@ the entry and say what changed.
   (2026-11-11 night, user; replaces the three columns). Each step must show what it extracted: the
   removed material is drawn over the solid in 3D, and the step's attachments are listed under the
   truth window on the right. The left panel holds the input and nothing else; since 2026-11-12 it is a small window on the
-  pictures in the top left corner of the big view, not a column, with the brief and the facts folded away (user: only used to switch between pictures). The
+  pictures in the bottom left corner of the big view, not a column, with the brief and the facts folded away (user: only used to switch between pictures). The
   right window shows the ground truth, not our output (user: the output is already the big view).
   The side panels are resizable. Black background (user), minimal, little text.
 - **New pipeline steps need no UI change** (2026-11-11). A `with trace.step(...)` in the agent is

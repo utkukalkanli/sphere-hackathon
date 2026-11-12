@@ -49,12 +49,15 @@ Remove a question when it is answered, and record the answer in `decisions.md` o
   the eval sample is still called facing), and what to do with the flat areas that are not
   confirmed: they mark where the solid is wrong, which steps 4 and 5 could use to choose where to
   search and where to leave a face alone.
-- **Grooves between fins: slanted flat faces with no neighbour of known depth** (practice 6, and
-  the banks of practice 9; user, 2026-11-12: this is what the shading work was meant to fix). Each
-  flank is a flat area of the end view with one even tone, between a crest line that lies on the
-  solid's surface and a valley line whose depth is unknown. Ideas not yet tried: the plane through
-  the crest (known in 3D once the section is round) with the slope the tone gives; or the valley
-  line found in a side view too and placed in 3D from the two views.
+- **Grooves between fins** (practice 6; user, 2026-11-12: this is what the shading work was meant
+  to fix). Done without tones for the flanks that stand on a visible level face (`depth.py`, see
+  `state.md`): 15 of 36. Open: the faint lines between dark faces, without which the other flanks
+  are not separate areas; flanks seen only from the side views, which have no level face to hang
+  on; the banks of practice 9, which stand on nothing visible; and whether the supported cuts help
+  any eval part at all (on the 24 they found work on two and gained nothing).
+- **Nothing checks a round cut against the views.** On practice 6 the "disc" cut of the cap's last
+  10 mm came back with the section still square and was kept. The hull cuts have a projection check;
+  `rounds.py` and `curved.py` do not.
 - **Hollow parts** (practice 6: a shell, about two thirds of its excess). Only `volume_mm3` and
   `surface_area_mm2` show it. Not looked at; the user has set it aside for now.
 - **Curved faces that are not rings around a listed axis** (2026-11-12). `curved.py` only handles
