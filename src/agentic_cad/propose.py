@@ -6,7 +6,9 @@ which is made, judged against the views where it acts (judge.py, the local rule,
 HULL_JUDGE says) and kept only if accepted, if the views fit strictly better with it (a cut no
 view shows is a guess and stays out), and if the file still reads back as one valid solid.
 
-One request per case to an OpenAI-compatible endpoint: OPENAI_BASE_URL, OPENAI_API_KEY and
+Up to HULL_MODEL_ROUNDS (3) requests per case, as one conversation: after each round the model is
+told what became of every proposal and sees our solid as it is now, then proposes again. To an
+OpenAI-compatible endpoint: OPENAI_BASE_URL, OPENAI_API_KEY and
 OPENAI_MODEL (README "Configuration"). **Without them the step does nothing and the pipeline is
 what it is without a model.** A timeout, a refused connection or an answer that cannot be read
 also mean no cut. HULL_PROPOSALS=<dir> reads `<dir>/test_case_<n>.json` instead of asking a model:
@@ -30,7 +32,9 @@ from OCP.TopoDS import TopoDS_Shape
 from agentic_cad import judge, ops, tone, trace, verify
 from agentic_cad import visual_hull as vh
 
-MAX_OPS = 24               # cuts tried per case, the most confident first
+MAX_OPS = 24               # cuts tried per round, the most confident first
+# rounds of the loop: propose, cut and judge, show the model the result; 1 is the single request
+ROUNDS = int(os.environ.get("HULL_MODEL_ROUNDS", 3))
 MAX_ROWS = 25              # regions per view in the table sent, the largest first
 DEPTHS = (0.5, 0.75, 1.0, 1.25)   # of a proposed depth: tried shallowest first, the first accepted one is kept
 MIN_EXCESS = 1.02          # nothing is asked about a solid within this of the part's volume
@@ -179,9 +183,59 @@ def parse(text: str | None) -> list[dict]:
     return []
 
 
-def proposals(step, case_dir: Path, evidence, solid: TopoDS_Shape, ratio: float | None, answers: list | None = None) -> list[dict]:
+def feedback(outcomes: list[dict], evidence, rows: list[dict], ratio: float | None, solid: TopoDS_Shape) -> dict:
+    """The user turn after a round: what became of each proposal, our solid as it is now, the region
+    table on it, and the question for the next round."""
+    lines = []
+    for op in outcomes:
+        where = f"{op.get('view', '?')} region {op.get('region', '?')}" if "view" in op else op.get("type", "?")
+        lines.append(f"- {where}: {op['outcome']}")
+    text = ["Result of your proposals (the cuts are judged against the views; you cannot override that):",
+            *lines]
+    if ratio is not None and TELL_VOLUME:
+        text.append(f"\nOur solid now holds {ratio:.2f} times the part's true volume.")
+    text += ["\nRegions on our solid as it is now:\n" + json.dumps(table_for_model(rows, evidence)),
+             "\nCompare the part's isometric views of the first message with OUR SOLID as it is now (below). "
+             "List the recesses still missing, in the same JSON form. A region that was refused may be "
+             "proposed again only if you now have a different reason. If nothing is left: {\"recesses\": []}."]
+    content = [{"type": "text", "text": "\n".join(text)}]
+    for name in verify.CAMERAS:
+        if name in evidence.observed and name not in evidence.marked():
+            content += [{"type": "text", "text": f"OUR SOLID now, from the camera of {name}:"}, _image(shaded(evidence, solid, name))]
+    return {"role": "user", "content": content}
+
+
+def _drop_old_images(conversation: list[dict]) -> None:
+    """Pictures of our solid from earlier rounds are stale and fill the context: keep the first user
+    turn whole and the last one's pictures, replace the others' by a note."""
+    users = [i for i, turn in enumerate(conversation) if turn["role"] == "user"]
+    for i in users[1:-1]:
+        content = conversation[i]["content"]
+        if isinstance(content, list):
+            conversation[i]["content"] = [part if part.get("type") != "image_url" else {"type": "text", "text": "[older picture removed]"}
+                                          for part in content]
+
+
+def clean_ops(step, raw: list[dict], start: int = 1) -> list[dict]:
+    """The normalised ops, the most confident first, at most MAX_OPS."""
+    clean = []
+    for number, record in enumerate(raw, start):
+        try:
+            op = ops.normalise(record)
+        except (ValueError, KeyError, TypeError) as error:
+            step.log(f"op {record.get('id', number)!r} cannot be read: {error!r}", level="warning")
+            continue
+        if op["id"] == "?":
+            op["id"] = f"op{number}"
+        clean.append(op)
+    return sorted(clean, key=lambda op: -op["confidence"])[:MAX_OPS]
+
+
+def proposals(step, case_dir: Path, evidence, solid: TopoDS_Shape, ratio: float | None, answers: list | None = None,
+              conversation: list | None = None) -> list[dict]:
     """The normalised ops for this case, the most confident first, at most MAX_OPS. A model's answer
-    is also appended to `answers`, if a tool gave a list (tools/check_judge.py)."""
+    is also appended to `answers`, if a tool gave a list (tools/check_judge.py). With `conversation`
+    (an empty list) the request and the answer are left in it for the rounds that follow."""
     folder = replay_dir()
     if folder is not None:
         path = folder / f"{case_dir.name}.json"
@@ -192,21 +246,14 @@ def proposals(step, case_dir: Path, evidence, solid: TopoDS_Shape, ratio: float 
         answer = ask(request)
         if answer is not None:
             step.attach("answer.txt", answer)
+            if conversation is not None:
+                conversation += request + [{"role": "assistant", "content": answer}]
         if answers is not None:
             answers.append(answer)
         raw = parse(answer)
-    clean = []
-    for number, record in enumerate(raw, 1):
-        try:
-            op = ops.normalise(record)
-        except (ValueError, KeyError, TypeError) as error:
-            step.log(f"op {record.get('id', number)!r} cannot be read: {error!r}", level="warning")
-            continue
-        if op["id"] == "?":
-            op["id"] = f"op{number}"
-        clean.append(op)
+    clean = clean_ops(step, raw)
     step.metric(proposed=len(raw), readable=len(clean))
-    return sorted(clean, key=lambda op: -op["confidence"])[:MAX_OPS]
+    return clean
 
 
 # -- applying ----------------------------------------------------------------------------------------
@@ -224,7 +271,8 @@ def apply(agent, solid: TopoDS_Shape, case_dir: Path | None, views: list[Path]) 
             step.log("the solid already has the part's volume; nothing to ask")
             return solid
         evidence = agent.evidence(case_dir, dims)
-        pending = proposals(step, case_dir, evidence, solid, ratio, getattr(agent, "answers", None))
+        conversation: list[dict] = []
+        pending = proposals(step, case_dir, evidence, solid, ratio, getattr(agent, "answers", None), conversation)
         if not pending:
             step.log("no cut was proposed")
             return solid
@@ -326,28 +374,61 @@ def apply(agent, solid: TopoDS_Shape, case_dir: Path | None, views: list[Path]) 
                 return carved
             return None
 
-        # Twice: a cut that showed nothing against the solid can show clearly once the recess above
-        # it is open (docs/plan-pipeline.md, practice 7)
-        for _ in range(2):
-            refused, before = [], len(kept)
-            for op in pending:
-                if agent.out_of_time():
-                    step.log("out of time for this case; the remaining proposals are not tried", level="warning")
-                    refused = []
+        def run(batch: list[dict]) -> tuple[list[dict], list[dict]]:
+            """The batch on `current`, twice: a cut that showed nothing against the solid can show
+            clearly once the recess above it is open (docs/plan-pipeline.md, practice 7)."""
+            nonlocal current
+            done, todo = [], batch
+            for _ in range(2):
+                refused, before = [], len(done)
+                for op in todo:
+                    if agent.out_of_time():
+                        step.log("out of time for this case; the remaining proposals are not tried", level="warning")
+                        return done, todo
+                    carved = attempt(current, op)
+                    if carved is None:
+                        refused.append(op)
+                    else:
+                        current, done = carved, done + [op]
+                todo = refused
+                if not todo or len(done) == before:
                     break
-                carved = attempt(current, op)
-                if carved is None:
-                    refused.append(op)
-                else:
-                    current, kept = carved, kept + [op]
-            pending = refused
-            if not pending or len(kept) == before:
+            return done, todo
+
+        # The loop: the model sees what became of its proposals and our solid as it is now, and
+        # proposes again, until it has nothing left, a round keeps nothing, or the rounds or the
+        # case's time run out. The judge decides every cut; the model only proposes.
+        done, pending = run(pending)
+        kept += done
+        tried = [{**op, "round": 1, "outcome": report.get(op["id"], "not tried")} for op in done + pending]
+        for number in range(2, ROUNDS + 1):
+            if not conversation or not done or agent.out_of_time():
                 break
-        outcomes = [{**op, "outcome": report.get(op["id"], "not tried")} for op in kept + pending]
+            ratio = vh.volume(current) / target if target else None
+            if ratio is not None and ratio < MIN_EXCESS:
+                break
+            _drop_old_images(conversation)
+            conversation.append(feedback(tried[-len(done + pending):], evidence, evidence.rows(current), ratio, current))
+            answer = ask(conversation)
+            if answer is None:
+                break
+            step.attach(f"answer_round{number}.txt", answer)
+            conversation.append({"role": "assistant", "content": answer})
+            batch = clean_ops(step, parse(answer), start=100 * number)
+            for op in batch:
+                op["id"] = f"r{number}_{op['id']}"
+            step.log(f"round {number}: {len(batch)} proposal(s)")
+            if not batch:
+                break
+            done, pending = run(batch)
+            kept += done
+            tried += [{**op, "round": number, "outcome": report.get(op["id"], "not tried")} for op in done + pending]
+        step.metric(rounds=max((op["round"] for op in tried), default=1))
+        outcomes = tried
         step.attach("ops.json", outcomes)
         if getattr(agent, "answers", None) is not None:
             agent.answers.append(outcomes)
-        step.metric(kept=len(kept), refused=len(pending))
+        step.metric(kept=len(kept), refused=len(outcomes) - len(kept))
         if not kept:
             step.log("no proposed cut was kept")
             return solid

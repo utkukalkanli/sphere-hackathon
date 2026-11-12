@@ -18,10 +18,14 @@ reasons in `decisions.md`.
   medium 0.9260, complex 0.7584); practice parts 1, 2, 3, 4 within 3 % of the true volume, 8 at
   1.06, 5 at 1.19 (with `bowls`), 9 at 1.2, 7 at 1.42 (with `cavities`), 6 at 2.8, each case run
   alone. The eval sample has not been run with `bowls` or `cavities`.
-- **All 9 practice parts, cases in parallel (4 workers, hard stop 18.5 min), `TRACE_EVIDENCE=0`,
-  Windows PC, 2026-11-12 18:47 (run `20261112-184700-3b53`): 699 s, all files valid, score 0.8463**:
-  1 1.003, 2 1.018, 3 1.000, 4 1.028, 5 1.191, 6 2.766, 7 1.445, 8 1.063, 9 1.205. Only 7 (shading
-  stopped, pockets skipped) and 9 (split) reached their share. Slowest case 9, 597 s.
+- **All 9 practice parts, base without the model, cases in parallel (4 workers, hard stop 18.5
+  min), `TRACE_EVIDENCE=0`, Windows PC, `uzum` f5fdfe2, 2026-11-12 21:45 (run
+  `20261112-214459-base`): 724 s, all files valid, volume score 0.9203**: 1 1.003, 2 1.018, 3
+  1.000, 4 1.028, 5 1.115, 6 1.000 (hidden void: the volume is matched by construction), 7 1.509,
+  8 1.063, 9 1.205. Before the hidden void step (18:47): 0.8463.
+- **Model loop** (uncommitted on `uzum`): `propose.py` asks up to `HULL_MODEL_ROUNDS` (3) times in one
+  conversation, telling the model each round what was kept or refused and showing our solid anew.
+  Endpoint: Gemma 4 31B through `ssh -N sphere-gpu` (`.env`). Not yet run on a part.
 - **Eval sample, 24 parts, sampled IoU, `uzum` 8218a17's code minus the flat guard (= b4d6310), Windows
   PC, 2026-11-12 20:56, 1764 s with 4 workers: 0.8760** (simple 0.9943, medium 0.9260, complex
   0.7078), against `main`'s 0.8929 measured on the ARM laptop. The gap is mostly the machine: 51
