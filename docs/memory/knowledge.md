@@ -336,3 +336,10 @@ Dashboard:
   grooves are much deeper than ours. An earlier note here took a hidden void as the cause; that
   was wrong. Inward `MakeThickSolidByJoin` on our finned solid fails anyway (invalid at 4 mm,
   fails at 6 mm).
+- **Practice 6's top view is an 18-point star** (2026-11-12, `uzum`, Hough lines on tone edges):
+  tips every 20 degrees at r 70 (the flange's outer circle), groove bottoms between them at r 51,
+  straight radial lines from both down to the cap circle at r 36.4. A prototype that cut 18 V
+  wedges (each wall a plane through the crease line, r 51 at z 27.5 to r 36.4 at z 109, and the
+  next tip's point on the cap circle) removed only 119 cm3 (3.30 to 2.99 times the true volume),
+  left slivers instead of the render's deep triangles, and lowered the verifier (0.235 to 0.183):
+  the walls are not those planes. Not in the pipeline.
