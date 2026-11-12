@@ -11,7 +11,12 @@ part is round there:
 
 - "boss": facts.json lists a boss of that radius on this axis, around that position;
 - "turned": seen along the axis the part is a disc centred on it, and facts.json has only faces a
-  lathe makes (planes, cylinders, cones, tori, spheres).
+  lathe makes (planes, cylinders, cones, tori, spheres);
+- "disc": seen along the axis the part is a disc centred on it, but it has other faces too (fins or
+  grooves on a cone, practice part 6). This alone does not make a section round: a square body under
+  a round flange looks the same. So it is cut separately, after the others, and kept only if the
+  lines of the views fit the result at least as well as before: the corner edges of a square section
+  that the views do not draw go away, those they do draw would be lost.
 
 The profile that is revolved is the fitted outline of one side view, so cylinders, cones and tori
 come out as such. The caller accepts the result only if the verifier does not rate it lower.
@@ -46,11 +51,14 @@ from agentic_cad import visual_hull as vh
 TOLERANCE_PX = 1.5     # how far two views, or a view and facts.json, may disagree
 MIN_SPAN_PX = 3.0      # shorter stretches along the axis are not worth a cut
 SAMPLES = 4096         # positions along the axis at which the two side views are compared
+DISC = os.environ.get("HULL_ROUNDS_DISC", "1") != "0"   # also propose round sections on the "disc" evidence
+NEARLY_ROUND = 0.03    # the two side views may differ by this share of the width where only the disc speaks for round
 DISC_OVERLAP = 0.985   # the end view counts as a disc when it overlaps one this well
 LATHE_FACES = {"PLANE", "CYLINDER", "CONE", "TORUS", "SPHERE"}
 MAX_AXES = 24          # more axis lines than this are not looked at (largest bosses first)
 TIMEOUT = float(os.environ.get("HULL_ROUNDS_TIMEOUT", 40))
 SCORE_SLACK = 0.003    # the verifier's score may drop by this much through a cut and still pass
+LINES_SLACK = 0.002    # ... and its line term, for a cut that only the disc seen along the axis speaks for
 
 
 @dataclass
@@ -60,7 +68,7 @@ class Round:
     silhouette: vh.Silhouette         # the side view whose outline is revolved
     spans: list[tuple[float, float]]  # stretches along the axis (mm) to make round
     reach: float                      # half-width of the square that is cut down, a little more than the profile
-    evidence: str                     # "boss" or "turned"
+    evidence: str                     # "boss", "turned" or "disc"
 
 
 def _profile(silhouette: vh.Silhouette, axis: str, dims: dict[str, float]):
@@ -179,41 +187,55 @@ def find(case_dir: Path, views: list[Path], dims: dict[str, float]) -> list[Roun
         low_0, high_0, low_1, high_1 = (
             operation(w.astype(np.float32).reshape(-1, 1), window, borderType=cv2.BORDER_REPLICATE).ravel()
             for w in widths for operation in (cv2.erode, cv2.dilate))
+        # for the "disc" evidence below: the views may differ by a little more, as they do where fins
+        # stand on a round body (practice part 6: 1 mm in 60)
+        slack = np.maximum(tolerance, NEARLY_ROUND * np.maximum(widths[0], widths[1]))
+        loose = valid & (low_0 <= high_1 + slack) & (low_1 <= high_0 + slack)
         valid &= (low_0 <= high_1 + tolerance) & (low_1 <= high_0 + tolerance)
-        if not valid.any():
+        if not loose.any():
             continue
         width = (widths[0] + widths[1]) / 2
         position = grid * dims[axis]
 
         accepted = np.zeros(SAMPLES, bool)
-        evidence = "boss"
         for radius, start, stop in line["bosses"]:
             accepted |= valid & (np.abs(width - radius) <= tolerance) & (position >= start - tolerance) & (position <= stop + tolerance)
-        if lathe_only and end is not None and all(abs(c.axis[letter_index[axis]]) > 0.9999 for c in bosses):
+        versions = [(accepted, "boss")]
+        if end is not None and all(abs(c.axis[letter_index[axis]]) > 0.9999 for c in bosses):
             spec = vh.ORTHO[end.name]
             centre = (line["position"][spec["u"]], line["position"][spec["v"]])
-            if _is_disc(end, centre, float(width[valid].max()), dims):
-                accepted, evidence = valid.copy(), "turned"
-        if not accepted.any():
-            continue
+            if _is_disc(end, centre, float(np.maximum(widths[0], widths[1])[loose].max()), dims):
+                if lathe_only and valid.any():
+                    versions = [(valid.copy(), "turned")]
+                elif DISC and (loose & ~accepted).any():
+                    # Seen along the axis the part is a disc, but it has faces a lathe does not make:
+                    # everything the two side views nearly agree on is proposed as a second, weaker cut
+                    versions.append((loose & ~accepted, "disc"))
 
-        # revolve the outline of the sharper of the two side views
-        chosen = side[int(np.argmin([p[3] for p in profiles]))]
         pixel = min(p[3] for p in profiles)
-        corners = _corner_positions(chosen, axis)
-        spans = []
-        for first, last in _stretches(accepted):
-            start, stop = float(position[first]), float(position[last])
-            if len(corners):
-                for value in (start, stop):
-                    nearest = float(corners[np.argmin(np.abs(corners - value))])
-                    if abs(nearest - value) <= TOLERANCE_PX * pixel:
-                        start, stop = (nearest, stop) if value == start else (start, nearest)
-            if stop - start >= MIN_SPAN_PX * pixel:
-                spans.append((max(0.0, start), min(dims[axis], stop)))
-        if spans:
-            rounds.append(Round(axis, dict(line["position"]), chosen, spans,
-                                float(width[accepted].max()) + 4 * tolerance, evidence))
+        for accepted, evidence in versions:
+            if not accepted.any():
+                continue
+            # Revolve the outline of the sharper of the two side views; for the disc version that of
+            # the wider one, so that nothing either view shows is cut.
+            if evidence == "disc":
+                chosen = side[int(np.argmax([w[accepted].mean() for w in widths]))]
+            else:
+                chosen = side[int(np.argmin([p[3] for p in profiles]))]
+            corners = _corner_positions(chosen, axis)
+            spans = []
+            for first, last in _stretches(accepted):
+                start, stop = float(position[first]), float(position[last])
+                if len(corners):
+                    for value in (start, stop):
+                        nearest = float(corners[np.argmin(np.abs(corners - value))])
+                        if abs(nearest - value) <= TOLERANCE_PX * pixel:
+                            start, stop = (nearest, stop) if value == start else (start, nearest)
+                if stop - start >= MIN_SPAN_PX * pixel:
+                    spans.append((max(0.0, start), min(dims[axis], stop)))
+            if spans:
+                rounds.append(Round(axis, dict(line["position"]), chosen, spans,
+                                    float(np.maximum(widths[0], widths[1])[accepted].max()) + 4 * tolerance, evidence))
     return rounds
 
 
@@ -327,6 +349,8 @@ def apply(agent, solid: TopoDS_Shape, case_dir: Path | None, views: list[Path]) 
         target = vh.read_volume(case_dir)
         observed = verify.observe(case_dir, dims)
         before = verify.check(solid, case_dir, observed).score
+        weak = [r for r in rounds if r.evidence == "disc"]
+        rounds = [r for r in rounds if r.evidence != "disc"]
 
         def attempt(current, items, score, timeout):
             carved = agent._guarded(step, current, target, lambda: agent.cutter.run(cut_rounds, current, items, timeout), quiet=True)
@@ -338,7 +362,7 @@ def apply(agent, solid: TopoDS_Shape, case_dir: Path | None, views: list[Path]) 
                 return None, score
             return carved, after
 
-        carved, score = attempt(solid, rounds, before, TIMEOUT)
+        carved, score = attempt(solid, rounds, before, TIMEOUT) if rounds else (None, before)
         kept = len(rounds)
         if carved is None and len(rounds) > 1:
             step.log("cutting all axes at once was refused; trying one at a time")
@@ -348,6 +372,23 @@ def apply(agent, solid: TopoDS_Shape, case_dir: Path | None, views: list[Path]) 
                 if result is not None:
                     carved, kept = result, kept + 1
         if carved is None or kept == 0:
+            carved, kept = solid, 0
+        for item in weak[:3]:   # the sections only the disc speaks for: the views' lines must not fit worse
+            if agent.out_of_time():
+                break
+            current = carved
+            lines = verify.check(current, case_dir, observed).mean("lines")
+            result = agent._guarded(step, current, target, lambda: agent.cutter.run(cut_rounds, current, [item], TIMEOUT), quiet=True)
+            if result is None or vh.volume(result) >= vh.volume(current) * (1 - 1e-6):
+                continue
+            report = verify.check(result, case_dir, observed)
+            if report.mean("lines") < lines - LINES_SLACK or report.score < score - SCORE_SLACK:
+                step.log(f"round on the disc's word alone: the lines fit worse ({lines:.3f} to {report.mean('lines'):.3f}); not kept",
+                         level="warning")
+                continue
+            step.log(f"made round on the disc's word: lines {lines:.3f} to {report.mean('lines'):.3f}")
+            carved, score, kept = result, report.score, kept + 1
+        if kept == 0:
             step.log("nothing was made round")
             return solid
         step._status = None

@@ -26,6 +26,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 EVAL = ROOT / "datasets" / "eval"
+CACHE = ROOT / "runs" / "_shading_cache"   # our solid after steps 1 to 4, written by tools/check_shading.py
 KINDS = ("facing", "slanted", "curved")
 COLOURS = {"facing": (150, 150, 150), "slanted": (230, 140, 40), "curved": (40, 150, 240)}  # BGR
 FLAT_DEG = 3.0
@@ -59,6 +60,16 @@ def run(job: dict) -> dict:
         dims = dict(zip("xyz", vh.read_dimensions(case)))
         observed = verify.observe(case, dims)
         found = regions.find(observed)
+        # the second opinion from the isometric view needs a solid: ours after the earlier steps
+        solved = {}
+        cached = CACHE / f"{'practice_' if practice else ''}{name}.brep"
+        if cached.is_file():
+            from agentic_cad import normals, shading
+            ours = vh.largest_solid(vh.read_brep(str(cached)))
+            drawings = shading.Drawings(ours, observed, dims)
+            for view, entries in normals.refine(found, observed, drawings, dims).items():
+                for item, second, answer in entries:
+                    solved[view, item.label] = (second, answer)
         mesh = None
         if not practice:
             mesh = verify.tessellate(check_normals.truth(name), 0.3 * min(o.mm_per_px for o in observed.values()), ANGULAR)
@@ -71,11 +82,26 @@ def run(job: dict) -> dict:
                 clear = ~(cv2.dilate(drawing.edges.astype(np.uint8), np.ones((5, 5), np.uint8)) > 0)
             for item in items:
                 row = {"case": name, **item.summary()}
+                second, answer = solved.get((view, item.label), (None, None))
+                row["kind2"] = answer.kind if answer and answer.kind else item.kind   # after the isometric view had its say
+                row["read"] = second is not None
+                row["judged"] = answer is not None and answer.kind is not None
+                row["compared"] = answer is not None
+                if answer:
+                    row["tilt2"], row["normal2"] = answer.tilt, [float(v) for v in answer.normal]
+                    row["solid_off"] = float(np.degrees(np.arccos(np.clip(second.solid_normal @ answer.normal, -1, 1))))
+                    row["solid_bend"] = second.solid_bend
+                    row["misfit2"], row["facing_misfit2"] = answer.misfit, answer.facing_misfit
+                    row["guess_misfit"] = answer.guess_misfit
                 if mesh is not None:
                     pixels = (labels == item.label) & drawing.mask & clear
                     if pixels.sum() < 50:
                         continue  # the ground truth shows no face there to compare with
                     row["true"], row["tilt"], row["bend"] = true_kind(drawing.normal[pixels] @ frame.T)
+                    if answer:   # how far the solved normal is from the true one
+                        mean = drawing.normal[pixels].mean(axis=0)
+                        mean /= max(float(np.linalg.norm(mean)), 1e-9)
+                        row["off"] = float(np.degrees(np.arccos(np.clip(mean @ answer.normal, -1, 1))))
                 rows.append(row)
             if job["save"]:
                 picture = seen.image.copy()
@@ -89,7 +115,8 @@ def run(job: dict) -> dict:
         return {"name": name, "error": repr(error), "trace": traceback.format_exc()}
 
 
-def table(rows: list[dict], weight) -> None:
+def table(rows: list[dict], weight, key: str = "kind") -> None:
+    rows = [dict(r, kind=r[key]) for r in rows]
     total = sum(weight(r) for r in rows) or 1
     print(f"{'really':>10} |" + "".join(f"{'called ' + k:>16}" for k in KINDS) + f"{'share':>8}")
     for true in KINDS:
@@ -134,9 +161,14 @@ def main() -> None:
         for name in names:
             mine = [r for r in rows if r["case"] == name]
             area = sum(r["area_px"] for r in mine) or 1
+            flat = [r for r in mine if r["kind"] != "curved"]
+            confirmed = [r for r in flat if r["judged"]]
+            changed = sum(r["kind2"] != r["kind"] for r in confirmed)
             print(f"{name:14}" + "".join(
                 f"{sum(r['kind'] == k for r in mine):>9}{sum(r['area_px'] for r in mine if r['kind'] == k) / area:>9.0%}"
-                for k in KINDS))
+                for k in KINDS) + f"   flat regions confirmed by the isometric view: {len(confirmed)} of {len(flat)} "
+                f"({sum(r['area_px'] for r in confirmed) / max(1, sum(r['area_px'] for r in flat)):.0%} of their area), "
+                f"{changed} change kind")
         return
 
     print(f"{len(rows)} regions of {len(names)} cases\n\nby number of regions:")
@@ -146,6 +178,33 @@ def main() -> None:
     print("\nright, by area, per tier: " + ", ".join(
         f"{tier} {sum(r['area_px'] for r in rows if tiers[r['case']] == tier and r['kind'] == r['true']) / max(1, sum(r['area_px'] for r in rows if tiers[r['case']] == tier)):.1%}"
         for tier in ("simple", "medium", "complex")))
+    flat = [r for r in rows if r["kind"] != "curved"]
+    judged = [r for r in flat if r["judged"]]
+    print(f"\nwith the isometric view (solid from {CACHE.name}): of {len(flat)} flat regions "
+          f"{sum(r['read'] for r in flat)} could be read there, {sum(r['compared'] for r in flat)} evenly, and for {len(judged)} the two tones confirm the solid's face "
+          f"({sum(r['area_px'] for r in judged) / max(1, sum(r['area_px'] for r in flat)):.0%} of the flat area)")
+    print("by area, after it:")
+    table(rows, lambda r: r["area_px"], "kind2")
+    print("by number of regions, after it:")
+    table(rows, lambda r: 1, "kind2")
+    for label, group in (("judged regions that are really facing", [r for r in judged if r["true"] == "facing"]),
+                         ("judged regions that are really slanted", [r for r in judged if r["true"] == "slanted"])):
+        if group:
+            before = sum(r["kind"] == r["true"] for r in group)
+            after = sum(r["kind2"] == r["true"] for r in group)
+            print(f"  {label}: {len(group)}, right before {before}, after {after}")
+    slanted = [r for r in judged if r["true"] == "slanted" and r["kind2"] == "slanted"]
+    if slanted:
+        print(f"  normal of the {len(slanted)} really slanted regions called slanted: off by "
+              f"{np.median([r['off'] for r in slanted]):.0f} degrees (median), "
+              f"{np.percentile([r['off'] for r in slanted], 90):.0f} (9 in 10)")
+    if args.verbose:
+        print("\nflat regions compared with the isometric view and not called facing: really, tilt, tilt of the normal given, "
+              "that normal off the truth, off the solid's own normal, misfit of the solid's normal and of facing")
+        for r in sorted((r for r in flat if r["compared"] and not (r["judged"] and r["kind2"] == "facing")), key=lambda r: -r["area_px"]):
+            print(f"  {r['case']:14}{r['view']:8}{r['area_px']:>8} px  really {r['true']:8} tilt {r['tilt']:5.1f}  solved {r['tilt2']:4.0f}"
+                  f"  off truth {r.get('off', float('nan')):4.0f}  off solid {r['solid_off']:4.0f} (bend {r['solid_bend']:3.0f})"
+                  f"  misfit {r['misfit2']:5.1f} facing {r['facing_misfit2']:5.1f}  {'confirmed' if r['judged'] else 'not confirmed'}")
     wrong = sorted((r for r in rows if r["kind"] != r["true"]), key=lambda r: -r["area_px"])
     print("\nthe wrong ones, by what they are and what they were called (regions, median tilt, median bend in degrees):")
     for true in KINDS:
@@ -157,7 +216,11 @@ def main() -> None:
     if args.verbose:
         for r in wrong:
             print(f"  {r['case']:14}{r['view']:8}{r['area_px']:>8} px  really {r['true']:8} called {r['kind']:8}"
-                  f" tone {r['tone']:>3} spread {r['spread']:>3}  tilt {r['tilt']:5.1f}  bend {r['bend']:5.1f}")
+                  f" tone {r['tone']:>3} spread {r['spread']:>3}  tilt {r['tilt']:5.1f}  bend {r['bend']:5.1f}"
+                  f"  then {r['kind2']:8}" + (f" tilt {r['tilt2']:4.0f} off {r.get('off', float('nan')):4.0f}" if r["judged"] else " (not confirmed)"))
+        print("\nright before, wrong after the isometric view:")
+        for r in sorted((r for r in rows if r["kind"] == r["true"] != r["kind2"]), key=lambda r: -r["area_px"]):
+            print(f"  {r['case']:14}{r['view']:8}{r['area_px']:>8} px  really {r['true']:8} tone {r['tone']:>3}  then {r['kind2']:8} tilt {r['tilt2']:4.0f}")
 
 
 if __name__ == "__main__":

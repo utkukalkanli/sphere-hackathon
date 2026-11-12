@@ -45,6 +45,7 @@ from OCP.gp import gp_Ax1, gp_Dir, gp_Pnt
 from OCP.TopoDS import TopoDS_Shape
 from OCP.collections import List_TopoDS_Shape
 
+from agentic_cad import export
 from agentic_cad import holes as hl
 from agentic_cad import regions, tone, trace, verify
 from agentic_cad import visual_hull as vh
@@ -406,7 +407,8 @@ def _tool(dish: Dish) -> TopoDS_Shape:
 
 
 def cut_dishes(shape: TopoDS_Shape, dishes: list[Dish]) -> TopoDS_Shape | None:
-    """Cut the recesses out of `shape`. One valid solid, or None. Runs in a child process."""
+    """Cut the recesses out of `shape`. One solid that is valid and still is once written and read
+    back, or None. Runs in a child process."""
     tools = List_TopoDS_Shape()
     for dish in dishes:
         tools.Append(_tool(dish))
@@ -421,7 +423,8 @@ def cut_dishes(shape: TopoDS_Shape, dishes: list[Dish]) -> TopoDS_Shape | None:
     solid = vh.largest_solid(operation.Shape())
     if solid is None or vh.volume(solid) <= 0 or not BRepCheck_Analyzer(solid).IsValid():
         return None
-    return solid
+    # a revolved face can be valid here and broken in the file (practice part 4 after the rounds)
+    return solid if export.reads_back_valid(solid) else None
 
 
 def apply(agent, solid: TopoDS_Shape, case_dir: Path | None, views: list[Path]) -> TopoDS_Shape:

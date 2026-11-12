@@ -23,6 +23,8 @@ from agentic_cad import verify
 MIN_REGION_PX = 250    # smaller areas are not judged
 EDGE_PX = 2            # pixels this close to a line are not read: the line darkens them
 TONE_JUMP = 24         # neighbouring pixels this far apart in tone lie on two faces
+DARK_LINE_MIN = 8      # a line on a dark face is at least this many levels darker than both sides
+DARK_LINE_SHARE = 0.15 # ... and this share of their tone
 FLAT_SPREAD = 5        # the tones of a flat face stay within this many grey levels (8th to 92nd percentile)
 MAX_FALLOFF = 8        # grey levels the uneven light on a flat face may explain, over half the image
 FACING_TOLERANCE = 4   # a flat face square to the camera is this close to the facing tone
@@ -56,7 +58,13 @@ def segment(observed: verify.Observed) -> tuple[np.ndarray, np.ndarray]:
     jump = np.zeros(tones.shape, bool)
     jump[:, :-1] |= np.abs(np.diff(tones, axis=1)) >= TONE_JUMP
     jump[:-1, :] |= np.abs(np.diff(tones, axis=0)) >= TONE_JUMP
-    open_area = (observed.mask & ~observed.lines & ~jump).astype(np.uint8)
+    # Between two dark faces a line is less than the 28 levels darker that verify.find_lines asks
+    # for (practice part 6, the flanks of the fins: tone 55, line 30). It is still far darker than
+    # both sides for its own tone: a third of what a small closing fills in.
+    bright = observed.image.max(axis=2)
+    closed = cv2.morphologyEx(bright, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8)).astype(np.int16)
+    faint = (closed - bright >= np.maximum(DARK_LINE_MIN, DARK_LINE_SHARE * closed)) & observed.mask
+    open_area = (observed.mask & ~observed.lines & ~jump & ~faint).astype(np.uint8)
     _, labels, stats, _ = cv2.connectedComponentsWithStats(open_area, connectivity=4)
     return labels, stats
 
