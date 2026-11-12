@@ -23,6 +23,11 @@ DEFAULT_OUTPUTS = REPO_ROOT / "artifacts/outputs"
 # The organisers stop the whole run after 20 minutes; main() shares this much of it among the cases.
 # A case with less than MIN_CASE_SECONDS left for its hull keeps its bounding box.
 RUN_BUDGET = float(os.environ.get("HULL_RUN_BUDGET", 17 * 60))
+# A case's deadline is only checked before each step, so a step started just before it can run on
+# (the 9 practice parts took 17.5 minutes with a 17 minute budget). At this point the main process
+# stops every worker and ends the run: every file on disk is already a valid solid (export.checkpoint
+# puts it in place with one rename), so only the steps still running are lost.
+HARD_STOP = float(os.environ.get("HULL_HARD_STOP", 18.5 * 60))
 MIN_CASE_SECONDS = 5.0
 
 
@@ -173,10 +178,12 @@ def main(args):
         jobs = [(tc, str(outputs[tc.name]), run_dir, started, len(order), workers) for tc in order]
         print(f"processing {len(jobs)} test cases, {workers} at a time")
         counter = multiprocessing.get_context("spawn").Value("i", 0)
-        with ProcessPoolExecutor(workers, mp_context=multiprocessing.get_context("spawn"),
-                                 initializer=_init_worker, initargs=(counter,)) as pool:
+        pool = ProcessPoolExecutor(workers, mp_context=multiprocessing.get_context("spawn"),
+                                   initializer=_init_worker, initargs=(counter,))
+        stopped = False
+        try:
             futures = {pool.submit(run_case, job): job[0].name for job in jobs}
-            for future in as_completed(futures):
+            for future in as_completed(futures, timeout=max(HARD_STOP - (time.time() - started), 1.0)):
                 name = futures[future]
                 try:
                     name, result = future.result()
@@ -187,6 +194,17 @@ def main(args):
                 if results.get(name) != "failed" or result == "ok":
                     results[name] = result
                 print(f"{name}: {result}")
+        except TimeoutError:
+            stopped = True
+            unfinished = sorted(name for future, name in futures.items() if not future.done())
+            print(f"the run reached its hard stop ({HARD_STOP:.0f} s); stopping {unfinished}, "
+                  "their last checkpointed files stay")
+            for name in unfinished:
+                results[name] = "stopped"
+            for process in list(getattr(pool, "_processes", {}).values()):
+                process.terminate()   # SIGTERM: the worker exits and takes its boolean child with it
+        finally:
+            pool.shutdown(wait=not stopped, cancel_futures=True)
 
     problems = {name: result for name, result in results.items() if result != "ok"}
     if problems:
