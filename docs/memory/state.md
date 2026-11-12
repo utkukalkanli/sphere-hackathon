@@ -32,6 +32,7 @@ reasons in `decisions.md`.
 | model (`model_cuts`) | `propose.py`, `ops.py`, `judge.py` | off unless `OPENAI_BASE_URL` and `OPENAI_MODEL` are set; `HULL_PROPOSALS=<dir>` replays files | never measured against ground truth (below) |
 | shading (`shading_depth`) | `shading.py` | `HULL_SKIP=shading`, `HULL_SHADING_SLANTED=0`, `HULL_SHADING_DEEP=0` | IoU 0.854 to 0.861 (110: 0.79 to 0.86, 236: 0.70 to 0.73), none lower |
 | pockets (`cut_pockets`) | `pockets.py`, `lines.py` | `HULL_SKIP=pockets` | eval 236 1.354 to 1.254 times the true volume (IoU 0.740 to 0.796); 22 of 24 untouched, none lower |
+| hole count (`hole_count`) | `hole_count.py` | `HULL_HOLE_COUNT=0`, `HULL_SKIP=holecount` | the stated number of through-holes on 20 of the 24 instead of 17 (38, 212, 171 right, 123 13 of 14), none worse, sampled IoU 0.8928 to 0.8925; practice 8 of 9 instead of 6 (4: 1 to 0, 5: 6 to 15; 8 stays 9 of 11); 0 to 8 s a part, whole practice run 11 min 20 s (2026-11-12) |
 | split (`split_faces`) | `split.py`, `lines.py` | `HULL_SKIP=split` | moves no material; splits faces on about 10 of the 24 |
 | export | `export.py` | | |
 
@@ -83,6 +84,12 @@ What each step does:
 - **Pockets.** A figure of lines inside one flat face of ours and under it (closed, or ending on
   other lines and closed straight across) is a pocket outline. Depth: where half of the outline
   lands on isometric lines and 0.25 more than at a usual depth.
+- **Hole count.** Counts the through-holes of the solid as it is written (genus from the topology, faces merged)
+  against `through_holes_genus`. First takes a hair of material (0.2 mm) away at every pinch: an edge more than
+  two faces share, or a point where two boundaries of one face touch; both count as holes that are not there.
+  Then, while the count is short, makes listed holes longer to where their axis leaves the material, thinnest
+  wall first, and keeps one only if the count rises, does not pass the stated one and no pinch is left (as
+  listed, then 0.05 mm wider and narrower). Cannot close a hole.
 - **Split.** A line of a straight view through the inside of one face of ours, confirmed by the
   isometric view to lie on our surface, is drawn on as an edge. No cap on the face count. Seams
   of full cylinders, cones and tori are left out. Runs last; the export then skips `tidy`.

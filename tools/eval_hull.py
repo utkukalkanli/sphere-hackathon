@@ -33,7 +33,7 @@ ROOT = Path(__file__).resolve().parents[1]
 EVAL = ROOT / "datasets" / "eval"
 SRC = ROOT / "src" / "agentic_cad"
 CACHE = ROOT / "runs" / "_eval_cache"
-STEPS = ["box", "front_back", "right_left", "top_bottom", "iso", "holes", "mouths", "rounds", "curved", "depth", "model", "shading", "pockets", "split"]
+STEPS = ["box", "front_back", "right_left", "top_bottom", "iso", "holes", "mouths", "rounds", "curved", "depth", "model", "shading", "pockets", "hole_count", "split"]
 IOU_POINTS = 1500
 
 
@@ -96,6 +96,7 @@ def evaluate(job: dict) -> dict:
     from OCP.TopAbs import TopAbs_FACE
     from OCP.TopExp import TopExp_Explorer
 
+    from agentic_cad import hole_count
     from agentic_cad import mouths
     from agentic_cad import visual_hull as vh
     from agentic_cad.hull_agent import VisualHullAgent
@@ -128,7 +129,9 @@ def evaluate(job: dict) -> dict:
             faces += 1
             explorer.Next()
         row = {"name": name, "true": vh.read_volume(case), "volumes": agent.volumes, "faces": faces,
-               "seconds": round(time.time() - started, 2)}
+               "seconds": round(time.time() - started, 2),
+               # through-holes of the solid as it is written, and the number facts.json states
+               "holes": hole_count.genus(solid if agent.keep_faces else vh.tidy(solid)), "holes_stated": hole_count.stated(case)}
         if options["iou"]:
             row["iou"] = round(sampled_iou(solid, name, vh.read_dimensions(case)), 4)
     except Exception as error:
@@ -211,6 +214,10 @@ def main() -> None:
 
     worst = sorted(rows, key=lambda r: scores(r)[-1])[:5]
     print("\nlowest:", ", ".join(f"{r['name'].removeprefix('test_case_')} ({scores(r)[-1]:.2f})" for r in worst))
+    wrong = [r for r in rows if r.get("holes_stated") is not None and r.get("holes") != r["holes_stated"]]
+    print(f"through-holes: {len(rows) - len(wrong)} of {len(rows)} cases have the stated number"
+          + (": wrong on " + ", ".join(f"{r['name'].removeprefix('test_case_')} ({r['holes']} for {r['holes_stated']})"
+                                       for r in wrong) if wrong else ""))
     over = [r for r in rows if list(r["volumes"].values())[-1] < 0.985 * r["true"]]
     if over:
         print("cut below the true volume:", ", ".join(r["name"] for r in over))

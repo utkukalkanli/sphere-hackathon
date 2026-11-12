@@ -320,3 +320,12 @@ Dashboard:
 - The section needs no cap geometry: clipped pixels showing the inside of the skin are the cut
   face. That needs outward winding; occt-import-js returns some solids wound inwards, so the
   worker flips a mesh with negative signed volume.
+- **A pinch counts as a through-hole** (2026-11-12). The genus from the topology (V - E + F - inner loops) rises
+  where two bodies touch in one edge or one point without a hole being there. The rounds step leaves such points:
+  a boss cut round that is tangent to a flat side of the hull (practice 4: two bosses, count 2, then 1 after the
+  faces are merged, for a part with 0). Healing (ShapeFix, sewing, a fuzzy boolean) does not remove them; cutting
+  0.2 mm away at the point does. On the leaderboard the pipeline without this scored 0.839 with practice 4, 5 and
+  8 at 1, 6 and 9 holes for 0, 15 and 11 (fdcc8c6). What the organisers' count makes of a pinch is not known.
+- **Practice 8 keeps 9 of 11 holes**: the two 4 mm holes along z that are missing touch the 6 mm cross holes;
+  cut as listed they leave pinched edges that are not straight, cut 0.05 mm wider or narrower the result is not a
+  valid solid. The step's own count on the merged solid says 11 there (4 pinches), the file read back says 9.
