@@ -32,6 +32,9 @@ RETRY_BUDGET = float(os.environ.get("HULL_RETRY_BUDGET", 20))
 # Steps after the holes, in order; HULL_SKIP=rounds,curved,depth,shading switches some off
 LATER_STEPS = {"rounds": rounds, "curved": curved, "depth": depth, "shading": shading}
 SKIP_STEPS = {name for name in os.environ.get("HULL_SKIP", "").split(",") if name}
+# The name each later step gives its trace step, for the plan the dashboard shows before anything has run
+STEP_NAMES = {"rounds": "cut_rounds", "curved": "cut_curved", "depth": "level_faces", "shading": "shading_depth",
+              "pockets": "cut_pockets", "split": "split_faces"}
 
 
 class VisualHullAgent:
@@ -54,6 +57,7 @@ class VisualHullAgent:
 
     def generate_cad(self, prompt: str, views: list[Path], context: Path | None, output_path: Path) -> None:
         case_dir = views[0].parent.parent if views else None
+        trace.plan(self.planned())
         solid = self.build_hull(prompt, views)
         if self.use_holes:
             try:
@@ -66,14 +70,29 @@ class VisualHullAgent:
             vh.write_step(solid, output_path)
             step.metric(volume_cm3=round(vh.volume(solid) / 1000, 3))
 
+    def planned(self) -> list[dict]:
+        """Every step a case goes through, in order; "off" says why one is switched off for this run."""
+        steps = [{"name": "bounding_box"}, *({"name": f"cut_{name}"} for name in vh.ORTHO)]
+        steps.append({"name": "cut_iso"} if self.use_iso else {"name": "cut_iso", "off": "the isometric cut is switched off"})
+        steps.append({"name": "check_views"})
+        steps.append({"name": "cut_holes"} if self.use_holes else {"name": "cut_holes", "off": "the hole step is switched off"})
+        for name in LATER_STEPS:
+            step = {"name": STEP_NAMES.get(name, name)}
+            if name in SKIP_STEPS:
+                step["off"] = f"switched off with HULL_SKIP={name}"
+            steps.append(step)
+        return [*steps, {"name": "export_step"}]
+
     def refine(self, solid, case_dir: Path | None, views: list[Path], skip: tuple[str, ...] = ()):
         """The steps after the holes, each in its own module with an `apply(agent, solid, case_dir,
         views)`. A step that raises is skipped: the solid so far is still a valid answer."""
-        for name, module in LATER_STEPS.items():
-            if name in skip or name in SKIP_STEPS:
-                continue
+        names = [name for name in LATER_STEPS if name not in skip and name not in SKIP_STEPS]
+        for index, name in enumerate(names):
+            module = LATER_STEPS[name]
             if self.out_of_time():
                 trace.log(f"the case has used its share of the run's time; {name} and later steps are skipped", level="warning")
+                for late in names[index:]:
+                    trace.skipped(STEP_NAMES.get(late, late), "the case had used its share of the run's time")
                 break
             try:
                 solid = module.apply(self, solid, case_dir, views)

@@ -233,9 +233,8 @@ const viewportHTML = (id, label, tools = true) => `<div class="viewport" id="${i
   </div>` : ''}</div>`;
 
 // A panel that folds away under its title. Whether it is open is remembered.
-function dropHTML(id, title, body) {
-  let open = true;
-  try { open = localStorage.getItem(`drop-${id}`) !== 'closed'; } catch { /* private mode */ }
+function dropHTML(id, title, body, open = true) {
+  try { open = (localStorage.getItem(`drop-${id}`) || (open ? 'open' : 'closed')) !== 'closed'; } catch { /* private mode */ }
   return `<details class="drop" id="${id}" ${open ? 'open' : ''}><summary>${title}<span></span></summary>${body}</details>`;
 }
 document.addEventListener('toggle', (event) => {
@@ -501,19 +500,17 @@ const imageSrc = (c, name) => `${dataset().inputs_url}/${c.name}/${name === 'con
 function renderInput(c) {
   const images = [...c.views.map((file) => file.replace(/\.png$/, '')), ...(c.context ? ['context'] : [])];
   if (!images.includes(S.image)) S.image = images.includes(DEFAULT_VIEW) ? DEFAULT_VIEW : images[0];
-  const ds = dataset();
+  // The panel is a window on the input pictures; the brief and the facts fold away under it, closed
   $('#input').innerHTML = `
-    <header class="part">
-      <h1>${esc(generic(c) ? `Case ${c.number}` : c.title)}</h1>
-      <p>${esc([generic(c) ? '' : `Case ${c.number}`, ds.label, c.tier, envelope(c)].filter(Boolean).join(' · '))}</p>
-    </header>
-    ${images.length ? `<figure class="ref"><img id="big" alt="Reference render, ${esc(viewLabel(S.image))}" src="${imageSrc(c, S.image)}" data-cut="${imageSrc(c, S.image)}">
+    <div class="window">${images.length ? `<figure class="ref"><img id="big" alt="Reference render, ${esc(viewLabel(S.image))}" src="${imageSrc(c, S.image)}" data-cut="${imageSrc(c, S.image)}">
       <figcaption id="big-label">${esc(viewLabel(S.image))}</figcaption></figure>
     <div class="thumbs">${images.map((name, i) => `<button data-image="${name}" aria-pressed="${name === S.image}"
       title="${viewLabel(name)}${VIEWS[name] ? ` — turns the 3D views to this side (${i + 1})` : ''}">
-      <img alt="${viewLabel(name)}" src="${imageSrc(c, name)}" data-cut="${imageSrc(c, name)}"></button>`).join('')}</div>` : '<p class="note">This case has no reference renders.</p>'}
-    <h2>Brief</h2><article class="prose" id="brief"></article>
-    <h2>Facts</h2>${factsHTML(c.facts)}`;
+      <img alt="${viewLabel(name)}" src="${imageSrc(c, name)}" data-cut="${imageSrc(c, name)}"></button>`).join('')}</div>` : '<p class="note">This case has no reference renders.</p>'}</div>
+    <div class="more">
+      ${dropHTML('brief-drop', 'Brief', '<div><article class="prose" id="brief"></article></div>', false)}
+      ${dropHTML('facts-drop', 'Facts', `<div>${factsHTML(c.facts)}</div>`, false)}
+    </div>`;
   hydrateImages($('#input'));
   const id = live.id;
   fetch(`/api/description?dataset=${S.dataset}&case=${c.name}`).then((r) => r.text()).then((text) => {
@@ -558,7 +555,7 @@ function renderResult(c) {
 
 // -- side panels: drag the edge to resize ----------------------------------------------------------
 
-const WIDTHS = { left: 330, right: 310 };
+const WIDTHS = { left: 280, right: 310 };
 function setWidth(side, width) {
   const value = Math.round(Math.max(220, Math.min(innerWidth * 0.45, width)));
   document.body.style.setProperty(`--${side}`, `${value}px`);
@@ -576,7 +573,7 @@ document.addEventListener('pointerdown', (event) => {
   grip.setPointerCapture(event.pointerId);
   grip.classList.add('on');
   const side = grip.dataset.side, box = $('#main').getBoundingClientRect();
-  const move = (e) => setWidth(side, side === 'left' ? e.clientX - box.left : box.right - e.clientX);
+  const move = (e) => setWidth(side, side === 'left' ? e.clientX - box.left - 12 : box.right - e.clientX);
   const done = () => { grip.classList.remove('on'); grip.removeEventListener('pointermove', move); };
   grip.addEventListener('pointermove', move);
   grip.addEventListener('pointerup', done, { once: true });
@@ -669,11 +666,13 @@ function renderMetrics(c, state) {
 // -- middle: steps ------------------------------------------------------------------------------
 
 function buildTrace(events) {
-  const t = { steps: new Map(), list: [], start: null, end: null, status: 'running', error: null, last: null };
+  const t = { plan: [], skips: new Map(), steps: new Map(), list: [], start: null, end: null, status: 'running', error: null, last: null };
   for (const e of events) {
     if (t.start == null) t.start = e.ts;
     t.last = e.ts;
     if (e.t === 'case_end') Object.assign(t, { end: e.ts, status: e.status, error: e.error });
+    else if (e.t === 'plan') t.plan = e.steps || [];
+    else if (e.t === 'skip') t.skips.set(e.name, e.reason);
     else if (e.t === 'step_start') {
       const parent = t.steps.get(e.parent);
       const step = { ...e, start: e.ts, end: null, status: 'running', depth: parent ? parent.depth + 1 : 0, logs: [], artifacts: [] };
@@ -765,8 +764,19 @@ function renderSteps(c) {
       const state = running ? 'running' : t.status === 'running' ? 'interrupted' : t.status;
       status = `<span class="state ${state}">${state}</span> ${duration((t.end || (running ? now : t.last)) - t.start)}`;
       if (t.error) note = `<pre class="bad">${esc(t.error)}</pre>`;
-      let model = null;
-      t.list.forEach((s, index) => {
+      let model = null, at = 0, lastRun = null;
+      // A planned step that has not run: still to come, switched off, or passed over
+      const planned = (p, passed) => {
+        const state = p.off ? 'off' : passed || t.skips.has(p.name) ? 'skipped' : running ? 'pending' : 'not run';
+        const why = p.off || t.skips.get(p.name) || { skipped: 'Skipped in this case.', pending: 'Not started yet.', 'not run': 'The case ended before this step.' }[state];
+        rows.push({ id: `plan:${p.name}`, raw: p.name, about: about({ name: p.name }), model, before: null, changed: false, state,
+          n: String(rows.length + 1).padStart(2, '0'), name: words(p.name.replace(/^cut_/, '')), ratio: '', chips: '',
+          detail: () => `<p class="note">${esc(why)}</p>` });
+      };
+      t.list.forEach((s) => {
+        // steps the plan does not list (a retry, a cut repeated inside a check) go in where they happen
+        const j = t.plan.findIndex((p, i) => i >= at && !p.off && p.name === s.name);
+        if (j >= 0) { for (; at < j; at++) planned(t.plan[at], true); at = j + 1; }
         const stage = s.artifacts.filter((a) => a.role === 'stage' && isStep(a.name)).pop();
         const before = stage ? model : null;  // only a step that left a new solid removed something
         if (stage) model = { url: `${base}/${stage.path}` };
@@ -775,7 +785,7 @@ function renderSteps(c) {
         rows.push({
           id: s.id, raw: s.name, about: about(s), model, before, changed: Boolean(stage),
           state: s.end ? s.status : running ? 'running' : 'interrupted',
-          n: String(index + 1).padStart(2, '0'), name: words(s.name.replace(/^cut_/, '')),
+          n: String(rows.length + 1).padStart(2, '0'), name: words(s.name.replace(/^cut_/, '')),
           ratio: ratio == null ? '' : `×${ratio.toFixed(ratio < 10 ? 2 : 1)}`,
           chips: [
             m.removed_cm3 ? `<i class="sw ghost"></i>removed ${num(m.removed_cm3)} cm³` : '',
@@ -783,8 +793,10 @@ function renderSteps(c) {
           ].filter(Boolean).join(' · '),
           detail: () => detailHTML(s, base, time),
         });
+        lastRun = rows[rows.length - 1];
       });
-      const last = rows[rows.length - 1];  // the exported file is the last step's solid, tidied
+      for (; at < t.plan.length; at++) planned(t.plan[at], false);
+      const last = lastRun;  // the exported file is the last step's solid, tidied
       if (last && output && !running && t.status === 'ok') Object.assign(last, { model: output, before: null });
       if (!running) rows.forEach((r) => r.model && loadStep(r.model.url, r.model.key).catch(() => {}));  // warm up, so scrubbing is instant
     }
@@ -797,7 +809,7 @@ function renderSteps(c) {
 
   // Which solid is on screen: the chosen step; else the final result, or while the run is still
   // going the newest step that left a solid
-  const chosen = rows.find((r) => r.id === S.sel) || (running && [...rows].reverse().find((r) => r.changed)) || rows[rows.length - 1];
+  const chosen = rows.find((r) => r.id === S.sel) || (running && [...rows].reverse().find((r) => r.changed)) || [...rows].reverse().find((r) => !r.id.startsWith('plan:')) || rows[rows.length - 1];
   live.rows = rows;
   live.chosen = chosen ? chosen.id : null;
   setHTML($('#steps-status'), status);
@@ -826,6 +838,9 @@ const ABOUT = [
   [/^check_views$/, () => 'Compares the solid with the silhouettes'],
   [/^cut_holes$/, () => 'Cuts the cylindrical holes listed in facts.json'],
   [/^cut_rounds$/, () => 'Makes square sections round along boss and bore axes'],
+  [/^cut_curved$/, () => 'Carries a curved face on under a flat ring the side views left around an axis'],
+  [/^cut_pockets$/, () => 'Cuts pockets whose outline the views draw under our surface'],
+  [/^split_faces$/, () => 'Splits a face where the views draw a line across it'],
   [/^level_faces$/, () => 'Cuts each flat face down to its lowest level'],
   [/^shading_depth$/, () => 'Takes pocket depths from the shading of the isometric views'],
   [/^export_step$/, () => 'Merges coplanar faces and writes the .stp'],
@@ -845,9 +860,9 @@ function renderTimeline(rows, chosen) {
     timeline.innerHTML = rows.length < 2 ? '' : `<div class="track" style="--n:${rows.length}">
       <div class="rail"><i></i></div>
       <input type="range" id="scrub" min="0" max="${rows.length - 1}" step="1" aria-label="Pipeline step">
-      ${rows.map((r) => `<button class="stop ${r.changed ? 'cut' : ''}" data-sel="${r.id}" title="${esc(r.name)}${r.ratio ? ` — ${r.ratio} the true volume` : ''}">
+      ${rows.map((r) => `<button class="stop ${r.changed ? 'cut' : ''} ${r.state.replace(' ', '-')}" data-sel="${r.id}" title="${esc(r.name)}${r.ratio ? ` — ${r.ratio} the true volume` : ''}">
         <i class="dot"></i><span class="name">${esc(r.name)}</span>
-        <span class="v ${r.state === 'ok' ? '' : `state ${r.state}`}">${r.state === 'ok' ? r.ratio : r.state}</span>
+        <span class="v ${r.state === 'ok' ? '' : `state ${r.state}`}">${r.state === 'ok' ? r.ratio : r.state === 'pending' ? '' : r.state}</span>
         <span class="about">${esc(r.about)}</span></button>`).join('')}
     </div>`;
   }

@@ -75,14 +75,21 @@ i.sw.ghost { background: rgba(91, 155, 255, 0.45); border: 1px solid var(--accen
 body.offline .offline-note { display: inline; }
 
 /* -- layout: input | the solid after the chosen step | output, the step slider underneath ------ */
-#main { flex: 1; min-height: 0; display: grid; grid-template-columns: var(--left, 330px) minmax(0, 1fr) var(--right, 420px); grid-template-rows: minmax(0, 1fr) auto; }
+#main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) var(--right, 420px); grid-template-rows: minmax(0, 1fr) auto; }
 .side { min-width: 0; min-height: 0; overflow-y: auto; padding: 16px var(--gutter) 28px; background: var(--panel); }
-#input { border-right: 1px solid var(--line); }
+/* the input is a small window in the top left corner of the big view */
+#centre { grid-area: 1 / 1; }
+#result { grid-area: 1 / 2; }
+#input { grid-area: 1 / 1; z-index: 4; align-self: start; justify-self: start; display: flex; flex-direction: column; width: var(--left, 280px); max-height: calc(100% - 24px); margin: 12px; padding: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 9px; box-shadow: 0 10px 30px -8px rgba(0, 0, 0, 0.7); }
+#input .window { flex: none; padding: 8px; }
+#input figure.ref { margin-top: 0; }
+#input .more { flex: 0 1 auto; min-height: 0; overflow-y: auto; border-top: 1px solid var(--line); }
+#centre > .hud:not(.end) { left: calc(var(--left, 280px) + 32px); max-width: calc(100% - var(--left, 280px) - 200px); }
 #result { border-left: 1px solid var(--line); }
 #centre, #result { position: relative; min-width: 0; min-height: 0; }
 /* the edges of the side panels: drag to resize */
 .grip { position: absolute; z-index: 5; top: 0; bottom: 0; width: 9px; cursor: col-resize; touch-action: none; }
-.grip[data-side="left"] { left: -5px; }
+.grip[data-side="left"] { left: calc(var(--left, 280px) + 9px); top: 12px; bottom: auto; height: var(--left, 280px); }
 .grip[data-side="right"] { right: -5px; }
 .grip::after { content: ""; position: absolute; inset: 0 3px; background: var(--accent); opacity: 0; transition: opacity 0.15s var(--ease); }
 .grip:hover::after, .grip.on::after { opacity: 1; }
@@ -230,6 +237,10 @@ h4 { margin: 9px 0 4px; font-size: 11px; font-weight: 500; color: var(--muted); 
 .stop.cut .dot { background: #46505b; }
 .stop.done .dot { border-color: var(--accent); }
 .stop.done.cut .dot { background: var(--accent); }
+.stop.running .dot { border-color: var(--accent); background: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
+.stop.pending, .stop.off, .stop.skipped, .stop.not-run { opacity: 0.5; }
+.stop.pending .dot, .stop.off .dot, .stop.skipped .dot, .stop.not-run .dot { border-style: dashed; }
+.stop.off .name, .stop.skipped .name { text-decoration: line-through; }
 .stop .name { max-width: 100%; font-size: 12px; line-height: 1.3; color: var(--muted); overflow-wrap: anywhere; transition: color 0.15s var(--ease); }
 .stop .name::first-letter { text-transform: uppercase; }
 .stop:hover .name { color: var(--ink); }
@@ -269,6 +280,8 @@ h4 { margin: 9px 0 4px; font-size: 11px; font-weight: 500; color: var(--muted); 
   #timeline { order: -1; overflow-x: auto; }
   .track { min-width: 640px; }
   .side { overflow: visible; border: 0; border-top: 1px solid var(--line); }
+  #input { width: auto; max-height: none; margin: 0; border-radius: 0; box-shadow: none; overflow: visible; }
+  #centre > .hud:not(.end) { left: 18px; max-width: 70%; }
   #result { height: min(90vw, 560px); border: 0; border-top: 1px solid var(--line); }
   .grip { display: none; }
 }
@@ -278,7 +291,7 @@ h4 { margin: 9px 0 4px; font-size: 11px; font-weight: 500; color: var(--muted); 
 #bar button.icon[aria-pressed="true"] { color: var(--accent); background: var(--select); }
 
 /* scores of all cases: drops over the input column, never over a model */
-#scores { position: fixed; z-index: 5; top: 52px; left: 0; bottom: 0; width: var(--left, 330px); display: flex; flex-direction: column; background: var(--bg); border-right: 1px solid var(--line); }
+#scores { position: fixed; z-index: 5; top: 52px; left: 0; bottom: 0; width: 330px; display: flex; flex-direction: column; background: var(--bg); border-right: 1px solid var(--line); }
 #scores[hidden] { display: none; }
 #scores header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; padding: 14px 18px 12px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 12px; }
 #scores header b { color: var(--ink); font: 500 12px var(--mono); }

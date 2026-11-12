@@ -220,6 +220,15 @@ class CaseTrace:
     def step(self, name: str, kind: str = "other", input: Any = None, parent: "Step | None" = None, **meta) -> "Step":
         return Step(self, name, kind, input, parent, meta)
 
+    def plan(self, steps: list[dict]) -> None:
+        """The steps this case is going to run, in order, as {"name": ..., "off": reason or None}. The
+        dashboard shows them all from the start, before any has run."""
+        self._emit({"t": "plan", "steps": steps})
+
+    def skipped(self, name: str, reason: str) -> None:
+        """A planned step that will not run in this case, and why."""
+        self._emit({"t": "skip", "name": name, "reason": reason})
+
     def log(self, message: Any, level: str = "info") -> None:
         step = _current_step.get()
         self._emit({"t": "log", "step": step.id if step and step.case is self else None, "level": level,
@@ -340,6 +349,14 @@ def current_case() -> CaseTrace:
 
 def step(name: str, kind: str = "other", input: Any = None, **meta) -> Step:
     return current_case().step(name, kind=kind, input=input, **meta)
+
+
+def plan(steps: list[dict]) -> None:
+    current_case().plan(steps)
+
+
+def skipped(name: str, reason: str) -> None:
+    current_case().skipped(name, reason)
 
 
 def log(message: Any, level: str = "info") -> None:
