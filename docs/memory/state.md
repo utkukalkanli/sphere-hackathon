@@ -81,15 +81,24 @@ Guards around every cut (`hull_agent.py`):
 
 ## Measurements
 
-Practice set, whole pipeline of `nar` at 845a062 (brief first and last, line cuts, no pockets or
-split, 4 cases at once), Windows PC, 2026-11-12 13:31, run `20261112-133113-6d9b`; our volume / true
-volume, score = mean of min/max:
+Practice set, whole pipeline of `nar`, 4 cases at once, Windows PC, 2026-11-12; our volume / true
+volume, score = mean of min/max. Runs: 845a062 at 13:31 (`20261112-133113-6d9b`); 72c9e87 (brief
+kept despite the verifier, verifier cache, hard stop) at 14:10 (`20261112-141003-1fad`, 17.9 min).
+**Goal set by the user: above 0.9 before new work items.**
 
 | | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | score |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `nar` before (a889456 + later steps) | 1.003 | 1.018 | 1.000 | 1.028 | 1.224 | 2.759 | 1.936 | 1.002 | 1.729 | 0.803 |
 | `ananas` (077ba58) | 1.002 | 1.140 | 1.011 | 1.121 | 1.009 | 2.623 | 2.033 | 1.008 | 1.393 | 0.8145 |
 | `nar` 845a062 | 1.003 | 1.018 | 1.000 | 1.028 | 1.008 | 2.712 | 2.002 | 1.060 | 1.605 | 0.820 |
+| `nar` 72c9e87 | 1.003 | 1.008 | 1.000 | 1.028 | 1.008 | 2.691 | 1.973 | 1.059 | 1.470 | 0.829 |
+
+- 72c9e87 against 845a062: brief kept on 2 (revolution, 1.23 -> 1.10 in the step) and 6 (four-fold,
+  3.62 -> 3.33, 112 cm3, verifier 0.152 -> 0.129); recheck 9 1.548 -> 1.470, 8 1.063 -> 1.059.
+  recheck skipped on 6 for time.
+- Part 7 has none of its top cavity: from the top our solid is flat at the top face over the whole
+  rim interior (about 113 x 40 mm, likely about 200 cm3 of the about 330 cm3 excess). No step reads
+  it: the floor is the bore's barrel and curved walls, not flat, and every side view hides it.
 
 - What each step did in this run: brief 9 1.88 -> 1.67, 3 1.085 -> 1.018 (rounds would have got
   there anyway); line cuts 5 1.224 -> 1.008, 6 2.766 -> 2.712, nothing on 2, 4, 8, 9 (skipped on 7
