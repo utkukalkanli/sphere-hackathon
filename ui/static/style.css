@@ -156,6 +156,9 @@ table.grid :is(th, td):last-child { padding-right: 0; }
 .tools button:active { background: var(--line); }
 .tools button[aria-pressed="true"] { color: var(--accent); background: var(--select); }
 .tools [data-orbit] { margin-right: 5px; }
+.tools b { font: 600 11px var(--mono, ui-monospace, Menlo, monospace); }
+#cut { width: 110px; margin: 0 6px 0 4px; align-self: center; accent-color: var(--accent); }
+#cut[hidden] { display: none; }
 .no-truth [data-diff] { display: none; }
 
 /* what is on screen, written over the big view */

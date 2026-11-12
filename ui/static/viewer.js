@@ -11,6 +11,7 @@ function load() {
       renderer.setClearColor(0x000000, 0);
       renderer.setPixelRatio(1);
       renderer.setScissorTest(true);
+      renderer.localClippingEnabled = true;  // the section plane
       return { THREE, renderer };
     }).catch((error) => { libs = null; throw error; });
   }
@@ -135,6 +136,17 @@ export function setFaces(on) {
   try { localStorage.setItem('faces', facets ? 'on' : 'off'); } catch { /* private mode */ }
   invalidate();
 }
+// A section plane (X): every viewer shows its solid cut open square to one axis. `axis` is 0, 1, 2
+// or -1 for none; `at` is where along the solid's box, 0 to 1. The half towards the camera is taken
+// away, so the cut face is what you look at from either side.
+const slice = { axis: -1, at: 0.5 };
+export const section = () => slice;
+export function setSection(axis, at = slice.at) {
+  slice.axis = axis;
+  slice.at = Math.min(1, Math.max(0, at));
+  invalidate();
+}
+
 // Neighbouring numbers get hues far apart (golden-ratio steps round the colour wheel)
 function faceColours(THREE, m) {
   const colours = new Float32Array(m.position.length).fill(0.7), colour = new THREE.Color();
@@ -208,6 +220,29 @@ export async function createViewer(container, meshes, color = COLORS.ours, { int
     polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
   });
   const lines = new THREE.LineBasicMaterial({ color: 0x08090a });
+  // The section. Where a solid is cut open the camera looks at the inside of its skin; exactly those
+  // pixels are its cut face. They are painted flat and given the depth of the plane itself, so the
+  // cut face hides and is hidden like a real face (and the diff below compares it like one).
+  // cutDepth: the plane's depth at a pixel is dot((x, y, 1), cutDepth).
+  const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 1e12), clip = [plane];
+  const cut = { cutDepth: { value: new THREE.Vector3() }, cutOn: { value: 0 } };
+  const capped = (target, cap, body = '', uniforms = {}) => {
+    target.clippingPlanes = clip;
+    target.customProgramCacheKey = () => `cut ${body}`;  // else three.js shares one program between them
+    target.onBeforeCompile = (shader) => {
+      Object.assign(shader.uniforms, cut, uniforms, { capColour: { value: new THREE.Color(cap) } });
+      shader.fragmentShader = `uniform vec3 cutDepth;\nuniform float cutOn;\nuniform vec3 capColour;\nuniform sampler2D otherDepth;\nuniform vec2 viewSize;\n${shader.fragmentShader}`.replace('#include <dithering_fragment>', `
+        bool cap = cutOn > 0.5 && !gl_FrontFacing;
+        float here = cap ? clamp(dot(vec3(gl_FragCoord.xy, 1.0), cutDepth), 0.0, 1.0) : gl_FragCoord.z;
+        gl_FragDepth = here;
+        if (cap) gl_FragColor.rgb = capColour;
+        ${body}
+        #include <dithering_fragment>`);
+    };
+  };
+  const dim = (hex) => new THREE.Color(hex).multiplyScalar(0.6);
+  capped(material, dim(color));
+  lines.clippingPlanes = clip;
   const root = new THREE.Group(), shade = new THREE.Group(), used = [];
   let triangles = 0;
   const add = (group, list, fill, stroke, order) => {
@@ -233,6 +268,7 @@ export async function createViewer(container, meshes, color = COLORS.ours, { int
     polygonOffset: true, polygonOffsetFactor: 4, polygonOffsetUnits: 3000,
   });
   const hazeLines = new THREE.LineBasicMaterial({ color: 0x3f73c4 });
+  haze.clippingPlanes = hazeLines.clippingPlanes = clip;
   if (before && !diff) add(shade, before, haze, hazeLines, 0);
   scene.add(shade, root);
 
@@ -255,24 +291,17 @@ export async function createViewer(container, meshes, color = COLORS.ours, { int
     const truthDepth = depthOf(), oursDepth = depthOf();
     // gap: how far the other solid's surface lies behind this pixel, in units of the depth range.
     // 4e-4 of it is about a quarter of a percent of the part's size: below that the two coincide.
-    const compare = (target, other, body) => {
-      target.customProgramCacheKey = () => body;  // else three.js shares one program between the two
-      target.onBeforeCompile = (shader) => {
-        shader.uniforms.otherDepth = { value: other.depthTexture };
-        shader.uniforms.viewSize = { value: size };
-        shader.fragmentShader = `uniform sampler2D otherDepth;\nuniform vec2 viewSize;\n${shader.fragmentShader}`.replace('#include <dithering_fragment>', `
-          float gap = texture2D(otherDepth, gl_FragCoord.xy / viewSize).x - gl_FragCoord.z;
-          ${body}
-          #include <dithering_fragment>`);
-      };
-    };
-    compare(material, truthDepth, `if (gap > 4e-4) {
+    const compare = (target, cap, other, body) => capped(target, cap,
+      `float gap = texture2D(otherDepth, gl_FragCoord.xy / viewSize).x - here;\n${body}`,
+      { otherDepth: { value: other.depthTexture }, viewSize: { value: size } });
+    compare(material, dim(color), truthDepth, `if (gap > 4e-4) {
       float light = dot(gl_FragColor.rgb, vec3(0.333));
-      gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(1.0, 0.27, 0.22) * (0.25 + light), 0.6 + 0.4 * clamp(gap * 40.0, 0.0, 1.0));
+      gl_FragColor.rgb = cap ? vec3(0.86, 0.2, 0.16) : mix(gl_FragColor.rgb, vec3(1.0, 0.27, 0.22) * (0.25 + light), 0.6 + 0.4 * clamp(gap * 40.0, 0.0, 1.0));
     }`);
     const lacking = new THREE.MeshStandardMaterial({ color: COLORS.missing, roughness: 0.7, metalness: 0, side: THREE.DoubleSide, ...offset });
-    compare(lacking, oursDepth, 'if (gap <= 4e-4) discard;');
+    compare(lacking, dim(COLORS.missing).multiplyScalar(1.4), oursDepth, 'if (gap <= 4e-4) discard;');
     const plain = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, ...offset });
+    capped(plain, 0);
     extra.push(lacking, plain);
     const truth = new THREE.Group();
     truth.position.set(...diff.shift);
@@ -300,6 +329,28 @@ export async function createViewer(container, meshes, color = COLORS.ours, { int
     };
   }
   let centre, radius;
+  const bounds = frame ? { min: frame.min, max: frame.max } : new THREE.Box3().setFromObject(root);
+  const low = (i) => (frame ? bounds.min[i] : bounds.min.getComponent(i)), high = (i) => (frame ? bounds.max[i] : bounds.max.getComponent(i));
+  const near = new THREE.Vector3(), far = new THREE.Vector3();
+  // Puts the plane where the slider says and works out its depth across the image
+  function place(w, h, dir) {
+    const a = slice.axis;
+    cut.cutOn.value = 0;
+    if (a < 0) { plane.normal.set(0, 0, 1); plane.constant = 1e12; return; }
+    const at = low(a) + slice.at * (high(a) - low(a)), side = dir[a] >= 0 ? -1 : 1;
+    plane.normal.set(0, 0, 0).setComponent(a, side);
+    plane.constant = -side * at;
+    if (Math.abs(dir[a]) < 1e-3) return;  // seen edge on: no cut face in sight
+    camera.updateMatrixWorld();
+    const depth = (x, y) => {
+      near.set(x, y, -1).unproject(camera);
+      far.set(x, y, 1).unproject(camera);
+      return (at - near.getComponent(a)) / (far.getComponent(a) - near.getComponent(a));
+    };
+    const d = depth(-1, -1);
+    cut.cutDepth.value.set((depth(1, -1) - d) / w, (depth(-1, 1) - d) / h, d);
+    cut.cutOn.value = 1;
+  }
   if (frame) {
     centre = new THREE.Vector3(...frame.min.map((v, i) => (v + frame.max[i]) / 2));
     radius = Math.hypot(...frame.min.map((v, i) => frame.max[i] - v)) / 2 || 1;
@@ -344,6 +395,7 @@ export async function createViewer(container, meshes, color = COLORS.ours, { int
     if (bufferSize.x < w || bufferSize.y < h) renderer.setSize(Math.max(bufferSize.x, w), Math.max(bufferSize.y, h), false);
     renderer.setViewport(0, 0, w, h);
     renderer.setScissor(0, 0, w, h);
+    place(w, h, dir);
     if (prepare) prepare(w, h);
     renderer.render(scene, camera);
     ctx.fillStyle = '#000';
