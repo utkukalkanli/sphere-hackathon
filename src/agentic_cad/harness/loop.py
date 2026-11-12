@@ -36,7 +36,11 @@ API = os.environ.get("HARNESS_API", "openai-responses")           # or openai-co
 CONTEXT_WINDOW = int(os.environ.get("HARNESS_CONTEXT_WINDOW", 400000))
 MAX_TOKENS = int(os.environ.get("HARNESS_MAX_TOKENS", 100000))
 BASH_TIMEOUT_MS = 240000
-MAX_STARTS = int(os.environ.get("HARNESS_MAX_STARTS", 8))   # of one case's agent
+MAX_STARTS = int(os.environ.get("HARNESS_MAX_STARTS", 30))   # of one case's agent
+# An agent whose event log has not grown for this long is waiting on a model request that will not
+# come back (five of nine did, for 8 to 13 minutes, in the first full run): it is stopped and started again.
+GOOD_ENOUGH = float(os.environ.get("HARNESS_GOOD_ENOUGH", 0.985))   # local score at which an agent that ends is not restarted
+IDLE_SECONDS = float(os.environ.get("HARNESS_IDLE_SECONDS", 240))
 OPENAI_HOSTS = ("api.openai.com",)
 
 TASK = """You model one mechanical part in CadQuery, in this directory, on your own: nobody answers questions.
@@ -194,6 +198,33 @@ class Case:
         process.stdin.close()
         return process
 
+    def best_score(self) -> float:
+        try:
+            return float(json.loads((self.state / "best.json").read_text())["score"])
+        except Exception:
+            return 0.0
+
+    def idle(self, index: int) -> float:
+        """Seconds since the agent last wrote an event."""
+        try:
+            return time.time() - (self.work / f"agent_{index}.jsonl").stat().st_mtime
+        except OSError:
+            return 0.0
+
+    @staticmethod
+    def stop(process: subprocess.Popen) -> None:
+        if process.poll() is not None:
+            return
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+            process.wait(timeout=5)
+        except Exception:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.wait(timeout=5)
+            except Exception:
+                pass
+
     def run(self) -> dict:
         while not (self.work / "hull_done").exists():
             if self.deadline - time.time() < MIN_AGENT_SECONDS:
@@ -209,24 +240,21 @@ class Case:
                 time.sleep(2.0)
                 self.publish()
                 if process.poll() is None:
-                    continue
+                    if self.idle(starts - 1) < IDLE_SECONDS:
+                        continue
+                    self.log(event="agent_hung", starts=starts)
+                    self.stop(process)
                 # the agent ended on its own (it thinks it is done, or an error): the time left is not wasted
                 self.log(event="agent_ended", exit=process.returncode, starts=starts)
                 if self.deadline - time.time() < MIN_AGENT_SECONDS or starts >= MAX_STARTS:
                     break
+                if process.returncode == 0 and max(self.best_score(), self.base_score or 0.0) >= GOOD_ENOUGH:
+                    break   # it stopped by itself on a part that leaves next to nothing to gain
                 time.sleep(min(5.0 * starts, 30.0))
                 process = self.start_agent(starts)
                 starts += 1
         finally:
-            if process.poll() is None:
-                try:
-                    os.killpg(process.pid, signal.SIGTERM)
-                    process.wait(timeout=5)
-                except Exception:
-                    try:
-                        os.killpg(process.pid, signal.SIGKILL)
-                    except Exception:
-                        pass
+            self.stop(process)
         self.publish()
         checks = len(list(self.state.glob("cand_*")))
         result = {"case": self.case_dir.name, "agent_seconds": round(time.time() - started), "exit": process.poll(),

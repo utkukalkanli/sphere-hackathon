@@ -33,7 +33,8 @@ MIN_CASE_SECONDS = 5.0
 # The agents (src/agentic_cad/harness, one per case, only with OPENAI_API_KEY and OPENAI_MODEL) start on a
 # case when the pipeline is done with it and work until this many seconds after the start of the run.
 # Their best candidate replaces a case's file while they work, so a run stopped earlier keeps what it has.
-# The organisers allow one hour for the nine parts together (2026-11-12); the image sets 55 minutes.
+# The organisers allow one hour for the nine parts together (2026-11-12); the image sets 30 minutes:
+# in the first full run (55 min) nearly all of the agents' gain had come by then.
 HARNESS_SECONDS = float(os.environ.get("HARNESS_SECONDS", 19 * 60))
 HARNESS_DIR = Path(os.environ.get("HARNESS_DIR", "/tmp/harness"))
 

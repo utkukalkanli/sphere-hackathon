@@ -42,7 +42,7 @@ ENV TRACE=0
 # sandboxed a second time (HARNESS_PERMISSION).
 ENV HARNESS_EFFORT=medium \
     HARNESS_PERMISSION=danger-full-access \
-    HARNESS_SECONDS=3300
+    HARNESS_SECONDS=1800
 # ENV OPENAI_MODEL=<model>
 
 CMD ["python", "scripts/main.py"]
