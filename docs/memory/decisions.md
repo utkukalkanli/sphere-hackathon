@@ -5,6 +5,21 @@ the entry and say what changed.
 
 ## Pipeline
 
+- **What `facts.json` and `description.md` state is always applied, even when the score drops**
+  (2026-11-12, user: "the information that takes us in the right direction is there"). A change
+  taken from the two documents (a radius, an angle, a hole, a symmetry, a depth, blind or through)
+  is not refused because the verifier's score, the volume score or another whole-part number gets
+  worse; such a drop is read as an error elsewhere that was being cancelled (see "A change is
+  judged where it acts"). What still refuses it: a solid that is not one valid solid, and a
+  contradiction with the documents themselves (for example the true volume of `facts.json`).
+  Statements the brief hedges or negates are still not read as facts. Code that still gates such
+  changes on the verifier (`brief.py`'s symmetry step) has to follow this; not yet changed.
+- **A model may be used in a step where it is needed** (2026-11-12, user; replaces "no model or
+  agent in any step for now" of 2026-11-11). Deterministic steps stay the default. A step may call
+  a model (LLM or VLM) where the deterministic code cannot get the information, for example
+  reading `description.md` and `facts.json` and proposing typed cuts. What the model proposes is
+  applied by our code. A proposal the documents state is kept by the rule above; one the model
+  infers beyond them is kept only if the verifier does not rate it lower.
 - **`nar` is the working branch; the useful parts of `ananas` come into it, not the other way**
   (2026-11-12, user agreed). `nar` was cut from `feat/phase0-safe-runs`. Of `ananas` it takes the line
   cuts (`line_cuts.py`, `revolve.py`, `edges.py`, `views.py`) as a later step, judged by `nar`'s
@@ -85,9 +100,6 @@ the entry and say what changed.
 - **Two tone tables ship with the agent, the organisers' renderer and our eval renderer, and the
   agent picks one per case** (2026-11-12). Without the eval table the step could not be measured
   locally. The organisers' table is the default and is only left when the other fits twice as well.
-- **No model or agent in any step for now** (2026-11-11 evening, user; narrows "a model will be
-  used"). Every step, including the depth-from-shading step, stays deterministic. A teammate is
-  still setting up a VLM and an LLM on a rented Brev GPU; whether a later step calls them is open.
 - **Depth from shading is one step after the hull, not one per view and not inside step 1**
   (2026-11-11). It needs the carved solid twice: to measure which tone each view gives each face
   direction, and to know which points the isometric camera certainly sees. Inside the step the six
