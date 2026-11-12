@@ -61,8 +61,15 @@ truth. What it holds:
   the back view that we have flat; practice 7, the whole deep cavity of the top view (89000 px in
   two areas) is filled in ours; practice 9, in the top and front views the mouths of the six d127
   bores do not show in our solid at all (view 82, ours 202, 31000 px each): the bores are cut
-  (hull + holes 2.68 to 1.88) but material of ours lies over their mouths, and the big recess of
-  the front view (65000 px) is flat in ours.
+  (hull + holes 2.68 to 1.88) but a skin closed their mouths (fixed, see below), and the big
+  recess of the front view (65000 px), the crankcase hollow the bores open into, is flat in ours:
+  87 mm of our material lie in front of the inner bore mouths that the front view draws.
+- **A hole listed up to a face of the part can stay closed in our solid** (2026-11-12, practice
+  9). The hull's faces that come from a traced silhouette lie a fraction of a pixel outside the
+  part's (0.25 to 0.31 mm on practice 9, at 0.52 mm per pixel); box faces are exact. A cylinder
+  cut exactly as listed then ends under a skin: the volume is almost right and every view that
+  looks at the mouth is wrong (the "bores do not show" entry above was this, not material lying
+  over the mouths). `spans._open_ends` carries such a hole through.
 - **The cone count of `facts.json` confirms the blind holes of practice 8** (2026-11-12).
   `cones_half_angle_deg` lists 48 faces at 59 degrees, the point of a 118 degree drill, which the
   brief calls chamfers. Two blind holes per listed span in the two groups is 16 + 8 = 24 holes,

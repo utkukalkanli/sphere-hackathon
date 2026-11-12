@@ -1,4 +1,7 @@
-"""Part of step 2: a listed hole that the views show closed is not one hole.
+"""Part of step 2: the listed holes, corrected against the solid and the views before they are cut.
+
+1. A hole that stops within tracing tolerance of our surface is carried through that skin.
+2. A listed hole that the views show closed is not one hole:
 
 facts.json gives coaxial cylinder faces of one diameter as one entry: one centre and one length, the
 span from the outer end of the first to the outer end of the last. Two blind holes drilled towards
@@ -25,8 +28,10 @@ from OCP.IntCurvesFace import IntCurvesFace_ShapeIntersector
 
 from agentic_cad import verify
 from agentic_cad.holes import Cylinder
+from agentic_cad.visual_hull import FRAME_MARGIN
 
 ENABLED = os.environ.get("HULL_HOLE_SPANS", "1") != "0"
+SKIN_PX = 2.0      # material thinner than this many pixels beyond a hole's end is tracing tolerance, not a wall
 GUESS_SHARE = 0.5  # depth of a blind hole: this share of the way to the break-through
 
 
@@ -98,6 +103,7 @@ def resolve(solid, holes: list[Cylinder], case_dir: Path | None) -> tuple[list[C
     except Exception:
         return holes, []
     intersector = _intersector(solid)
+    holes, opened = _open_ends(holes, intersector, SKIN_PX * max(dims.values()) * FRAME_MARGIN / verify.SIZE)
     found = {}
     for number, hole in enumerate(holes):
         axis = np.array(hole.axis)
@@ -129,7 +135,39 @@ def resolve(solid, holes: list[Cylinder], case_dir: Path | None) -> tuple[list[C
         notes.append({"diameter": 2 * hole.radius, "centre": hole.centre, "listed_length": hole.length,
                       "blind_holes": len(found[number]), "depth": round(float(depth), 2),
                       "drill_point": round(float(tip), 2), "cones_confirm": bool(angle)})
+    if opened:
+        notes.append({"ends_opened_through_a_skin": opened})
     return result, notes
+
+
+def _open_ends(holes: list[Cylinder], intersector, skin: float) -> tuple[list[Cylinder], int]:
+    """A hole that ends on a face of the part must come out of our solid there. The hull's faces
+    lie up to a pixel outside the part's (a face traced from a silhouette, unlike a box face), so
+    a listed hole can stop just short of our surface and stay closed by a skin. Where the material
+    beyond an end is thinner than `skin` all around the axis, the hole is made that much longer."""
+    result, opened = [], 0
+    for hole in holes:
+        axis, centre, half = np.array(hole.axis, float), np.array(hole.centre), hole.length / 2
+        probes = [centre] + list(_circle(centre, axis, 0.7 * hole.radius, 4))
+        more = {1: 0.0, -1: 0.0}
+        for sign in more:
+            thickest = 0.0
+            for probe in probes:
+                stretches = _material(probe, sign * axis, intersector)
+                if stretches is None:
+                    thickest = np.inf
+                    break
+                # the stretch of material the end lies in, if any: how far it goes on beyond the end
+                beyond = [b - half for a, b in stretches if a < half - 1e-6 < b]
+                thickest = max(thickest, beyond[0] if beyond else 0.0)
+            if 1e-4 < thickest <= skin:
+                more[sign] = thickest + 0.05
+        if more[1] or more[-1]:
+            opened += (more[1] > 0) + (more[-1] > 0)
+            hole = replace(hole, centre=tuple(map(float, centre + axis * (more[1] - more[-1]) / 2)),
+                           length=float(hole.length + more[1] + more[-1]))
+        result.append(hole)
+    return result, opened
 
 
 def _drill_angle(facts: dict, blind: int) -> float | None:
