@@ -75,6 +75,10 @@ truth. What it holds:
   it is a mouth and the part is empty from there to that camera: a depth that needs no tone and
   no isometric search (practice 9: 87 mm). The line must not be one our own solid draws there:
   a coaxial hole on the far face projects onto the same circle (eval 123).
+- **The area around a mouth is not always the face the mouth lies on** (2026-11-12, practice 7):
+  a hole that starts 2 mm down a recess only a quarter of a millimetre wider shows one circle,
+  and the area outside it is the face above the recess. Several mouths on one plane in one area
+  do not have that excuse (practice 9, three bores a bank).
 - **The cone count of `facts.json` confirms the blind holes of practice 8** (2026-11-12).
   `cones_half_angle_deg` lists 48 faces at 59 degrees, the point of a 118 degree drill, which the
   brief calls chamfers. Two blind holes per listed span in the two groups is 16 + 8 = 24 holes,
