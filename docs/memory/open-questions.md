@@ -111,11 +111,11 @@ Remove a question when it is answered and record the answer in `decisions.md`, `
 - **Grooves between fins** (practice 6). Done for flat faces standing on a visible level face.
   Open: flanks seen only from the side, banks that stand on nothing visible, small areas on
   thin-walled parts where the edge-on line is found by chance (eval 99).
-- **Hollow parts** (practice 6; the user asked for a step). Volume and surface cannot trigger it
-  (`knowledge.md`). A step would wait until the views fit everywhere and volume is still missing,
-  then offset the outside inwards by a wall solved from the volume. Open: the grooves come
-  first; whether the wall is even; how the scorer counts a void. Test parts can be made by
-  hollowing a ground truth. Not built.
+- **Hollow parts beyond practice 19.** The shell step (2026-11-12) fires on a clean sign only.
+  Practice 6 is a shell too and does not meet it (surface 0.87: the grooves between its fins are
+  still filled). Open: whether the limits hold on parts never seen (no eval part is hollow);
+  how the scorer counts a void; the openings of the inside, which stay closed where no step
+  found them; a solid of four shells in the organisers' reader.
 - **Features that stand only over part of the height** (practice 8 bolt lobes). The hull keeps
   them as full prisms. Idea, not built: a silhouette cut restricted to a region, with a contour
   drawn inside a perpendicular view as its profile.

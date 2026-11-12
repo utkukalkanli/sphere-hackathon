@@ -222,6 +222,15 @@ Tiers by our rule (up to 30 faces simple, up to 200 medium): parts 1 to 3, 4 to 
   bore, so no view shows the hollow. About half of its 122 faces are outside; 36 B-spline faces
   are left for an inner surface. Intersecting our solid with itself turned by 90 degrees (on
   the brief's word) gave a wrong solid; a repeat angle must be read from the views.
+- **Practice 19 (turbocharger volute, 82 x 156 x 175, 79 faces) is a shell 1.65 mm thick whose
+  inside almost no view shows**: the spiral channel opens only through a narrow slot on the -X
+  face and the pipe mouth. Our solid is its outside, filled (6.35 times the true volume, and
+  after the straight cuts already 7.3). The signature: our surface is 0.54 of the true one (a
+  shell has an inside and an outside), so our outside times the mean wall 2V/S holds 1.09 of the
+  true volume. Of the other parts with much excess none has it: our surface over the true one
+  is 0.87 on part 6, 1.03 on 15, 1.46 on 16, 1.18 on 7, 0.93 on 14, 2.79 on 18 (a coil spring).
+  `facts.json` lists 3 solids for it (also for 12 and 13) and a `_vertex_extent_check` smaller
+  than the box.
 - **Practice 8.** After the blind holes the excess (7.7 cm3) is the flange lobes around the
   bolt holes: in the part a lobe is a boss only at the top and bottom, about 7 mm each, with no
   lobe between; ours is a prism over the full height, since a silhouette is the union over the

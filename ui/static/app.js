@@ -1128,7 +1128,7 @@ function renderSteps(c) {
 // lacks (runs traced before a step was planned, or before there was a plan) are put in from here,
 // so every case of every run shows the same stops.
 const STOPS = ['bounding_box', 'read_sources', 'cut_front_back', 'cut_right_left', 'cut_top_bottom', 'cut_iso', 'isometric_support', 'check_views',
-  'cut_holes', 'open_mouths', 'evidence', 'cut_rounds', 'cut_curved', 'level_faces', 'plane_faces', 'open_cavities', 'open_recesses', 'model_cuts', 'shading_depth', 'cut_pockets',
+  'cut_holes', 'open_mouths', 'evidence', 'cut_rounds', 'cut_curved', 'level_faces', 'plane_faces', 'open_cavities', 'open_recesses', 'model_cuts', 'shading_depth', 'cut_pockets', 'hollow_shell',
   'split_faces', 'export_step'];
 function fullPlan(given) {
   const plan = given.slice();
@@ -1157,6 +1157,7 @@ const ABOUT = [
   [/^cut_rounds$/, () => 'Makes square sections round along boss and bore axes'],
   [/^cut_curved$/, () => 'Carries a curved face on under a flat ring the side views left around an axis'],
   [/^cut_pockets$/, () => 'Cuts pockets whose outline the views draw under our surface'],
+  [/^hollow_shell$/, () => 'Hollows the solid if volume and surface say the part is a thin shell'],
   [/^split_faces$/, () => 'Splits a face where the views draw a line across it'],
   [/^level_faces$/, () => 'Cuts each flat face down to its lowest level'],
   [/^plane_faces$/, () => 'Cuts flat faces down to the plane the isometric views give them'],

@@ -42,6 +42,7 @@ reasons in `decisions.md`.
 | model (`model_cuts`) | `propose.py`, `ops.py`, `judge.py` | off unless `OPENAI_BASE_URL` and `OPENAI_MODEL` are set; `HULL_PROPOSALS=<dir>` replays files | 12 eval parts with excess, Gemma 4 31B, same start solid, 20 000 points: IoU 0.9181 without, 0.9414 with (236: 0.796 to 0.990; 171: 0.759 to 0.844; 74: 0.899 to 0.918; 3: 0.918 to 0.912; 38 and 110 down 0.007); 24 to 332 s a part (below) |
 | shading (`shading_depth`) | `shading.py` | `HULL_SKIP=shading`, `HULL_SHADING_SLANTED=0`, `HULL_SHADING_DEEP=0` | IoU 0.854 to 0.861 (110: 0.79 to 0.86, 236: 0.70 to 0.73), none lower |
 | pockets (`cut_pockets`) | `pockets.py`, `lines.py` | `HULL_SKIP=pockets` | eval 236 1.354 to 1.254 times the true volume (IoU 0.740 to 0.796); 22 of 24 untouched, none lower |
+| shell (`hollow_shell`) | `shell.py` | `HULL_SHELL=0`, `HULL_SKIP=shell` | practice 19 6.35 to 0.993 times the true volume, surface 0.54 to 1.07, verifier 0.104 to 0.654; the sign is met by no other of 44 stored solids (24 eval, 20 practice) |
 | split (`split_faces`) | `split.py`, `lines.py` | `HULL_SKIP=split` | moves no material; splits faces on about 10 of the 24 |
 | export | `export.py` | | |
 
@@ -115,6 +116,13 @@ What each step does:
 - **Pockets.** A figure of lines inside one flat face of ours and under it (closed, or ending on
   other lines and closed straight across) is a pocket outline. Depth: where half of the outline
   lands on isometric lines and 0.25 more than at a usual depth.
+- **Shell.** If our solid has at least twice the true volume and 0.4 to 0.65 of the true surface
+  (`facts.json`), the part is taken for a thin shell and our solid for its outside, filled. What
+  is left of the solid after moving it by the wall along the six axis directions is taken out;
+  the wall starts at true volume / our surface and is corrected (up to 4 times) until the shell
+  has 0.97 to 1.10 of the true volume. Kept only if its surface is then 0.75 to 1.35 of the true
+  one and the verifier's score does not drop. The one step that does not only take away what a
+  view shows, and the result no longer contains the part.
 - **Split.** A line of a straight view through the inside of one face of ours, confirmed by the
   isometric view to lie on our surface, is drawn on as an edge. No cap on the face count. Seams
   of full cylinders, cones and tori are left out. Runs last; the export then skips `tidy`.
@@ -242,6 +250,22 @@ Practice set, our volume / true volume (no ground truth, so only excess shows):
   is still the image run of `bda2104`, without these steps.
 - `artifacts/inputs` holds `test_case_10` to `test_case_20` since 2026-11-12 (untracked, not
   from this session); `tests/test_submission_format.py` fails for them until they have outputs.
+  One run of commit `e6581e8` with another session's uncommitted `depth.py` in the tree
+  (run `20261112-205554-07b6`, 722 s for the eleven, cases in parallel, no step skipped; outputs
+  in a scratch folder, not in `artifacts/outputs`), our volume over the true one and faces of
+  the part's:
+
+  | part | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 |
+  | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+  | volume | 0.978 | 1.000 | 1.287 | 1.166 | 1.311 | 2.951 | 2.593 | 1.470 | 3.080 | 6.349 | 1.027 |
+  | faces | 301 of 64 | 5 of 6 | 141 of 273 | 260 of 703 | 796 of 350 | 903 of 265 | 515 of 157 | 323 of 323 | 1214 of 16 | 421 of 79 | 1255 of 341 |
+
+  With the shell step part 19 is 0.993 (one case run alone, 161 s; wall 1.95 mm, 1417 faces, the
+  file one valid solid of four shells).
+  Part 10 ends under the true volume (rounds to 0.999, level faces to 0.978). Plane faces took
+  part 17 from 4.687 to 1.567 and part 16 from 4.176 to 2.717. Parts 15, 18 and 19 are hardly
+  below their silhouette hull (3.75, 3.14, 7.31 after the straight cuts). Part 20 took 702 s.
+
 - Part 8 rose because 12 holes are no longer cut through; the old 1.002 was a cancelled error
   (`decisions.md`, Evaluation). Part 9 fell through the mouths.
 - All 9 files read back as one valid solid. The pockets cuts on practice 5, 7 and 9 (slivers on
@@ -323,6 +347,7 @@ image, emulated, took 10.5 minutes at phase 0.
 | `tools/check_normals.py [--table FILE.npz]` | tone against normal; writes the tone tables in `src/agentic_cad/tone_tables.npz` |
 | `tools/check_shading.py` | shading step alone; fills `runs/_shading_cache` |
 | `tools/find_hard.py` | picks a hard eval set; not run |
+| `tools/marks.py [ID]` | the places the user marked on a solid in the dashboard, for a session to read: face and its numbers, material under the point and room over it along the normal, inside or outside the ground truth and how far its surface is, the pixel in each of the 8 views, `mark_<n>.png` with the place ringed. 1.4 s for four marks on eval 52 |
 | `ui/server.py` | dashboard, reads `runs/` |
 
 `normals.py` is a measurement only, used by no step.
@@ -337,7 +362,6 @@ image, emulated, took 10.5 minutes at phase 0.
   missing volume computed in the browser).
 - Every case shows the same 18 stops; a step that did not run is dimmed as pending, off, skipped
   or not run; steps outside the plan fold into the stop they happened in.
-| `tools/marks.py [ID]` | the places the user marked on a solid in the dashboard, for a session to read: face and its numbers, material under the point and room over it along the normal, inside or outside the ground truth and how far its surface is, the pixel in each of the 8 views, `mark_<n>.png` with the place ringed. 1.4 s for four marks on eval 52 |
 - Keys: D diff colouring (red excess, violet missing), C a colour per face, X section plane, S
   scores panel (per tier, worst first). Case and run lists filter by typing; the run list shows
   the runs of the case on screen with its score.
@@ -346,6 +370,12 @@ image, emulated, took 10.5 minutes at phase 0.
   that run. R or the count in the bar hides it. Seen in a headless screenshot; the click is not
   tried in a browser.
 - Black background, no rules or nested frames, little text.
+- Marks (M or the pin in the tools; 2026-11-12): a click on our solid
+  or the ground truth puts a numbered mark there (on the cut face when the section is on: a place
+  inside the material), a click on a mark removes it; a note per mark; Send writes
+  `runs/_marks/<id>/marks.json` and a picture of each marked view and copies a summary for
+  pasting to a session; `tools/marks.py` works out the rest. Driven in headless Chrome on eval 52
+  (surface, section, truth, note, send; no page errors), not yet used by the user.
 - In the lower left corner of a view's picture a choice: Picture, Lines, Faces, Normals, Depth
   (click, V for the next, space held shows the picture as given; uncommitted, 2026-11-12). The
   pictures come from `/api/source`, at twice the view's size, transparent outside the part, for
@@ -360,12 +390,6 @@ image, emulated, took 10.5 minutes at phase 0.
   Chrome against the committed dashboard: eval 99 solid on screen 20.6 to 11.4 s and its IoU
   58 to 11.7 s after opening; eval 6 16.8 to 8.4 s and 32.6 to 8.6 s; practice 7 3.2 to 2.1 s.
   What is left is the reading of one large file.
-- Marks (M or the pin in the tools; 2026-11-12): a click on our solid
-  or the ground truth puts a numbered mark there (on the cut face when the section is on: a place
-  inside the material), a click on a mark removes it; a note per mark; Send writes
-  `runs/_marks/<id>/marks.json` and a picture of each marked view and copies a summary for
-  pasting to a session; `tools/marks.py` works out the rest. Driven in headless Chrome on eval 52
-  (surface, section, truth, note, send; no page errors), not yet used by the user.
 - Not yet looked at in a browser by the user: the picture zoom controls, the run list per case,
   the "evidence" stop (it has no solid). The left view's changes were driven in headless Chrome
   (clicks, keys, no page errors), not seen by the user.

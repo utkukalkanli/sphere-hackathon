@@ -95,6 +95,15 @@ kept beside its successor. Older wording: `git show bda2104:docs/memory/decision
   faces** (2026-11-12). The strip of a tyre's tread that faces the camera reads as a flat facing
   face in the eval renders, and the judge kept columns 20 to 36 mm deep in it (eval 3, 0.9172 to
   0.9126). Asking instead for one depth under each face cost eval 38 a right cut (0.9651).
+- **A part whose volume and surface say "thin shell" is hollowed** (2026-11-12, user: build the
+  shell step, after practice 19). No view shows the inside, so the wall is solved from the true
+  volume and the result checked by the true surface. It breaks "the solid contains the part" on
+  purpose: a filled shell overlaps the part by about a sixth. The limits (twice the volume, 0.4
+  to 0.65 of the surface) rest on one part; the 43 other stored solids do not meet them.
+- **The inside is found by moving the solid along the axes and intersecting, not by an offset**
+  (2026-11-12): OpenCascade's offset of the 421-face solid fails, the six intersections take 8 s.
+  The wall is then thinner across the diagonals than along the axes; 14 directions took 19 s and
+  changed the volume by 5 %, which the correction of the wall makes up anyway.
 - **Cavities and the deeper search under floors went in without an eval run** (2026-11-12, user:
   build them, run no eval case). They rest on the census of the excess and on the practice
   parts' volumes only; the 24 parts have to be run before these are trusted.
