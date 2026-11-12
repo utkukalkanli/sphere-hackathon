@@ -39,6 +39,7 @@ reasons in `decisions.md`.
 | plane faces (`plane_faces`) | `planes.py`, `sources.py` | `HULL_SKIP=planes` | cuts eval 110, 236, 171 and 74 (74: IoU 0.8675 to 0.9000; 110: 0.8605 to 0.8680), none lower; 24 parts 0.8928 to 0.8945; practice 7 one cut |
 | cavities (`open_cavities`) | `cavities.py`, `drawing.py`, `propose.try_cuts` | `HULL_SKIP=cavities`, `HULL_MAX_CAVITIES` | not run on the eval parts (user, 2026-11-12); practice 7 1.878 to 1.449, practice 5 1.225 to 1.133 |
 | recesses (`open_recesses`) | `recesses.py`, `drawing.py`, `propose.try_cuts` | `HULL_SKIP=recesses`, `HULL_RECESS_EITHER=0` | 24 parts IoU 0.8957 to 0.9076: eval 236 0.7897 to 0.9329, 171 0.7703 to 0.8561, 38 0.9371 to 0.9926 (38 through the choice of two), the other 21 untouched; practice 7 1.943 to 1.878, practice 8 four small ones |
+| core (`open_core`) | `core.py` | `HULL_CORE=0`, `HULL_SKIP=core` | practice 18 3.08 to 1.285 times the true volume (29 s of the case's 110); on practice 2, 3, 4, 10, 11 it does not look (the volume is right), on 6, 12, 13 our solid is closed round the listed cylinder; not run on the eval parts |
 | model (`model_cuts`) | `propose.py`, `ops.py`, `judge.py` | off unless `OPENAI_BASE_URL` and `OPENAI_MODEL` are set; `HULL_PROPOSALS=<dir>` replays files | 12 eval parts with excess, Gemma 4 31B, same start solid, 20 000 points: IoU 0.9181 without, 0.9414 with (236: 0.796 to 0.990; 171: 0.759 to 0.844; 74: 0.899 to 0.918; 3: 0.918 to 0.912; 38 and 110 down 0.007); 24 to 332 s a part (below) |
 | shading (`shading_depth`) | `shading.py` | `HULL_SKIP=shading`, `HULL_SHADING_SLANTED=0`, `HULL_SHADING_DEEP=0` | IoU 0.854 to 0.861 (110: 0.79 to 0.86, 236: 0.70 to 0.73), none lower |
 | pockets (`cut_pockets`) | `pockets.py`, `lines.py` | `HULL_SKIP=pockets` | eval 236 1.354 to 1.254 times the true volume (IoU 0.740 to 0.796); 22 of 24 untouched, none lower |
@@ -102,6 +103,12 @@ What each step does:
   our solid already has, a facing face under which our solid is one flat level lower than a
   facing neighbour: cut to the level an isometric face gives it if that is 4 px or more under
   ours, else searched deeper like the others, after them.
+- **Core.** For the widest cylinder `facts.json` lists along x, y or z: our solid is followed along
+  that axis at 0.97 of its radius on 12 lines round the axis. Where it is closed all round from
+  an end of the cylinder on, that is an end of the part and stays; between the ends it must be
+  open somewhere for a tenth of the length. Then cylinders of 0.9 to 0.5 of the radius are cut
+  out from end to end, the widest first, and the first is kept that leaves the part's volume,
+  does not worsen the outline and that the local judge finds strictly better.
 - **Model.** One request per case (six straight views with regions numbered, two isometric
   views, `facts.json`, brief, region table, volume ratio unless `HULL_MODEL_TELL_VOLUME=0`); the
   answer is a list of typed cuts (box, cylinder, prism, halfspace, region_floor). Each is cut,
@@ -262,6 +269,8 @@ Practice set, our volume / true volume (no ground truth, so only excess shows):
 
   With the shell step part 19 is 0.993 (one case run alone, 161 s; wall 1.95 mm, 1417 faces, the
   file one valid solid of four shells).
+  With the core step part 18 is 1.285 (one case run alone, 110 s; a core of 21.4 mm from 1.5 to
+  28.8 mm, 632 faces; that run had another session's uncommitted hull changes in the tree).
   Part 10 ends under the true volume (rounds to 0.999, level faces to 0.978). Plane faces took
   part 17 from 4.687 to 1.567 and part 16 from 4.176 to 2.717. Parts 15, 18 and 19 are hardly
   below their silhouette hull (3.75, 3.14, 7.31 after the straight cuts). Part 20 took 702 s.

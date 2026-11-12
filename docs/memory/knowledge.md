@@ -231,6 +231,20 @@ Tiers by our rule (up to 30 faces simple, up to 200 medium): parts 1 to 3, 4 to 
   is 0.87 on part 6, 1.03 on 15, 1.46 on 16, 1.18 on 7, 0.93 on 14, 2.79 on 18 (a coil spring).
   `facts.json` lists 3 solids for it (also for 12 and 13) and a `_vertex_extent_check` smaller
   than the box.
+- **Practice 18 (a coil spring between two end plates, 27 x 30 x 27, 16 faces) keeps the core of
+  its helix filled.** The two side silhouettes are zigzags and their intersection is a stack of
+  slabs, one per turn, right across the coil; the view along the axis is a full disc (one end
+  plate is solid, the other has a 12.7 mm hole). No step reads a helix, and the core is no
+  listed hole: `facts.json` lists only the outside (a boss of 26.7 mm over the full length).
+  Tried on the stored solid (3.08 times the true volume, verifier 0.188, lines 0.585): a
+  cylinder along the axis between the plates taken out leaves 2.35 at 12.7 mm, 1.71 at 18, 1.45
+  at 20, 1.17 at 22 and 1.03 at 23 mm, the silhouettes unchanged (0.992) and the lines up to
+  0.628: through the gaps the side views draw the far side of the coil. The wire is about 2.3
+  mm, so the inside of the coil about 22 mm. The slabs also leave 1214 faces for 16. The local
+  judge takes a core of 12.7 and 20 mm (tone better), 21.4 mm with the ends at 1.5 and 28.8 mm,
+  and refuses 22 and 23 mm: there the flat sides of our slabs show where the views have a round
+  wire. A point on an end face is not inside the solid for the classifier: probes must stay
+  off the ends.
 - **Practice 8.** After the blind holes the excess (7.7 cm3) is the flange lobes around the
   bolt holes: in the part a lobe is a boss only at the top and bottom, about 7 mm each, with no
   lobe between; ours is a prism over the full height, since a silhouette is the union over the

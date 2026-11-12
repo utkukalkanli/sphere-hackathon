@@ -95,6 +95,16 @@ kept beside its successor. Older wording: `git show bda2104:docs/memory/decision
   faces** (2026-11-12). The strip of a tyre's tread that faces the camera reads as a flat facing
   face in the eval renders, and the judge kept columns 20 to 36 mm deep in it (eval 3, 0.9172 to
   0.9126). Asking instead for one depth under each face cost eval 38 a right cut (0.9651).
+- **The middle of a part is taken out only where our solid is open round a listed axis and the
+  views take the cut** (2026-11-12, user: build the core step, after practice 18). The true
+  volume is only the upper limit; the judge chooses. Of the cylinders the judge accepts the
+  widest is kept, not the best rated: every one of them fits the views better than the filled
+  solid, and the judge turns against the wider ones for the flat sides of our slabs, not for
+  the part. One part stands behind this.
+- **The ends of such a part are where our solid is closed all the way round at the rim of the
+  listed cylinder** (2026-11-12). Following it nearer the axis took the first turns of the coil
+  for the end plate (a core 17 mm long instead of 27), and a majority of the lines round the
+  axis found no gap at all.
 - **A part whose volume and surface say "thin shell" is hollowed** (2026-11-12, user: build the
   shell step, after practice 19). No view shows the inside, so the wall is solved from the true
   volume and the result checked by the true surface. It breaks "the solid contains the part" on

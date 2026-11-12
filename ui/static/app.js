@@ -1128,7 +1128,7 @@ function renderSteps(c) {
 // lacks (runs traced before a step was planned, or before there was a plan) are put in from here,
 // so every case of every run shows the same stops.
 const STOPS = ['bounding_box', 'read_sources', 'cut_front_back', 'cut_right_left', 'cut_top_bottom', 'cut_iso', 'isometric_support', 'check_views',
-  'cut_holes', 'open_mouths', 'evidence', 'cut_rounds', 'cut_curved', 'level_faces', 'plane_faces', 'open_cavities', 'open_recesses', 'model_cuts', 'shading_depth', 'cut_pockets', 'hollow_shell',
+  'cut_holes', 'open_mouths', 'evidence', 'cut_rounds', 'cut_curved', 'level_faces', 'plane_faces', 'open_cavities', 'open_recesses', 'open_core', 'model_cuts', 'shading_depth', 'cut_pockets', 'hollow_shell',
   'split_faces', 'export_step'];
 function fullPlan(given) {
   const plan = given.slice();
@@ -1163,6 +1163,7 @@ const ABOUT = [
   [/^plane_faces$/, () => 'Cuts flat faces down to the plane the isometric views give them'],
   [/^open_cavities$/, () => 'Searches the depth of groups of faces a view shows inside a face our solid has flat'],
   [/^open_recesses$/, () => 'Searches the depth of faces a view draws a step at where our solid is level'],
+  [/^open_core$/, () => 'Takes out the middle of a part our solid has in pieces along a listed axis'],
   [/^shading_depth$/, () => 'Takes pocket depths from the shading of the isometric views'],
   [/^export_step$/, () => 'Merges coplanar faces and writes the .stp'],
 ];

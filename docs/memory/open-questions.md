@@ -111,6 +111,10 @@ Remove a question when it is answered and record the answer in `decisions.md`, `
 - **Grooves between fins** (practice 6). Done for flat faces standing on a visible level face.
   Open: flanks seen only from the side, banks that stand on nothing visible, small areas on
   thin-walled parts where the edge-on line is found by chance (eval 99).
+- **The core step beyond practice 18.** (2026-11-12.) One part stands behind it. Not known: what
+  it does on a part of discs on a thin shaft whose volume is not yet right (the outline should
+  refuse a core wider than the shaft, the judge one inside it; neither was seen happen), on
+  tilted axes (not looked at), and on the eval parts.
 - **Hollow parts beyond practice 19.** The shell step (2026-11-12) fires on a clean sign only.
   Practice 6 is a shell too and does not meet it (surface 0.87: the grooves between its fins are
   still filled). Open: whether the limits hold on parts never seen (no eval part is hollow);

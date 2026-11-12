@@ -33,7 +33,7 @@ ROOT = Path(__file__).resolve().parents[1]
 EVAL = ROOT / "datasets" / "eval"
 SRC = ROOT / "src" / "agentic_cad"
 CACHE = ROOT / "runs" / "_eval_cache"
-STEPS = ["box", "front_back", "right_left", "top_bottom", "iso", "holes", "mouths", "rounds", "curved", "depth", "planes", "cavities", "recesses", "model", "shading", "pockets", "shell", "split"]
+STEPS = ["box", "front_back", "right_left", "top_bottom", "iso", "holes", "mouths", "rounds", "curved", "depth", "planes", "cavities", "recesses", "core", "model", "shading", "pockets", "shell", "split"]
 IOU_POINTS = 1500
 
 
