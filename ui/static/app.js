@@ -25,6 +25,7 @@ const ICON = {
   faces: icon('<path d="M8 2.5 13 5v6l-5 2.5L3 11V5z"/><path d="M3 5l5 2.5L13 5M8 7.5v6"/>'),
   cut: icon('<path d="M2.5 11.5 8 9l5.5 2.5M2.5 4.5 8 2l5.5 2.5L8 7z"/><path d="M2.5 8 8 10.5 13.5 8" stroke-dasharray="2 1.7"/>'),
   order: icon('<path d="M3 4h10M3 8h7M3 12h4"/>'),
+  down: icon('<path d="M4.5 6.5 8 10l3.5-3.5"/>'),
   ghost: icon('<path d="M3 5.5 8 3l5 2.5v5L8 13l-5-2.5z" stroke-dasharray="2 1.7"/>'),
   play: icon('<path d="M5 3.5v9l7-4.5z" fill="currentColor"/>'),
   stop: icon('<rect x="4" y="4" width="8" height="8" rx="1" fill="currentColor"/>'),
@@ -83,20 +84,7 @@ const isImage = (name) => /\.(png|jpe?g|gif|webp|svg)$/i.test(name);
 const isStep = (name) => /\.(stp|step)$/i.test(name);
 
 const dataset = () => S.datasets.find((d) => d.id === S.dataset);
-const cases = () => ordered(S.cases[S.dataset] || []);
-// Worst first: the cases with a score by how far they are from the part, then the rest by number
-let worstFirst = true;
-try { worstFirst = localStorage.getItem('order') !== 'number'; } catch { /* private mode */ }
-function ordered(list) {
-  if (!worstFirst) return list;
-  const loss = (c) => (c.score ? 1 - c.score.score : -1);
-  return [...list].sort((a, b) => (loss(b) >= 0) - (loss(a) >= 0) || loss(b) - loss(a) || a.number - b.number);
-}
-function toggleOrder() {
-  worstFirst = !worstFirst;
-  try { localStorage.setItem('order', worstFirst ? 'loss' : 'number'); } catch { /* private mode */ }
-  renderBar();
-}
+const cases = () => S.cases[S.dataset] || [];
 const currentCase = () => cases().find((c) => c.name === S.caseName);
 const currentRun = () => S.runs.find((r) => r.id === S.runId);
 const datasetRuns = () => S.runs.filter((r) => !r.dataset || r.dataset === S.dataset);
@@ -330,27 +318,85 @@ const envelope = (c) => {
 };
 const generic = (c) => !c.title || /^mechanical part$/i.test(c.title) || c.title === c.name;
 
+const caseLabel = (c) => `${c.number} · ${generic(c) ? envelope(c) || c.name : c.title}${c.tier ? ` · ${c.tier}` : ''}`;
+const runLabel = (r) => `${clock(r.started_at)} · ${r.cases.length} case${r.cases.length === 1 ? '' : 's'} · ${r.status}`;
+const noRun = () => (dataset() && dataset().committed ? 'Committed outputs' : 'None');
+const grade = (score) => (score < 0.6 ? 'bad' : score < 0.9 ? 'warn' : '');
+
+// The lists behind the two buttons of the bar: our own, so a case can be found by typing its number
+// and every row can carry its score. One is open at a time.
+let menu = null;
+function openMenu(kind) {
+  menu = menu === kind ? null : kind;
+  const box = $('#menu');
+  box.hidden = !menu;
+  $$('[data-menu]').forEach((button) => button.setAttribute('aria-expanded', button.dataset.menu === menu));
+  if (!menu) return;
+  const anchor = $(`[data-menu="${menu}"]`).getBoundingClientRect();
+  box.style.left = `${anchor.left}px`;
+  box.style.top = `${anchor.bottom + 4}px`;
+  box.innerHTML = `<input id="menu-filter" type="text" autocomplete="off" spellcheck="false" placeholder="${menu === 'case' ? 'Number or name' : 'Filter'}" aria-label="Filter"><div class="list" role="listbox"></div>`;
+  renderMenu();
+  const chosen = box.querySelector('[aria-selected="true"]');
+  if (chosen) chosen.scrollIntoView({ block: 'center' });
+  $('#menu-filter').focus();
+  if (kind === 'case') refreshCases();
+}
+function renderMenu() {
+  if (!menu) return;
+  const list = $('#menu .list'), words = $('#menu-filter').value.trim().toLowerCase();
+  const number = /^\d+$/.test(words);
+  let html = '';
+  if (menu === 'case') {
+    const run = currentRun(), inRun = new Set(run ? run.cases.map((c) => c.name) : []);
+    for (const d of S.datasets) {
+      // a number finds the cases whose number starts with it; anything else is looked for in the row
+      const rows = (S.cases[d.id] || []).filter((c) => !words || (number ? String(c.number).startsWith(words) : caseLabel(c).toLowerCase().includes(words)));
+      if (!rows.length) continue;
+      html += `<h4>${esc(d.label)} <small>${rows.length}</small></h4>` + rows.map((c) => `<button role="option" data-pick="${d.id}/${c.name}" aria-selected="${d.id === S.dataset && c.name === S.caseName}">
+        <b>${c.number}</b><span>${esc(generic(c) ? envelope(c) || c.name : c.title)}</span><small>${esc(c.tier || '')}</small>
+        <em class="${c.score ? grade(c.score.score) : ''}">${c.score ? c.score.score.toFixed(2) : ''}</em><i class="${d.id === S.dataset && inRun.has(c.name) ? 'on' : ''}"></i></button>`).join('');
+    }
+  } else {
+    const rows = [{ id: '', label: noRun() }, ...datasetRuns().map((r) => ({ id: r.id, label: runLabel(r) }))].filter((r) => !words || r.label.toLowerCase().includes(words));
+    html = rows.map((r) => `<button role="option" data-pick="${esc(r.id)}" aria-selected="${r.id === (S.runId || '')}"><span>${esc(r.label)}</span></button>`).join('');
+  }
+  setHTML(list, html || '<p class="note">Nothing found</p>');
+  if (!list.querySelector('.at')) {
+    const first = list.querySelector(words ? 'button' : '[aria-selected="true"]') || list.querySelector('button');
+    if (first) first.classList.add('at');
+  }
+}
+function moveInMenu(offset) {
+  const rows = $$('#menu .list button'), at = rows.findIndex((row) => row.classList.contains('at'));
+  const next = rows[Math.max(0, Math.min(rows.length - 1, at + offset))];
+  if (!next) return;
+  if (rows[at]) rows[at].classList.remove('at');
+  next.classList.add('at');
+  next.scrollIntoView({ block: 'nearest' });
+}
+function pick(value) {
+  const kind = menu;
+  openMenu(kind);  // closes it
+  if (kind === 'case') { const [ds, name] = value.split('/'); return selectCase(name, ds); }
+  Object.assign(S, { runId: value, sel: null });
+  const run = currentRun();  // a run of other cases: go to its first case
+  if (run && run.cases.length && !runCase(run, S.caseName)) S.caseName = run.cases[0].name;
+  render();
+}
+
 function renderBar() {
-  const ds = dataset(), run = currentRun();
-  const inRun = new Set(run ? run.cases.map((c) => c.name) : []);
+  const run = currentRun(), current = currentCase();
   const running = run && run.status === 'running';
   setHTML($('#bar'), `
     <div class="group">
       <button class="icon" data-move="-1" title="Previous case (↑)" aria-label="Previous case">${ICON.prev}</button>
-      <select id="case-select" aria-label="Test case">
-        ${S.datasets.map((d) => `<optgroup label="${esc(d.label)} (${d.count})">
-          ${ordered(S.cases[d.id] || []).map((c) => `<option value="${d.id}/${c.name}" ${d.id === S.dataset && c.name === S.caseName ? 'selected' : ''}>
-            ${esc(`${c.score ? `${c.score.score.toFixed(2)} · ` : ''}${c.number} · ${generic(c) ? envelope(c) || c.name : c.title}${c.tier ? ` · ${c.tier}` : ''}`)}${d.id === S.dataset && inRun.has(c.name) ? ' •' : ''}</option>`).join('')}</optgroup>`).join('')}
-      </select>
+      <button class="pick" data-menu="case" aria-haspopup="listbox" aria-expanded="${menu === 'case'}" aria-label="Test case"><span>${esc(current ? caseLabel(current) : 'No case')}</span>${ICON.down}</button>
       <button class="icon" data-move="1" title="Next case (↓)" aria-label="Next case">${ICON.next}</button>
-      <button class="icon" data-order aria-pressed="${worstFirst}" title="Worst cases first (by overlap with the ground truth, or by volume where there is none)" aria-label="Worst cases first">${ICON.order}</button>
+      <button class="icon" data-scores aria-pressed="${scoresOpen}" title="Scores of all cases, worst first (S)" aria-label="Scores of all cases">${ICON.order}</button>
     </div>
     <label class="field"><span>Run</span>
-      <select id="run-select">
-        <option value="">${ds && ds.committed ? 'Committed outputs' : 'None'}</option>
-        ${datasetRuns().map((r) => `<option value="${esc(r.id)}" ${r.id === S.runId ? 'selected' : ''}>
-          ${esc(`${clock(r.started_at)} · ${r.cases.length} case${r.cases.length === 1 ? '' : 's'} · ${r.status}`)}</option>`).join('')}
-      </select>
+      <button class="pick" data-menu="run" aria-haspopup="listbox" aria-expanded="${menu === 'run'}" aria-label="Run"><span>${esc(run ? runLabel(run) : noRun())}</span>${ICON.down}</button>
     </label>
     <span class="spacer"></span>
     <span class="offline-note">Dashboard server is not responding</span>
@@ -515,13 +561,13 @@ function renderResult(c) {
 const WIDTHS = { left: 330, right: 310 };
 function setWidth(side, width) {
   const value = Math.round(Math.max(220, Math.min(innerWidth * 0.45, width)));
-  $('#main').style.setProperty(`--${side}`, `${value}px`);
+  document.body.style.setProperty(`--${side}`, `${value}px`);
   try { localStorage.setItem(`panel-${side}`, value); } catch { /* private mode */ }
 }
 for (const side of Object.keys(WIDTHS)) {
   let saved = null;
   try { saved = Number(localStorage.getItem(`panel-${side}`)); } catch { /* private mode */ }
-  if (saved) $('#main').style.setProperty(`--${side}`, `${saved}px`);
+  if (saved) document.body.style.setProperty(`--${side}`, `${saved}px`);
 }
 document.addEventListener('pointerdown', (event) => {
   const grip = event.target.closest('.grip');
@@ -843,10 +889,55 @@ function openOverlay(src) {
 
 // -- events -------------------------------------------------------------------------------------
 
+// -- scores -------------------------------------------------------------------------------------
+// One panel over the input column: every case of the set that has a score, worst first, with the
+// score after each step as small bars. The case list itself stays in order of number.
+let scoresOpen = false;
+function toggleScores() {
+  scoresOpen = !scoresOpen;
+  $$('[data-scores]').forEach((button) => button.setAttribute('aria-pressed', scoresOpen));
+  renderScores();
+  if (scoresOpen) refreshCases();
+}
+// The scores come with the case lists. They are read again when a list that shows them opens, and
+// every few seconds while the scores panel is open, so an eval running elsewhere shows up by itself.
+let casesAt = 0;
+async function refreshCases() {
+  casesAt = Date.now();
+  try { await ensureCases(true); } catch { return; }
+  renderScores();
+  renderMenu();
+}
+const mean = (list) => list.reduce((sum, c) => sum + c.score.score, 0) / list.length;
+function renderScores() {
+  const panel = $('#scores');
+  panel.hidden = !scoresOpen;
+  if (!scoresOpen) { shownFor = null; return; }
+  const scored = cases().filter((c) => c.score).sort((a, b) => a.score.score - b.score.score || a.number - b.number);
+  const tiers = ['simple', 'medium', 'complex'].map((t) => [t, scored.filter((c) => c.tier === t)]).filter(([, list]) => list.length);
+  const bars = (steps) => `<span class="bars">${steps.map((v) => `<i style="height:${Math.max(6, Math.round(v * 100))}%"></i>`).join('')}</span>`;
+  const rows = panel.querySelector('.rows'), scroll = rows ? rows.scrollTop : 0;
+  setHTML(panel, scored.length ? `
+    <header><b>${mean(scored).toFixed(3)}</b><span>mean of ${scored.length} of ${cases().length}</span>
+      ${tiers.map(([t, list]) => `<span>${t} <b>${mean(list).toFixed(2)}</b></span>`).join('')}</header>
+    <div class="rows">${scored.map((c) => `<button data-goto="${c.name}" aria-current="${c.name === S.caseName}" title="${c.score.iou ? 'Overlap with the ground truth (IoU)' : 'Volume score'} · after each step: ${c.score.steps.map((v) => v.toFixed(2)).join(' ')}">
+      <b class="${c.score.score < 0.6 ? 'bad' : c.score.score < 0.9 ? 'warn' : ''}">${c.score.score.toFixed(2)}</b>${bars(c.score.steps)}<span>${c.number}</span><small>${esc(c.tier || (generic(c) ? '' : c.title))}</small></button>`).join('')}</div>`
+    : '<p class="note">No scores yet. Run tools/eval_hull.py or a case.</p>');
+  if (panel.querySelector('.rows')) panel.querySelector('.rows').scrollTop = scroll;
+  if (shownFor !== S.caseName) {  // follow the chosen case, but leave the scroll alone otherwise
+    shownFor = S.caseName;
+    const current = panel.querySelector('[aria-current="true"]');
+    if (current) current.scrollIntoView({ block: 'nearest' });
+  }
+}
+let shownFor = null;
+
 function render() {
   normalise();
   writeHash();
   renderBar();
+  renderScores();
+  renderMenu();
   renderMain();
 }
 
@@ -874,7 +965,10 @@ document.addEventListener('click', async (event) => {
   if (d.ghost !== undefined) return toggleGhost();
   if (d.faces !== undefined) return toggleFaces();
   if (d.cut !== undefined) return cycleSection();
-  if (d.order !== undefined) return toggleOrder();
+  if (d.scores !== undefined) return toggleScores();
+  if (d.menu) return openMenu(d.menu);
+  if (d.pick !== undefined) return pick(d.pick);
+  if (d.goto) return selectCase(d.goto);
   if (d.diff !== undefined) return toggleDiff();
   if (d.lightbox) return openOverlay(d.lightbox);
   if (d.sel) return selectStep(d.sel);
@@ -895,29 +989,29 @@ document.addEventListener('dblclick', (event) => {
 });
 
 document.addEventListener('input', (event) => {
+  if (event.target.id === 'menu-filter') { htmlCache.delete($('#menu .list')); return renderMenu(); }
   if (event.target.id === 'cut') return setSection(section().axis, Number(event.target.value));
   if (event.target.id === 'scrub' && live.rows[event.target.value]) selectStep(live.rows[event.target.value].id);
 });
 
-document.addEventListener('change', (event) => {
-  const el = event.target;
-  if (el.id === 'case-select') { const [ds, name] = el.value.split('/'); selectCase(name, ds); }
-  else if (el.id === 'run-select') {
-    Object.assign(S, { runId: el.value, sel: null });
-    const run = currentRun();  // a run of other cases: go to its first case
-    if (run && run.cases.length && !runCase(run, S.caseName)) S.caseName = run.cases[0].name;
-    render();
-  }
+document.addEventListener('pointerdown', (event) => {  // a click anywhere else closes the open list
+  if (menu && !event.target.closest('#menu, [data-menu]')) openMenu(menu);
 });
 
 document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape') return closeOverlay();
+  if (menu) {  // the open list takes the keys
+    const act = { Escape: () => openMenu(menu), ArrowDown: () => moveInMenu(1), ArrowUp: () => moveInMenu(-1), PageDown: () => moveInMenu(10), PageUp: () => moveInMenu(-10),
+      Enter: () => { const at = $('#menu .list .at'); if (at) pick(at.dataset.pick); } }[event.key];
+    if (act) { event.preventDefault(); act(); }
+    return;
+  }
+  if (event.key === 'Escape') { if (scoresOpen) toggleScores(); return closeOverlay(); }
   if (event.target.matches('select, textarea, input:not([type=range])') || event.metaKey || event.ctrlKey || event.altKey) return;
   if (event.target.matches('input[type=range]') && event.key.startsWith('Arrow')) return;  // the slider moves itself
   const act = {
     ArrowRight: () => moveStep(1), ArrowLeft: () => moveStep(-1), ']': () => moveStep(1), '[': () => moveStep(-1),
     ArrowDown: () => moveCase(1), ArrowUp: () => moveCase(-1),
-    '+': () => zoomBy(1.25), '=': () => zoomBy(1.25), '-': () => zoomBy(0.8), f: fit, 0: fit, t: toggleOrbit, g: toggleGhost, d: toggleDiff, c: toggleFaces, x: cycleSection,
+    '+': () => zoomBy(1.25), '=': () => zoomBy(1.25), '-': () => zoomBy(0.8), f: fit, 0: fit, t: toggleOrbit, g: toggleGhost, d: toggleDiff, c: toggleFaces, x: cycleSection, s: toggleScores,
   }[event.key] || (/^[1-8]$/.test(event.key) && (() => showImage(VIEW_NAMES[Number(event.key) - 1])));
   if (!act) return;
   event.preventDefault();
@@ -937,7 +1031,9 @@ async function poll() {
     const wasRunning = S.runs.filter((r) => r.status === 'running').map((r) => r.id);
     Object.assign(S, { datasets: state.datasets, runs: state.runs, now: state.now });
     normalise();
-    await ensureCases(wasRunning.some((id) => (S.runs.find((r) => r.id === id) || {}).status !== 'running'));
+    const stale = scoresOpen && Date.now() - casesAt > 5000;
+    if (stale) casesAt = Date.now();
+    await ensureCases(stale || wasRunning.some((id) => (S.runs.find((r) => r.id === id) || {}).status !== 'running'));
     render();
     const run = currentRun();
     if (run && S.caseName) {

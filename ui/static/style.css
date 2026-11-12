@@ -275,4 +275,49 @@ h4 { margin: 9px 0 4px; font-size: 11px; font-weight: 500; color: var(--muted); 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
-#bar button.icon[aria-pressed="true"] { color: var(--accent); }
+#bar button.icon[aria-pressed="true"] { color: var(--accent); background: var(--select); }
+
+/* scores of all cases: drops over the input column, never over a model */
+#scores { position: fixed; z-index: 5; top: 52px; left: 0; bottom: 0; width: var(--left, 330px); display: flex; flex-direction: column; background: var(--bg); border-right: 1px solid var(--line); }
+#scores[hidden] { display: none; }
+#scores header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; padding: 14px 18px 12px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+#scores header b { color: var(--ink); font: 500 12px var(--mono); }
+#scores header > b { font-size: 20px; }
+#scores .rows { overflow: auto; padding: 6px 8px; }
+#scores .rows button { display: grid; grid-template-columns: 38px 64px 34px 1fr; align-items: center; gap: 10px; width: 100%; height: 30px; padding: 0 10px; border: 0; border-radius: 5px; background: none; color: var(--text); text-align: left; }
+#scores .rows button:hover { background: var(--hover); }
+#scores .rows button[aria-current="true"] { background: var(--select); color: var(--ink); }
+#scores .rows b { font: 500 12px var(--mono); color: var(--ink); }
+#scores .rows b.warn { color: #e0b252; }
+#scores .rows b.bad { color: #ff6b5e; }
+#scores .rows span { font: 12px var(--mono); text-align: right; }
+#scores .rows small { color: var(--muted); font-size: 12px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+#scores .bars { display: flex; align-items: flex-end; gap: 2px; height: 16px; }
+#scores .bars i { flex: 1; max-width: 6px; background: var(--muted); border-radius: 1px; }
+#scores .bars i:last-child { background: var(--accent); }
+
+/* the lists of the bar */
+#bar button.pick { max-width: 300px; padding: 0 8px 0 11px; font-weight: 400; }
+#bar button.pick span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+#bar button.pick svg { flex: none; color: var(--muted); }
+#bar button.pick[aria-expanded="true"] { border-color: var(--accent); }
+#menu { position: fixed; z-index: 8; display: flex; flex-direction: column; width: 400px; max-width: calc(100vw - 20px); max-height: min(70vh, 640px); border: 1px solid #343c45; border-radius: 8px; background: var(--raise); box-shadow: 0 16px 40px rgba(0, 0, 0, 0.7); }
+#menu[hidden] { display: none; }
+#menu input { flex: none; height: 36px; margin: 6px 6px 0; padding: 0 10px; border: 1px solid var(--line); border-radius: 5px; background: var(--bg); color: var(--ink); font: inherit; outline: none; }
+#menu input:focus { border-color: var(--accent); }
+#menu .list { overflow: auto; padding: 6px; }
+#menu h4 { margin: 8px 10px 4px; font-size: 11px; font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+#menu h4 small { font: 11px var(--mono); }
+#menu .list button { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto 34px 6px; align-items: center; gap: 10px; width: 100%; height: 30px; padding: 0 10px; border: 0; border-radius: 5px; background: none; color: var(--text); text-align: left; }
+#menu .list button > span:only-child { grid-column: 1 / -1; }
+#menu .list button span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+#menu .list button b { font: 500 12px var(--mono); color: var(--ink); text-align: right; }
+#menu .list button small { color: var(--muted); font-size: 12px; }
+#menu .list button em { font: 12px var(--mono); font-style: normal; text-align: right; color: var(--text); }
+#menu .list button em.warn { color: #e0b252; }
+#menu .list button em.bad { color: #ff6b5e; }
+#menu .list button i { width: 6px; height: 6px; border-radius: 50%; }
+#menu .list button i.on { background: var(--accent); }
+#menu .list button:hover, #menu .list button.at { background: var(--hover); }
+#menu .list button[aria-selected="true"] { background: var(--select); color: var(--ink); }
+#menu .list button[aria-selected="true"].at { box-shadow: inset 0 0 0 1px var(--accent); }
