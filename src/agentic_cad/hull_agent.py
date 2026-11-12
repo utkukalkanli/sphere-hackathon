@@ -11,10 +11,13 @@ from pathlib import Path
 
 from agentic_cad import holes as hl
 from agentic_cad import outline_fit as of
+from agentic_cad import pockets
 from agentic_cad import curved
 from agentic_cad import depth
+from agentic_cad import export
 from agentic_cad import rounds
 from agentic_cad import shading
+from agentic_cad import split
 from agentic_cad import trace
 from agentic_cad import visual_hull as vh
 
@@ -29,8 +32,10 @@ HOLES_TIMEOUT = float(os.environ.get("HULL_HOLES_TIMEOUT", 40))
 RETRY_BUDGET = float(os.environ.get("HULL_RETRY_BUDGET", 20))
 
 
-# Steps after the holes, in order; HULL_SKIP=rounds,curved,depth,shading switches some off
-LATER_STEPS = {"rounds": rounds, "curved": curved, "depth": depth, "shading": shading}
+# Steps after the holes, in order; HULL_SKIP=rounds,curved,depth,shading,pockets,split switches some off.
+# "split" moves no material and must stay last: a later cut or merge would undo it.
+LATER_STEPS = {"rounds": rounds, "curved": curved, "depth": depth, "shading": shading, "pockets": pockets,
+               "split": split}
 SKIP_STEPS = {name for name in os.environ.get("HULL_SKIP", "").split(",") if name}
 # The name each later step gives its trace step, for the plan the dashboard shows before anything has run
 STEP_NAMES = {"rounds": "cut_rounds", "curved": "cut_curved", "depth": "level_faces", "shading": "shading_depth",
@@ -48,6 +53,8 @@ class VisualHullAgent:
         self.volumes: dict[str, float] = {}  # volume in mm3 after each step of the last case
         self._stage = 0
         self.deadline: float | None = None  # time.time() after which the case's later steps are skipped
+        self.keep_faces = False  # set by the split step: the export must not merge its faces again
+        self.lines_found = None  # handed from the pockets step to the split step: the lines of an unchanged solid
 
     def out_of_time(self) -> bool:
         return self.deadline is not None and time.time() > self.deadline
@@ -64,9 +71,19 @@ class VisualHullAgent:
                 solid = self.cut_holes(solid, case_dir)
             except Exception as error:  # the hull is still a valid answer
                 trace.log(f"cut_holes raised {error!r}; keeping the hull", level="error")
+        carved = solid
         solid = self.refine(solid, case_dir, views)
         with trace.step("export_step", kind="tool", input={"output_path": str(output_path)}) as step:
-            solid = vh.tidy(solid)
+            if not self.keep_faces:
+                solid = vh.tidy(solid)
+            # The file is what counts: a solid that is valid here can come back broken from the .stp.
+            # Then the solid before the later steps is written instead, if that one survives.
+            if not export.reads_back_valid(solid):
+                step.log("the solid does not survive being written and read; trying the one before the later steps", level="warning")
+                before = vh.tidy(carved)
+                if export.reads_back_valid(before):
+                    solid = before
+                    step.metric(fallback="solid before the later steps")
             vh.write_step(solid, output_path)
             step.metric(volume_cm3=round(vh.volume(solid) / 1000, 3))
 
@@ -86,6 +103,7 @@ class VisualHullAgent:
     def refine(self, solid, case_dir: Path | None, views: list[Path], skip: tuple[str, ...] = ()):
         """The steps after the holes, each in its own module with an `apply(agent, solid, case_dir,
         views)`. A step that raises is skipped: the solid so far is still a valid answer."""
+        self.keep_faces, self.lines_found = False, None
         names = [name for name in LATER_STEPS if name not in skip and name not in SKIP_STEPS]
         for index, name in enumerate(names):
             module = LATER_STEPS[name]

@@ -5,6 +5,39 @@ the entry and say what changed.
 
 ## Pipeline
 
+- **The isometric views must be used, but never as a cut on their own: only together with
+  supporting data** (2026-11-12, user: "I do not want the isometric cut used alone; with supporting
+  data it works; if they give us isometric images we must use them". The user had decided this
+  before and the entry was lost). How it is built now, which is this session's reading of
+  "supporting data" and not yet confirmed in detail: the isometric silhouette is cut only when the
+  three straight cuts leave more than 1.5 times the true volume of `facts.json`; its scale is
+  confirmed on the hull of the straight cuts; it is cut first, on the box, with the straight cuts
+  after it; and the result is kept only if every cut went through, less is left, and the solid
+  still fills all three straight silhouettes (`hull_agent._with_iso`, `HULL_ISO_EXCESS`). This
+  narrows the two entries below ("used for depth and for checking, not for carving", "the
+  isometric cut is off"): the stand-alone fourth cut stays off.
+- **A silhouette cut that matches its view is kept down to 90 % of the true volume, as a last
+  resort** (2026-11-12, user confirmed; `HULL_TIGHT_SHARE=0.97` undoes it). Loosens "never cut below the true volume" for step 1 only: there the outline is a pixel tight
+  on a thin part, and dropping the direction cost eval 75 25 points. Later steps keep the 97 % guard.
+- **A silhouette with more than 1 % of its pixels in walls at most 2 px thick is traced along the
+  pixel edges, all others through the pixel centres** (2026-11-12). Edges everywhere made 14 of 22
+  ordinary parts worse; centres leave a thin wall no thickness (eval 51).
+- **Shared datums are off by default** (2026-11-12, user). Measured on the 24 eval parts they took
+  away about 6 % of the thin faces, the one IoU gain (eval 75) vanished at another tolerance, and a
+  thin-walled part (eval 51) lost walls. The code stays (`HULL_DATUMS=1`). Extra faces are attacked
+  at their larger source instead: outlines that stay polylines.
+- **Faces are split last, whatever the face count** (2026-11-12, user asked for the step and for
+  the order: line finder, then split, then the lines that mark missing geometry). Last, because any
+  later cut or `tidy` would merge the faces again. A first version stopped at `faces` of
+  `facts.json`; the user pointed at practice part 1, which has too many faces elsewhere and still
+  lacks the line across its bottom, so the count is no longer looked at.
+- **The file is checked, not only the solid** (2026-11-12). A step that makes curved faces asks
+  `export.reads_back_valid`; the final export asks it too and falls back to the solid before the
+  later steps. Found on practice part 4, which was valid in memory and invalid in the `.stp`.
+- **`normals.py` is not wired into the shading step** (2026-11-12; the user asked for it, the
+  measurement said no). As an extra "leave this face alone" test it cost eval 38 three correct cuts
+  (IoU 0.639 to 0.610) and gained nothing on the other 23 parts. It stays a measurement
+  (`tools/check_regions.py`) until a use is found that needs direction and not depth.
 - **Tones are used to say what kind of face an area is and to check a proposed face, not to
   measure a surface** (2026-11-12, user agreed to the approach; measurements in `knowledge.md`).
   One tone is one equation for a normal with two unknowns and the table is good to a few degrees at
@@ -87,11 +120,19 @@ the entry and say what changed.
 
 ## Dashboard
 
-- **Three columns: inputs, our solid with a strip of per-step solids, ground truth**
-  (2026-11-11, user). Dark theme, minimal, little text. The user rejected the earlier layouts as too
-  complicated and too wordy.
+- **One big 3D view, a step slider under it, small input and output windows left and right**
+  (2026-11-11 night, user; replaces the three columns). Each step must show what it extracted: the
+  removed material is drawn over the solid in 3D, and the step's attachments are listed under the
+  truth window on the right. The left panel holds the input and nothing else; since 2026-11-12 it is a small window on the
+  pictures in the top left corner of the big view, not a column, with the brief and the facts folded away (user: only used to switch between pictures). The
+  right window shows the ground truth, not our output (user: the output is already the big view).
+  The side panels are resizable. Black background (user), minimal, little text.
 - **New pipeline steps need no UI change** (2026-11-11). A `with trace.step(...)` in the agent is
-  enough; the solid after each step is saved as a stage `.stp` and shown in the strip.
+  enough; the solid after each step is saved as a stage `.stp` and becomes a stop on the slider.
+  Whatever the step attaches as an image or a `.json` list shows up as "extracted". The one-line
+  description under each stop comes from a list in `ui/static/app.js` (`ABOUT`); a new step adds a
+  line there or passes `description="..."` to `trace.step`. For the step to show on the slider
+  before it has run, its trace name also goes into `STEP_NAMES` in `hull_agent.py` (2026-11-12).
 - **Tracing is off in the Docker image** (`ENV TRACE=0`) (2026-11-11). It is a development aid and
   the container may only write to the output directory and `/tmp`.
 

@@ -37,6 +37,7 @@ from OCP.TopExp import TopExp_Explorer
 from OCP.TopoDS import TopoDS, TopoDS_Shape
 from OCP.collections import List_TopoDS_Shape
 
+from agentic_cad import export
 from agentic_cad import holes as hl
 from agentic_cad import trace
 from agentic_cad import verify
@@ -271,7 +272,25 @@ def _tool(item: Round) -> list[TopoDS_Shape]:
 
 
 def cut_rounds(shape: TopoDS_Shape, rounds: list[Round]) -> TopoDS_Shape | None:
-    """Make the listed stretches of `shape` round. One valid solid, or None. Runs in a child process."""
+    """Make the listed stretches of `shape` round. One valid solid, or None. Runs in a child process.
+
+    The result must also survive being written as a .stp: a revolved profile can leave a face that
+    is valid here and broken in the file. If all axis lines together do not, they are cut one at a
+    time and only those that do are kept."""
+    solid = _cut(shape, rounds)
+    if solid is not None and export.reads_back_valid(solid):
+        return solid
+    if len(rounds) < 2:
+        return None
+    current, kept = shape, 0
+    for item in rounds:
+        attempt = _cut(current, [item])
+        if attempt is not None and export.reads_back_valid(attempt):
+            current, kept = attempt, kept + 1
+    return current if kept else None
+
+
+def _cut(shape: TopoDS_Shape, rounds: list[Round]) -> TopoDS_Shape | None:
     tools = List_TopoDS_Shape()
     for item in rounds:
         for tool in _tool(item):

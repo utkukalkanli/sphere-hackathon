@@ -33,7 +33,7 @@ ROOT = Path(__file__).resolve().parents[1]
 EVAL = ROOT / "datasets" / "eval"
 SRC = ROOT / "src" / "agentic_cad"
 CACHE = ROOT / "runs" / "_eval_cache"
-STEPS = ["box", "front_back", "right_left", "top_bottom", "iso", "holes", "rounds", "curved", "depth", "shading"]
+STEPS = ["box", "front_back", "right_left", "top_bottom", "iso", "holes", "rounds", "curved", "depth", "shading", "pockets", "split"]
 IOU_POINTS = 1500
 
 
@@ -121,7 +121,7 @@ def evaluate(job: dict) -> dict:
         if options["holes"]:
             solid = agent.cut_holes(solid, case)
         solid = agent.refine(solid, case, views, skip=tuple(options["skip"]))
-        faces, explorer = 0, TopExp_Explorer(vh.tidy(solid), TopAbs_FACE)
+        faces, explorer = 0, TopExp_Explorer(solid if agent.keep_faces else vh.tidy(solid), TopAbs_FACE)
         while explorer.More():
             faces += 1
             explorer.Next()
