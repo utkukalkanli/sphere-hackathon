@@ -340,3 +340,16 @@ Dashboard:
   pixels where we are right it adds 5 %. 144 views take 16 s.
 - **The served model's step as it is on `main`** (Gemma 4 31B, 24 eval parts, four-term local score): 0.911 to
   0.913, 313 s to 694 s; 171 +0.035, 74 +0.026, 110 -0.010, 38 -0.005.
+
+- **The later steps stop for time only between their own attempts** (2026-11-12, `uzum`). Level
+  faces checked `agent.out_of_time()` once per view, not inside its one-cut-at-a-time loop, and
+  asked the verifier for the base solid's outline again on every attempt; on practice 7 after the
+  cavity cut it ran 1481 s alone. Both fixed. Shading and level faces have no clock of their own on
+  purpose (same solid on a slower machine); only the case's share of the run stops them.
+- **Practice 6 hides an enclosed void, but not a thin shell** (2026-11-12, `uzum`, on `main`'s
+  output). The brief says "a single solid" and `facts.json` gives genus 0, yet the flange alone
+  (Ø140, 27.5 mm with R10 rounds) holds about as much as the true 377.9 cm3, so the part must be
+  hollow. Our solid: 1042.6 cm3, 1377 cm2 of area against the true 1697.5 cm2. A shell of even
+  walls would have about twice the outer area; 1697 means a compact inner void of a few hundred
+  cm2. No view shows where it is or its shape. OpenCascade's inward `MakeThickSolidByJoin` on our
+  finned solid gives an invalid solid at 4 mm and fails at 6 mm (about 40 s each).
