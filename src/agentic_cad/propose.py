@@ -80,7 +80,10 @@ def replay_dir() -> Path | None:
 
 
 def enabled() -> bool:
-    return replay_dir() is not None or bool(os.environ.get("OPENAI_BASE_URL") and os.environ.get("OPENAI_MODEL"))
+    # HULL_MODEL_STEP=1: an endpoint alone no longer switches this step on, the harness uses the same
+    # variables (with Gemma this step made the practice parts worse, 0.908 to 0.880)
+    return replay_dir() is not None or bool(os.environ.get("HULL_MODEL_STEP") == "1"
+                                            and os.environ.get("OPENAI_BASE_URL") and os.environ.get("OPENAI_MODEL"))
 
 
 # -- asking ------------------------------------------------------------------------------------------

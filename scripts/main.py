@@ -4,6 +4,7 @@ import json
 import multiprocessing
 import os
 import signal
+import subprocess
 import sys
 import time
 import traceback
@@ -29,6 +30,13 @@ RUN_BUDGET = float(os.environ.get("HULL_RUN_BUDGET", 17 * 60))
 # puts it in place with one rename), so only the steps still running are lost.
 HARD_STOP = float(os.environ.get("HULL_HARD_STOP", 18.5 * 60))
 MIN_CASE_SECONDS = 5.0
+# The agents (src/agentic_cad/harness, one per case, only with OPENAI_API_KEY and OPENAI_MODEL) start on a
+# case when the pipeline is done with it and work until this many seconds after the start of the run.
+# Their best candidate replaces a case's file while they work, so a run stopped earlier keeps what it has.
+# The organisers allow one hour for the nine parts together (2026-11-12); the image sets 30 minutes:
+# in the first full run (55 min) nearly all of the agents' gain had come by then.
+HARNESS_SECONDS = float(os.environ.get("HARNESS_SECONDS", 19 * 60))
+HARNESS_DIR = Path(os.environ.get("HARNESS_DIR", "/tmp/harness"))
 
 
 @dataclass
@@ -142,6 +150,49 @@ def run_case(job: tuple) -> tuple[str, str]:
         agent.close()
 
 
+def start_harness(args, started: float, names: list[str]):
+    """The agents' process, or None when they are off. It never touches a case before `mark_done`."""
+    try:
+        from agentic_cad.harness import loop
+
+        if not loop.enabled():
+            return None
+        work = HARNESS_DIR / time.strftime("%Y%m%d-%H%M%S")
+        work.mkdir(parents=True, exist_ok=True)
+        command = [sys.executable, "-m", "agentic_cad.harness.loop", "--input_dir", str(args.input_dir),
+                   "--output_dir", str(args.output_dir), "--work_dir", str(work),
+                   "--deadline", str(started + HARNESS_SECONDS), "--only", *names]
+        return subprocess.Popen(command, start_new_session=True), work
+    except Exception:
+        traceback.print_exc()
+        return None
+
+
+def mark_done(harness, name: str) -> None:
+    """Tell the agents the pipeline has finished a case: its file is final and theirs to improve."""
+    if harness is None:
+        return
+    try:
+        folder = harness[1] / name
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "hull_done").touch()
+    except Exception:
+        traceback.print_exc()
+
+
+def finish_harness(harness, started: float) -> None:
+    if harness is None:
+        return
+    process = harness[0]
+    try:
+        process.wait(timeout=max(started + HARNESS_SECONDS + 20 - time.time(), 1.0))
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except Exception:
+            pass
+
+
 def main(args):
     print("Initialising agentic workflow")
 
@@ -181,6 +232,7 @@ def main(args):
         pool = ProcessPoolExecutor(workers, mp_context=multiprocessing.get_context("spawn"),
                                    initializer=_init_worker, initargs=(counter,))
         stopped = False
+        harness = start_harness(args, started, [tc.name for tc in order])
         try:
             futures = {pool.submit(run_case, job): job[0].name for job in jobs}
             for future in as_completed(futures, timeout=max(HARD_STOP - (time.time() - started), 1.0)):
@@ -190,7 +242,9 @@ def main(args):
                 except Exception:  # its process died (a crash inside OpenCascade): its last file stays
                     print(f"{name} FAILED in its worker process:")
                     traceback.print_exc()
+                    mark_done(harness, name)
                     continue
+                mark_done(harness, name)
                 if results.get(name) != "failed" or result == "ok":
                     results[name] = result
                 print(f"{name}: {result}")
@@ -205,6 +259,9 @@ def main(args):
                 process.terminate()   # SIGTERM: the worker exits and takes its boolean child with it
         finally:
             pool.shutdown(wait=not stopped, cancel_futures=True)
+        for test_case in order:   # also the cases the hard stop cut short: their last file is final now
+            mark_done(harness, test_case.name)
+        finish_harness(harness, started)
 
     problems = {name: result for name, result in results.items() if result != "ok"}
     if problems:

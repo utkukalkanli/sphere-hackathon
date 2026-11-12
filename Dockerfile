@@ -16,6 +16,13 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
     uv sync --locked --no-install-project --no-dev
 
+# The agents' own environment (src/agentic_cad/harness): CadQuery for the scripts the model writes
+# (it needs another OpenCascade than the pipeline, so it cannot share its environment) and the
+# DeepSeek Harness command `dsh` that runs one agent per test case.
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv venv /opt/cq --python 3.12 \
+    && uv pip install --python /opt/cq/bin/python cadquery==2.8.0 cadquery-ocp==7.9.3.1.1 deepseek-harness-sdk==0.2.2rc2
+
 # Copy the project into the image
 COPY . /app
 
@@ -30,8 +37,12 @@ ENV TRACE=0
 
 # Agent settings, frozen with your commit (README: Configuration). After code freeze, the values in
 # your handed-over <team>.env replace these.
-# ENV OPENAI_BASE_URL=http://<your Brev instance>:8000/v1 \
-#     OPENAI_API_KEY=<your vLLM --api-key> \
-#     OPENAI_MODEL=<model>
+# The agents are off without OPENAI_API_KEY, which is not in the image: it comes with <team>.env.
+# OPENAI_BASE_URL unset means OpenAI's own endpoint. In the container the agent's shell is not
+# sandboxed a second time (HARNESS_PERMISSION).
+ENV HARNESS_EFFORT=medium \
+    HARNESS_PERMISSION=danger-full-access \
+    HARNESS_SECONDS=1800
+ENV OPENAI_MODEL=gpt-6.1-terra
 
 CMD ["python", "scripts/main.py"]
