@@ -45,14 +45,18 @@ reasons in `decisions.md`.
 | isometric support | `iso_support.py`, `hull_agent._with_iso` | `HULL_ISO_EXCESS` (1.5), `HULL_ISO_MIN_GAIN` (1 %) | hull + holes IoU 0.8447 to 0.8541, kept on the 4 parts it ran on (99, 38, 171, 51), none lower |
 | holes, blind spans, skins | `holes.py`, `spans.py` | `HULL_HOLE_SPANS=0` | holes: IoU 0.824 to 0.834, cut on 14 of 24, none worse. Spans and drill points act on practice 8 only; skins on practice 9, 5 and eval 123 |
 | mouths (`open_mouths`) | `mouths.py` | `HULL_MOUTHS=0`, `HULL_MOUTH_FACES=0` | practice 9 whole pipeline 1.727 to 1.205 times the true volume; eval 123 and 171: of 334 sampled points removed none is in the truth |
+| seen mouths (`seen_mouths`) | `seen_mouths.py` | `HULL_SEEN_MOUTHS=0`, `HULL_SKIP=seen` | practice 5: six ports of 50 mm cut 35 mm deep, 1.219 to 1.124 times the true volume, surface 0.835 to 0.906 of the true one; no other practice part changes. On 48 eval parts (the 24 and 24 with stepped coaxial holes) one cut, 0.0 % of that part's volume. Whole practice run 11 min 38 s (2026-11-12) |
 | bowls (`cut_bowls`) | `bowls.py` | `HULL_BOWLS=0`, `HULL_SKIP=bowls` | practice 5 whole pipeline 1.225 to 1.191 (six port bowls round the d6.35 holes, cones 34.6 mm deep, verifier 0.724 to 0.753); finds nothing on the other 8 practice parts once the tone test is on (practice 6's flat top face round its blind bore was a false rim before it). Eval sample not run |
 | cavities (`cut_cavities`) | `cavities.py`, `views.py` (both from `nar`) | `HULL_SKIP=cavities` | practice 7 whole pipeline 1.943 to 1.416 (top cavity; 2.09 to 1.56 in the step, 49 s); practice 5: three bottom-view pockets proposed, all refused by the iso lines, bowls kept, 1.191 unchanged. Case time of practice 7 alone: 822 s (shading 516 s, level faces 105 s) against about 130 s on `main`: the cavity makes the later steps' verifier calls slower |
+| hole guard (in `_guarded`) | `hull_agent.py` | `HULL_HOLE_COUNT=0` | during the later steps no cut may take the number of through-holes further above the stated one, unless the solid then has a pinch. Practice 7 with `cavities`: 17 holes for 10 and 1.416 without it, 10 and 1.458 with it (18 cuts refused, the cavities found a little shallower). `cavities` also skips an opening whose depth search was stopped by the part's volume and not by a view (eval 3: 0.929 back from 0.894). Merged pipeline on the 24 eval parts, four-term local score 0.911 to 0.917 (182: 0.792 to 0.928); practice run 3 min 46 s with 4 workers on the GPU box (2026-11-12) |
 | rounds (`cut_rounds`) | `rounds.py` | `HULL_SKIP=rounds`, `HULL_ROUNDS_DISC=0` | IoU 0.834 to 0.847 (simple 0.960 to 0.994); "disc": cuts 6 of 266 eval parts, none lower; practice 6 3.81 to 3.31 |
 | curved recesses (`cut_curved`) | `curved.py`, `tone.py`, `regions.py` | `HULL_SKIP=curved` | no cut on the 24; 5 of the 37 lathe-type eval parts, none worse (249: 0.725 to 0.981); practice 2 1.105 to 1.018 |
 | level faces (`level_faces`) | `depth.py` | `HULL_SKIP=depth`, `HULL_DEPTH_SUPPORT=0` | IoU 0.847 to 0.854; supported cuts 0.8668 to 0.8791 (38: 0.628 to 0.933; 99: 0.252 to 0.241, accepted); practice 6 3.31 to 2.77 |
 | model (`model_cuts`) | `propose.py`, `ops.py`, `judge.py` | off unless `OPENAI_BASE_URL` and `OPENAI_MODEL` are set; `HULL_PROPOSALS=<dir>` replays files | never measured against ground truth (below) |
 | shading (`shading_depth`) | `shading.py` | `HULL_SKIP=shading`, `HULL_SHADING_SLANTED=0`, `HULL_SHADING_DEEP=0` | IoU 0.854 to 0.861 (110: 0.79 to 0.86, 236: 0.70 to 0.73), none lower |
 | pockets (`cut_pockets`) | `pockets.py`, `lines.py` | `HULL_SKIP=pockets` | eval 236 1.354 to 1.254 times the true volume (IoU 0.740 to 0.796); 22 of 24 untouched, none lower |
+| hole count (`hole_count`) | `hole_count.py` | `HULL_HOLE_COUNT=0`, `HULL_SKIP=holecount` | the stated number of through-holes on 20 of the 24 instead of 17 (38, 212, 171 right, 123 13 of 14), none worse, sampled IoU 0.8928 to 0.8925; practice 8 of 9 instead of 6 (4: 1 to 0, 5: 6 to 15; 8 stays 9 of 11); 0 to 8 s a part, whole practice run 11 min 20 s (2026-11-12) |
+| hidden void (`hidden_void`) | `hidden_void.py` | `HULL_HIDDEN_VOID=0`, `HULL_SKIP=void` | only when every view is explained (at most 8 % of a view's lines without an edge of ours, outlines within 2 %) and the solid still has 1.5 times the part's volume: practice 6, 2.766 to 1.000 times the true volume, 0 through-holes kept, surface 0.827 to 1.254 of the true one (the layers' steps), 16.5 s, file 5.3 to 16.5 MB. Fires on none of 48 eval parts (the four with that excess have 19 to 74 % of a view's lines unexplained), so the guess itself is not checked against a ground truth. Practice run 5 min 18 s (2026-11-12) |
 | split (`split_faces`) | `split.py`, `lines.py` | `HULL_SKIP=split` | moves no material; splits faces on about 10 of the 24 |
 | export | `export.py` | | |
 
@@ -104,6 +108,19 @@ What each step does:
 - **Pockets.** A figure of lines inside one flat face of ours and under it (closed, or ending on
   other lines and closed straight across) is a pocket outline. Depth: where half of the outline
   lands on isometric lines and 0.25 more than at a usual depth.
+- **Seen mouths.** A circle a straight view draws on a flat face of ours, with no edge of ours under it, that stands
+  over a thinner listed hole buried under that face: a cylinder of the circle's diameter is cut from the face to
+  the near end of that hole (the view gives the diameter, `facts.json` the depth). Only if the view shows a wall
+  just inside the circle (another tone than the face, or many tones), the opening is at least 0.3 diameters deep,
+  no other ring lies inside it, and the circle is not a listed hole's own. Kept if the volume stays above the
+  part's and the cut puts an edge under half of the circle's missed line.
+- **Hidden void.** A solid that every view explains and that is far too heavy is hollow; the space's volume is known, its shape not. All points deeper than one wall thickness under the surface are taken out, the thickness (found on a grid of 128 cells, practice 6: 4.4 mm) set so that the part's volume is left. The space is cut as a stack of prisms (3 grid layers each, drawn in by different hairs so that they share no edge) with a 1 mm vent through the thinnest wall, so the solid stays one shell.
+- **Hole count.** Counts the through-holes of the solid as it is written (genus from the topology, faces merged)
+  against `through_holes_genus`. First takes a hair of material (0.2 mm) away at every pinch: an edge more than
+  two faces share, or a point where two boundaries of one face touch; both count as holes that are not there.
+  Then, while the count is short, makes listed holes longer to where their axis leaves the material, thinnest
+  wall first, and keeps one only if the count rises, does not pass the stated one and no pinch is left (as
+  listed, then 0.05 mm wider and narrower). Cannot close a hole.
 - **Split.** A line of a straight view through the inside of one face of ours, confirmed by the
   isometric view to lie on our surface, is drawn on as an edge. No cap on the face count. Seams
   of full cylinders, cones and tori are left out. Runs last; the export then skips `tidy`.

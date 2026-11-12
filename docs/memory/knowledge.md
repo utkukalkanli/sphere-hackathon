@@ -320,6 +320,26 @@ Dashboard:
 - The section needs no cap geometry: clipped pixels showing the inside of the skin are the cut
   face. That needs outward winding; occt-import-js returns some solids wound inwards, so the
   worker flips a mesh with negative signed volume.
+- **A pinch counts as a through-hole** (2026-11-12). The genus from the topology (V - E + F - inner loops) rises
+  where two bodies touch in one edge or one point without a hole being there. The rounds step leaves such points:
+  a boss cut round that is tangent to a flat side of the hull (practice 4: two bosses, count 2, then 1 after the
+  faces are merged, for a part with 0). Healing (ShapeFix, sewing, a fuzzy boolean) does not remove them; cutting
+  0.2 mm away at the point does. On the leaderboard the pipeline without this scored 0.839 with practice 4, 5 and
+  8 at 1, 6 and 9 holes for 0, 15 and 11 (fdcc8c6). What the organisers' count makes of a pinch is not known.
+- **Practice 8 keeps 9 of 11 holes**: the two 4 mm holes along z that are missing touch the 6 mm cross holes;
+  cut as listed they leave pinched edges that are not straight, cut 0.05 mm wider or narrower the result is not a
+  valid solid. The step's own count on the merged solid says 11 there (4 pinches), the file read back says 9.
+- **Openings that are not cylinders are in no list of `facts.json`** (2026-11-12): practice 5's six ports are 5
+  degree cones (`cones_half_angle_deg`), about half of that part's excess. A straight view draws their mouths.
+  Without the wall, depth and nesting conditions the same rule cut into the part on eval 9 (a groove around a boss:
+  73 to 96 % of the cut was material), 33 and 189 (chamfers) (`tools/seen_mouths/find.py` prints the share against
+  the ground truth).
+- **A pretrained single-image depth model does not know the depths we get wrong** (Depth Anything V2 Large, 24 eval
+  parts, six straight views, `tools/depth_spike/`): fitted to our own solid its error on the pixels where we are
+  more than 2 % off is 19.7 % of the part's mean extent against our 19.0 %, fitted to the truth 12.6 %; on the
+  pixels where we are right it adds 5 %. 144 views take 16 s.
+- **The served model's step as it is on `main`** (Gemma 4 31B, 24 eval parts, four-term local score): 0.911 to
+  0.913, 313 s to 694 s; 171 +0.035, 74 +0.026, 110 -0.010, 38 -0.005.
 
 - **The later steps stop for time only between their own attempts** (2026-11-12, `uzum`). Level
   faces checked `agent.out_of_time()` once per view, not inside its one-cut-at-a-time loop, and

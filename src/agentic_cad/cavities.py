@@ -138,6 +138,7 @@ def apply(agent, solid: TopoDS_Shape, case_dir: Path | None, views: list[Path]) 
                 continue
             extent = float(abs(np.array([dims["x"], dims["y"], dims["z"]]) @ towards))
             base = current
+            too_light = []   # tries that were refused only because they left less than the part's volume
 
             def pocket(depth_mm: float):
                 """The solid with the opening cut `depth_mm` deep, or None; and whether it keeps the views."""
@@ -145,7 +146,7 @@ def apply(agent, solid: TopoDS_Shape, case_dir: Path | None, views: list[Path]) 
                                     outlines=outlines, origin=centre + (level - depth_mm) * towards, right=right, up=up,
                                     direction=towards, depth=reach, info={"depth": round(depth_mm, 2)})
                 carved = agent._guarded(step, base, target, lambda: agent.cutter.run(levels.remove, base, [cut], TIMEOUT),
-                                        quiet=True, share=1.0)
+                                        quiet=True, share=1.0, refused=too_light)
                 if carved is None:
                     return None, False
                 after = view_set.missing(carved)
@@ -168,6 +169,12 @@ def apply(agent, solid: TopoDS_Shape, case_dir: Path | None, views: list[Path]) 
                       "first_bad_mm": round(bad_depth, 2)}
             if good is None:
                 results.append({**record, "result": "out of time" if timed_out else "no depth keeps every silhouette"})
+                continue
+            if too_light:
+                # The search stopped at the part's volume, not at a wall: then the depth is whatever
+                # uses up the excess, wherever the excess really is (eval 3, a tyre: 16 mm into the tread
+                # for an excess of 8 %, score 0.929 to 0.894).
+                results.append({**record, "result": "the depth is set by the part's volume, not by a view"})
                 continue
             iso_after = verify.check(good, case_dir, observed, views=ISO)
             lines_after = iso_after.mean("lines") * iso_after.mean("silhouette")

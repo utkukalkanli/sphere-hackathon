@@ -11,6 +11,8 @@ from pathlib import Path
 
 from agentic_cad import bowls
 from agentic_cad import cavities
+from agentic_cad import hidden_void
+from agentic_cad import hole_count
 from agentic_cad import holes as hl
 from agentic_cad import mouths
 from agentic_cad import spans
@@ -26,6 +28,7 @@ from agentic_cad import depth
 from agentic_cad import evidence as evidence_table
 from agentic_cad import export
 from agentic_cad import rounds
+from agentic_cad import seen_mouths
 from agentic_cad import shading
 from agentic_cad import split
 from agentic_cad import trace
@@ -59,19 +62,24 @@ HOLES_TIMEOUT = float(os.environ.get("HULL_HOLES_TIMEOUT", 40))
 RETRY_BUDGET = float(os.environ.get("HULL_RETRY_BUDGET", 20))
 
 
-# Steps after the holes, in order; HULL_SKIP=bowls,rounds,curved,cavities,depth,model,shading,pockets,split switches some off.
+# Steps after the holes, in order; HULL_SKIP=seen,bowls,rounds,curved,cavities,depth,model,shading,pockets,void,holecount,split
+# switches some off. "seen" and "bowls" look for the same openings (a mouth a view draws over a listed hole);
+# "seen" cuts first, as a cylinder, and what it has cut "bowls" no longer finds.
 # "model" (propose.py) does nothing unless an endpoint is configured; it comes before the fine cuts,
 # because a large structural cut lowers the precision every later cut needs.
+# "holecount" comes after every step that removes material, so that it counts the holes of the solid we hand in.
 # "split" moves no material and must stay last: a later cut or merge would undo it.
-LATER_STEPS = {"bowls": bowls, "rounds": rounds, "curved": curved, "cavities": cavities, "depth": depth, "model": propose, "shading": shading,
-               "pockets": pockets, "split": split}
+LATER_STEPS = {"seen": seen_mouths, "bowls": bowls, "rounds": rounds, "curved": curved, "cavities": cavities, "depth": depth,
+               "model": propose, "shading": shading, "pockets": pockets, "void": hidden_void, "holecount": hole_count,
+               "split": split}
 # The "evidence" step is for the dashboard only and runs only while tracing; TRACE_EVIDENCE=0 leaves it
 # out, so a traced run takes the time the image (TRACE=0) takes.
 SHOW_EVIDENCE = os.environ.get("TRACE_EVIDENCE", "1") != "0"
 SKIP_STEPS = {name for name in os.environ.get("HULL_SKIP", "").split(",") if name}
 # The name each later step gives its trace step, for the plan the dashboard shows before anything has run
-STEP_NAMES = {"bowls": "cut_bowls", "rounds": "cut_rounds", "curved": "cut_curved", "cavities": "cut_cavities", "depth": "level_faces", "model": "model_cuts",
-              "shading": "shading_depth", "pockets": "cut_pockets", "split": "split_faces"}
+STEP_NAMES = {"seen": "seen_mouths", "bowls": "cut_bowls", "rounds": "cut_rounds", "curved": "cut_curved", "cavities": "cut_cavities",
+              "depth": "level_faces", "model": "model_cuts", "shading": "shading_depth", "pockets": "cut_pockets",
+              "void": "hidden_void", "holecount": "hole_count", "split": "split_faces"}
 
 
 class VisualHullAgent:
@@ -91,6 +99,7 @@ class VisualHullAgent:
         self._evidence = None  # what the inputs of the case in hand say (evidence.py)
         self._output_path: Path | None = None  # where `refine` writes the case's answer, for `save`
         self._sound: bool | None = None  # whether the solid so far reads back valid from its file, if asked
+        self.holes_stated: int | None = None  # the part's number of through-holes, while the later steps run
 
     def evidence(self, case_dir: Path, dims: dict | None = None) -> "evidence_table.Evidence":
         """The views of a case and what the steps derive from them, read once for the case."""
@@ -213,6 +222,9 @@ class VisualHullAgent:
         done so far). A step whose solid does not survive that is dropped, it alone."""
         self.keep_faces, self.lines_found = False, None
         self._output_path = output_path
+        # From here on no cut may take the number of through-holes further above the part's (`_guarded`):
+        # a cut that breaks through a wall is wrong wherever it is, and nothing later can close the hole.
+        self.holes_stated = hole_count.stated(case_dir) if hole_count.ENABLED else None
         self._show_evidence(solid, case_dir)
         names = [name for name in LATER_STEPS if name not in skip and name not in SKIP_STEPS]
         for index, name in enumerate(names):
@@ -559,6 +571,15 @@ class VisualHullAgent:
                 step.fail("the cut gave no valid solid; keeping the previous one")
             return None
         after = vh.volume(carved)
+        if self.holes_stated is not None:
+            holes, held = hole_count.genus(carved), hole_count.genus(solid)
+            # ... unless the count is that of a pinch (two bodies touching in an edge or a point), which
+            # is no hole and which the hole count step takes away (practice 4, the rounds step)
+            if holes > held and holes > self.holes_stated and not hole_count.pinches(carved):
+                message = (f"the cut would give {holes} through-holes, the part has {self.holes_stated}; "
+                           "keeping the previous solid")
+                step.log(message, level="warning") if quiet else step.fail(message)
+                return None
         if target and after < share * target:
             if refused is not None:
                 refused.append((carved, None))
