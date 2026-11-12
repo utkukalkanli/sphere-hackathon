@@ -36,6 +36,17 @@ truth. What it holds:
   so the eval set has no such case. `holes.py` alone cuts the whole span: on practice 8 that makes
   through holes of all 12, about 12 cm3 of the 121 cm3 part for the 8 large ones alone.
   `spans.py` now replaces such a span (see `state.md`).
+- **Where practice 8 differs from its views** (2026-11-12, whole pipeline with `spans.py`, 129.6
+  cm3 against the true 121.5; our solid drawn with the tone table beside each of the 8 views, by
+  eye, no ground truth). Tones are off and lines are missing in one kind of place only: the
+  rounded hollows where the four outer lobes of the flange (front centre, back centre, the two
+  back corners) run into the body, above and below, and the flat panels between them; our solid is
+  a prism there, cut by the top outline. Share of part pixels with a tone more than 15 levels off:
+  back 18 %, front 9 %, left and right 5 %, top and bottom 4 %, isometric 1 and 4 %. The foot
+  pockets are cut but their lines differ. How much volume lies there is not known. What is known:
+  the solid has only 14.9 cm3 behind y = 113 and 1.2 behind y = 122, so the hollows at the back
+  cannot hold all 8.1 cm3; and the guessed depth of the blind holes alone is worth up to 3.7 cm3
+  (d7 holes 10 mm deep instead of 5.05: 3.1; d4.2 holes 11 instead of 5.94: 0.6).
 - **A listed hole that is not white in the views along its axis is not by itself wrong**: on the
   practice set that holds for 12 hole groups (blind bores of 5, 6, 7 among them). The cut is
   wrong where it opens a line of sight through the part that both views along the axis show

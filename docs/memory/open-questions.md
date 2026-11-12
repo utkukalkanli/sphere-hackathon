@@ -98,8 +98,8 @@ Remove a question when it is answered, and record the answer in `decisions.md` o
   than about 0.7 diameters (the isometric view shows no bottom), and the d7 holes at x 16 and 64
   have 10.1 mm before they would reach the main bore. Unused: that lower bound, the drill-point
   cone (59 degrees in `facts.json`), and whether the true volume can fix the depth once the rest
-  of the part is right. The hull's excess on practice 8 (about 7 % of the volume), which the
-  through holes had hidden, is now in the open and not located.
+  of the part is right. The depth is worth up to 3.7 of the 8.1 cm3 of excess on practice 8
+  (`knowledge.md`, "Where practice 8 differs from its views").
 - **Pockets from lines under our surface: what is left to gain?** (2026-11-12) Lines under our
   surface exist on 7 of the 24 eval parts. Taken now: closed figures and figures that end on
   another line of the view (eval 236, 171). Not pockets at all: the seams of a curved surface our
