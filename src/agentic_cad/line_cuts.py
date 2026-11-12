@@ -56,7 +56,7 @@ PEAK_SHARE = 0.04          # a depth line must run along at least this share of 
 MAX_DEPTHS = 8             # depths tried per region, nearest the viewer first
 # Tries per case. This, not the time budget, is what normally ends the step, so the result does not
 # depend on how fast the machine is; the time budget only stops a step that runs far too long.
-MAX_TRIES = int(os.environ.get("LINE_MAX_TRIES", 40))
+MAX_TRIES = int(os.environ.get("LINE_MAX_TRIES", 60))
 CURVED_STD = 4.0           # a region whose tone varies more than this (grey levels) is not flat ...
 CURVED_SHARE = 0.85        # ... and is a cylinder if its tone along one image direction explains this much
 MAX_DIAMETERS = 2          # diameters tried per curved region and kind

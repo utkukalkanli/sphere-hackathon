@@ -141,6 +141,14 @@ class Tracer:
     def case(self, name: str) -> "CaseTrace":
         return CaseTrace(self, name)
 
+    @classmethod
+    def attached(cls, run_dir: Path) -> "Tracer":
+        """The tracer of a run that another process started: cases can be written into its
+        directory, the run's own record (run.json) is left to that process."""
+        tracer = cls.__new__(cls)
+        tracer.dir, tracer.run_id, tracer._info = Path(run_dir), Path(run_dir).name, {}
+        return tracer
+
     def finish(self, status: str = "ok", error: str | None = None) -> None:
         if self.dir is None:
             return

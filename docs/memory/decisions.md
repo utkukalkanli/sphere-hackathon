@@ -5,6 +5,10 @@ the entry and say what changed.
 
 ## Pipeline
 
+- **Test cases run in parallel processes, up to 4 by default** (2026-11-12). One case uses one core
+  and the run has 20 minutes for all of them; 4, not one per core, because each case also starts a
+  child process for its booleans and the Windows PC ran out of memory once. A case whose process
+  dies gets the bounding box. The line step's time limit is derived from the 20 minutes.
 - **Step 3 reads pockets from the lines inside the views, checked against all eight line drawings**
   (2026-11-11, user asked for the lines and the iso views). A pocket may not take the solid below the
   true volume (holes may go to 97 %), and it must improve the line agreement of the two iso views,

@@ -1,12 +1,15 @@
 import argparse
+import multiprocessing
+import os
 import traceback
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 
 from agentic_cad import trace
 from agentic_cad import visual_hull
 from agentic_cad.hull_agent import VisualHullAgent
-from agentic_cad.trace import Tracer
+from agentic_cad.trace import CaseTrace, Tracer
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_INPUTS = REPO_ROOT / "artifacts/inputs"
@@ -82,26 +85,73 @@ def process(agent: VisualHullAgent, test_case: TestCase, output_path: Path) -> s
     return "failed"
 
 
+def case_workers(count: int) -> int:
+    """How many test cases run at once: CASE_WORKERS, else up to 4 and at most one per core. Each
+    case also starts a child process for its booleans, so this is about twice as many processes."""
+    if os.environ.get("CASE_WORKERS"):
+        return max(1, int(os.environ["CASE_WORKERS"]))
+    return max(1, min(4, os.cpu_count() or 1, count))
+
+
+def run_case(job: tuple[TestCase, str, str | None]) -> tuple[str, str]:
+    """One test case in its own process (see `main`), traced into the run's directory."""
+    test_case, output_path, run_dir = job
+    agent = VisualHullAgent()
+    try:
+        tracer = Tracer.attached(Path(run_dir)) if run_dir else None
+        with CaseTrace(tracer, test_case.name) as case:
+            result = process(agent, test_case, Path(output_path))
+            case.output(Path(output_path))
+        return test_case.name, result
+    finally:
+        agent.close()
+
+
 def main(args):
     print("Initialising agentic workflow")
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    agent = VisualHullAgent()
     test_cases = load_test_cases(args.input_dir)
     if args.only:
         test_cases = [tc for tc in test_cases if tc.name in args.only]
 
     results: dict[str, str] = {}
+    workers = case_workers(len(test_cases))
+    # The line cuts (step 3) stop at a time budget only as a safety net; size it so that all rounds of
+    # cases fit in the 20 minutes with room to spare (17 minutes, 30 s per case for the other steps)
+    rounds = -(-max(1, len(test_cases)) // workers)
+    os.environ.setdefault("LINE_BUDGET", str(round(min(180.0, 17 * 60 / rounds - 30), 1)))
     # Records every step under runs/ for the dashboard (ui/); a no-op where it can't write
-    with Tracer(meta={"input_dir": args.input_dir, "output_dir": args.output_dir}) as tracer:
-        for test_case in test_cases:
-            print(f"processing {test_case.name}")
+    with Tracer(meta={"input_dir": args.input_dir, "output_dir": args.output_dir, "workers": workers}) as tracer:
+        if workers > 1:
+            # The test cases run side by side: the whole run has 20 minutes, and one case uses one core
+            run_dir = str(tracer.dir) if tracer.dir else None
+            jobs = [(tc, str(args.output_dir / f"{tc.name}.stp"), run_dir) for tc in test_cases]
+            print(f"processing {len(jobs)} test cases, {workers} at a time")
+            with ProcessPoolExecutor(workers, mp_context=multiprocessing.get_context("spawn")) as pool:
+                futures = {pool.submit(run_case, job): job[0].name for job in jobs}
+                for future in as_completed(futures):
+                    try:
+                        name, result = future.result()
+                    except Exception:  # its process died (a crash inside OpenCascade): it gets the box below
+                        print(f"{futures[future]} FAILED in its worker process:")
+                        traceback.print_exc()
+                        continue
+                    results[name] = result
+                    print(f"{name}: {result}")
+        else:
+            agent = VisualHullAgent()
+            for test_case in test_cases:
+                print(f"processing {test_case.name}")
+                output_path = args.output_dir / f"{test_case.name}.stp"
+                with tracer.case(test_case.name) as case:
+                    results[test_case.name] = process(agent, test_case, output_path)
+                    case.output(output_path)
+            agent.close()
+        for test_case in test_cases:  # whatever has no answer yet still gets the bounding box
             output_path = args.output_dir / f"{test_case.name}.stp"
-            with tracer.case(test_case.name) as case:
-                results[test_case.name] = process(agent, test_case, output_path)
-                case.output(output_path)
-
-    agent.close()
+            if test_case.name not in results:
+                results[test_case.name] = "fallback" if write_fallback(test_case, output_path) else "failed"
     problems = {name: result for name, result in results.items() if result != "ok"}
     if problems:
         print(f"Pipeline finished; {len(problems)} of {len(results)} cases did not go through: {problems}")

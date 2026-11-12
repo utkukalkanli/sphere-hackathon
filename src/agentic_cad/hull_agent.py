@@ -33,7 +33,8 @@ RETRY_BUDGET = float(os.environ.get("HULL_RETRY_BUDGET", 20))
 # cases share 20 minutes, so this stays well under a ninth of it.
 PLANNED_CUT_TIMEOUT = float(os.environ.get("PLANNED_CUT_TIMEOUT", 20))
 PLANNED_BUDGET = float(os.environ.get("PLANNED_BUDGET", 75))
-# Step 3: seconds for all line cuts of one case, and for one boolean of it
+# Step 3: seconds for all line cuts of one case (a safety net: the step normally ends after a fixed
+# number of tries; scripts/main.py sets LINE_BUDGET from the 20 minutes), and for one boolean of it
 LINE_BUDGET = float(os.environ.get("LINE_BUDGET", 90))
 LINE_CUT_TIMEOUT = float(os.environ.get("LINE_CUT_TIMEOUT", 15))
 
@@ -299,7 +300,8 @@ class VisualHullAgent:
                 return hl.outline_hints(case_dir, "xyz"[u], "xyz"[v], "xyz"[3 - u - v])
 
             carved, kept = line_cuts.carve(solid, views, dims, vh.read_volume(case_dir), self.cutter, view_set,
-                                           known_for, step, LINE_BUDGET, LINE_CUT_TIMEOUT,
+                                           known_for, step, float(os.environ.get("LINE_BUDGET", LINE_BUDGET)),
+                                           LINE_CUT_TIMEOUT,
                                            diameters=cylinder_diameters(case_dir))
             if kept:
                 self._record(step, carved, "lines")

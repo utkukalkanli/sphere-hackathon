@@ -22,7 +22,7 @@ from OCP.BRepMesh import BRepMesh_IncrementalMesh
 from OCP.GeomAbs import GeomAbs_Line
 from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt
 from OCP.HLRAlgo import HLRAlgo_Projector
-from OCP.HLRBRep import HLRBRep_PolyAlgo, HLRBRep_PolyHLRToShape
+from OCP.HLRBRep import HLRBRep_Algo, HLRBRep_HLRToShape, HLRBRep_PolyAlgo, HLRBRep_PolyHLRToShape
 from OCP.TopAbs import TopAbs_EDGE
 from OCP.TopExp import TopExp_Explorer
 from OCP.TopoDS import TopoDS, TopoDS_Shape
@@ -83,18 +83,26 @@ def render_lines(image_path: Path, crop: bool) -> np.ndarray | None:
 
 
 def visible_edges(shape: TopoDS_Shape, right: np.ndarray, up: np.ndarray, deflection: float,
-                  smooth: bool = True) -> list[np.ndarray]:
+                  smooth: bool = True, exact: bool = False) -> list[np.ndarray]:
     """The edges of `shape` seen when looking along -(right x up), hidden parts removed, as polylines of
     (a, b) = (p . right, p . up) in mm. Sharp edges always, tangent ones (fillet boundaries) if `smooth`."""
     BRepMesh_IncrementalMesh(shape, deflection)
     toward_viewer = np.cross(right, up)
-    algo = HLRBRep_PolyAlgo()
-    algo.Load(shape)
-    algo.Projector(HLRAlgo_Projector(gp_Ax2(gp_Pnt(0, 0, 0), gp_Dir(*map(float, toward_viewer)),
-                                            gp_Dir(*map(float, right)))))
-    algo.Update()
-    to_shape = HLRBRep_PolyHLRToShape()
-    to_shape.Update(algo)
+    projector = HLRAlgo_Projector(gp_Ax2(gp_Pnt(0, 0, 0), gp_Dir(*map(float, toward_viewer)), gp_Dir(*map(float, right))))
+    if exact:  # the exact algorithm: slower, but it does not fail on meshes the polygonal one fails on
+        algo = HLRBRep_Algo()
+        algo.Add(shape)
+        algo.Projector(projector)
+        algo.Update()
+        algo.Hide()
+        to_shape = HLRBRep_HLRToShape(algo)
+    else:
+        algo = HLRBRep_PolyAlgo()
+        algo.Load(shape)
+        algo.Projector(projector)
+        algo.Update()
+        to_shape = HLRBRep_PolyHLRToShape()
+        to_shape.Update(algo)
     compounds = [to_shape.VCompound()] + ([to_shape.Rg1LineVCompound()] if smooth else [])
     polylines = []
     for compound in compounds:
@@ -166,8 +174,11 @@ class LineViews:
         for v in self.views:
             try:
                 polylines = visible_edges(tidy, v.right, v.up, deflection)
-            except Exception:  # HLRBRep_PolyAlgo fails on some meshes (Standard_OutOfRange): mesh finer once
-                polylines = visible_edges(tidy, v.right, v.up, deflection * 0.6)
+            except Exception:  # HLRBRep_PolyAlgo fails on some meshes (Standard_OutOfRange)
+                try:
+                    polylines = visible_edges(tidy, v.right, v.up, deflection * 0.6)
+                except Exception:
+                    polylines = visible_edges(tidy, v.right, v.up, deflection, exact=True)
             lines = draw(polylines, v.camera, v.right, v.up, v.lines.shape)
             silhouette = np.pad(rasterize(tris, v.camera, v.lines.shape), 1)
             outline = silhouette & ~cv2.erode(silhouette.astype(np.uint8), np.ones((3, 3), np.uint8)).astype(bool)

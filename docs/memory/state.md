@@ -1,6 +1,6 @@
 # Project state
 
-Last updated: 2026-11-12, about 00:20 CET (step 3: turned parts and cone bosses).
+Last updated: 2026-11-12, about 01:00 CET (cases run in parallel; exact-HLR fallback).
 
 ## Pipeline
 
@@ -112,9 +112,15 @@ set is no longer used, see decisions.md). Score = mean of min/max over the 9 par
 | lines only (733b9f6) | 1.002 | 1.118 | 1.001 | 1.163 | 1.013 | 3.318 | 2.195 | 1.008 | 1.891 | 0.780 |
 | + 10 tries per region | 1.002 | 1.120 | 1.001 | 1.163 | 1.013 | 3.318 | 2.195 | 1.008 | 1.724 | 0.785 |
 | + region depths, circles (5c71e2c) | 1.002 | 1.120 | 1.001 | 1.130 | 1.009 | 3.318 | 2.142 | 1.008 | 1.403 | 0.804 |
-| + turned parts, cone bosses (current) | 1.002 | 1.120 | 1.001 | 1.130 | 1.011 | 2.845 | 2.142 | 1.008 | 1.403 | 0.810 |
+| + turned parts, cone bosses (9745498) | 1.002 | 1.120 | 1.001 | 1.130 | 1.011 | 2.845 | 2.142 | 1.008 | 1.403 | 0.810 |
+| + parallel cases, 60 tries, exact HLR fallback (current) | 1.002 | 1.120 | 1.001 | 1.121 | 1.009 | 2.845 | 2.033 | 1.008 | 1.393 | 0.814 |
 
-- Run time of the current version: 19 to 97 s per part, about 7 minutes for all 9 on the Windows PC.
+- Run time of the current version: `scripts/main.py` runs the cases in parallel processes (up to 4,
+  `CASE_WORKERS`); all 9 take 311 s with 3 workers on the Windows PC (about 7 minutes one at a time).
+  The line step stops after 60 tries, with a time limit that `scripts/main.py` derives from the 20
+  minutes (`LINE_BUDGET`, at most 180 s; 83 s if only one case runs at a time). With a fixed 90 s
+  limit, part 4 ran into it under parallel load and came out worse (1.152): the limit decides the
+  result when it is hit.
 - Turned parts: recognised on 2 (about y), 3 (about x) and 6 (about z), not on the crankshaft 4.
   Kept on 6 (3.32 -> 2.84). Rejected on 2 and 3 because the revolved profile opened background in a
   view ("too much"): the radius read from the silhouettes is not quite safe there. On 6 most of the
@@ -132,7 +138,8 @@ set is no longer used, see decisions.md). Score = mean of min/max over the 9 par
   too-deep pocket took part 5 to 0.978.
 - Part 9 drops most with a 150 mm pocket from the front; without ground truth it is unknown whether
   all of it was excess.
-- `HLRBRep_PolyAlgo` fails on many candidates of parts 5 and 9; those candidates are skipped.
+- `HLRBRep_PolyAlgo` fails on many candidates of parts 5 and 9; the exact `HLRBRep_Algo` is used
+  then (slower: part 5 60 -> 88 s).
 
 Step 3 with the real model (Qwen3-30B-A3B-FP8 on the Brev box, thinking off), 2026-11-11, at 47dd503:
 
