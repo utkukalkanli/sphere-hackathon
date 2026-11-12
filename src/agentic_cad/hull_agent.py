@@ -11,6 +11,7 @@ from pathlib import Path
 
 from agentic_cad import bowls
 from agentic_cad import cavities
+from agentic_cad import flat
 from agentic_cad import holes as hl
 from agentic_cad import mouths
 from agentic_cad import spans
@@ -91,6 +92,7 @@ class VisualHullAgent:
         self._evidence = None  # what the inputs of the case in hand say (evidence.py)
         self._output_path: Path | None = None  # where `refine` writes the case's answer, for `save`
         self._sound: bool | None = None  # whether the solid so far reads back valid from its file, if asked
+        self.flat_guard: "flat.Guard | None" = None  # set while the later steps run (flat.py)
 
     def evidence(self, case_dir: Path, dims: dict | None = None) -> "evidence_table.Evidence":
         """The views of a case and what the steps derive from them, read once for the case."""
@@ -214,6 +216,20 @@ class VisualHullAgent:
         self.keep_faces, self.lines_found = False, None
         self._output_path = output_path
         self._show_evidence(solid, case_dir)
+        self.flat_guard = None
+        if flat.ENABLED and case_dir is not None:
+            try:
+                evidence = self.evidence(case_dir)
+                self.flat_guard = flat.Guard(evidence.observed, evidence.dims)
+            except Exception as error:
+                trace.log(f"the one-colour face check could not be set up: {error!r}", level="warning")
+        try:
+            return self._refine(solid, names_skip=skip, output_path=output_path, case_dir=case_dir, views=views)
+        finally:
+            self.flat_guard = None
+
+    def _refine(self, solid, names_skip, output_path, case_dir, views):
+        skip = names_skip
         names = [name for name in LATER_STEPS if name not in skip and name not in SKIP_STEPS]
         for index, name in enumerate(names):
             module = LATER_STEPS[name]
@@ -566,6 +582,16 @@ class VisualHullAgent:
                        "keeping the previous solid")
             step.log(message, level="warning") if quiet else step.fail(message)
             return None
+        if self.flat_guard is not None:
+            try:
+                reason = self.flat_guard.refuses(solid, carved)
+            except Exception as error:
+                reason = None
+                step.log(f"the one-colour face check raised {error!r}; not applied", level="warning")
+            if reason is not None:
+                step.metric(flat_refused=getattr(step, "_metrics", {}).get("flat_refused", 0) + 1)
+                step.log(f"{reason}; keeping the previous solid", level="warning") if quiet else step.fail(reason)
+                return None
         step.metric(volume_cm3=round(after / 1000, 3), removed_cm3=round((before - after) / 1000, 3),
                     **({"vs_true_volume": round(after / target, 3)} if target else {}))
         step.set_output({"volume_mm3": round(after, 2), "removed_mm3": round(before - after, 2)})

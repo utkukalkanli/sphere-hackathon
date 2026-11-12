@@ -101,6 +101,15 @@ kept beside its successor. Older wording: `git show bda2104:docs/memory/decision
 - **One time budget for the run, 17 of the 20 minutes; steps are bounded by counts, not clocks**
   (2026-11-11, 2026-11-12). A clock per step makes the solid depend on the machine.
 
+- **A one-colour area of a view is one flat face: a later-step cut may not carve into it**
+  (2026-11-12, user: "if a piece in the images is one colour, with no gradient and no line across
+  it, it is a flat panel"; practice 6's flanks are a zig-zag folded paper made into a cone, and the
+  level-faces step cut triangles and steps into them). `flat.py`, checked in `_guarded` for every cut
+  of the later steps and in `split`: a cut is refused when more than 100 of its new edge pixels (8
+  views) lie inside one-colour areas and they are more than 25 % of all its new edges. Share, not
+  any pixel at all: practice 7's top cavity is right but uncovers a bore stub (8 % inside); practice
+  6's level-face cuts drew 39 %. `HULL_FLAT_GUARD=0` switches it off.
+
 ## Evaluation
 
 - **`uzum` runs the cases in parallel with a hard stop: `nar`'s `scripts/main.py`** (2026-11-12,

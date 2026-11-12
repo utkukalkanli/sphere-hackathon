@@ -495,7 +495,11 @@ def apply(agent, solid: TopoDS_Shape, case_dir: Path | None, views: list[Path]) 
         if after <= count or abs(volume - before) > 1e-6 * before:
             step.log(f"the split changed nothing or moved material ({count} to {after} faces); not kept")
             return solid
-        rating = verify.check(base, case_dir, observed).score
+        reason = agent.flat_guard.refuses(base, result) if getattr(agent, "flat_guard", None) is not None else None
+        if reason is not None:
+            step.log(f"{reason}; not kept", level="warning")
+            return solid
+        rating =verify.check(base, case_dir, observed).score
         rated = verify.check(result, case_dir, observed).score
         if rated < rating - SCORE_SLACK:
             step.log(f"the verifier rates the split solid lower ({rating:.4f} to {rated:.4f}); not kept", level="warning")
