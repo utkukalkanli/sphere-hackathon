@@ -47,6 +47,11 @@ truth. What it holds:
   the solid has only 14.9 cm3 behind y = 113 and 1.2 behind y = 122, so the hollows at the back
   cannot hold all 8.1 cm3; and the guessed depth of the blind holes alone is worth up to 3.7 cm3
   (d7 holes 10 mm deep instead of 5.05: 3.1; d4.2 holes 11 instead of 5.94: 0.6).
+- **The cone count of `facts.json` confirms the blind holes of practice 8** (2026-11-12).
+  `cones_half_angle_deg` lists 48 faces at 59 degrees, the point of a 118 degree drill, which the
+  brief calls chamfers. Two blind holes per listed span in the two groups is 16 + 8 = 24 holes,
+  and the views draw each drilled bottom as two half faces: 48. A drill point adds 0.6 radii to
+  the hole below its cylinder. `spans.py` does not read the cones.
 - **A listed hole that is not white in the views along its axis is not by itself wrong**: on the
   practice set that holds for 12 hole groups (blind bores of 5, 6, 7 among them). The cut is
   wrong where it opens a line of sight through the part that both views along the axis show
