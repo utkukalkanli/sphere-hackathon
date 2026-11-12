@@ -326,10 +326,13 @@ Dashboard:
   asked the verifier for the base solid's outline again on every attempt; on practice 7 after the
   cavity cut it ran 1481 s alone. Both fixed. Shading and level faces have no clock of their own on
   purpose (same solid on a slower machine); only the case's share of the run stops them.
-- **Practice 6 hides an enclosed void, but not a thin shell** (2026-11-12, `uzum`, on `main`'s
-  output). The brief says "a single solid" and `facts.json` gives genus 0, yet the flange alone
-  (Ø140, 27.5 mm with R10 rounds) holds about as much as the true 377.9 cm3, so the part must be
-  hollow. Our solid: 1042.6 cm3, 1377 cm2 of area against the true 1697.5 cm2. A shell of even
-  walls would have about twice the outer area; 1697 means a compact inner void of a few hundred
-  cm2. No view shows where it is or its shape. OpenCascade's inward `MakeThickSolidByJoin` on our
-  finned solid gives an invalid solid at 4 mm and fails at 6 mm (about 40 s each).
+- **Practice 6: its inputs disagree; no enclosed void is stated or implied by the face list**
+  (2026-11-12, `uzum`). The brief calls it "a single solid" and names no cavity. `facts.json`'s 122
+  faces are taken up by outside features (40 planes: about 18 V grooves x 2 walls + 4 flat faces; 72
+  B-spline fins; 6 cylinders: flange band, cap band, bore, likely split in halves; 4 tori: the four
+  R10 rounds), leaving none for an inner void. Yet the flange alone by the brief's sizes (Ø140, 27.5
+  mm, R10 rounds) is about 405 cm3 against a true 377.9 cm3 for the whole part: either the brief's
+  sizes or `volume_mm3` is wrong. Our solid: 1042.6 cm3 and 1377 cm2 against 1697.5 cm2, so the
+  grooves are much deeper than ours. An earlier note here took a hidden void as the cause; that
+  was wrong. Inward `MakeThickSolidByJoin` on our finned solid fails anyway (invalid at 4 mm,
+  fails at 6 mm).
