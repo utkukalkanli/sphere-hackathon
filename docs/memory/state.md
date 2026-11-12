@@ -1,6 +1,6 @@
 # Project state
 
-Last updated: 2026-11-12 (compacted; the long version with every intermediate measurement is
+Last updated: 2026-11-12 late evening (agents added; compacted; the long version with every intermediate measurement is
 `git show bda2104:docs/memory/state.md`).
 
 This file describes the present. Findings about the inputs and the code are in `knowledge.md`,
@@ -8,6 +8,17 @@ reasons in `decisions.md`.
 
 ## Summary
 
+- **Best submission: `e4e4475` on `main`, 0.962** (2026-11-12 23:05 UTC; the pipeline alone, d430ae3, had
+  0.895). It is the pipeline plus one DeepSeek Harness agent per case (`src/agentic_cad/harness`, model
+  `gpt-6.1-terra`, on only with `OPENAI_API_KEY`): the agent writes CadQuery, checks it against facts.json and
+  the views with `./check`, and its best candidate replaces the pipeline's file when it scores higher. Real
+  scores per part 1 to 9: 0.986, 0.995, 0.998, 0.996, 0.948, 0.996, 0.816, 0.977, 0.944 (outputs of a 55 minute
+  run in the image).
+- **Truth check on six eval parts** (38, 110, 123, 171, 182, 236; 25 minutes each run; `tools/score_truth.py`
+  against the ground truth; one run each): pipeline alone 0.913, pipeline + agents 0.986, agents alone
+  (`HARNESS_ONLY=1 HARNESS_BASE=0`, no pipeline) 0.990. The pipeline gave no measurable benefit there.
+- Mean local score of the nine practice parts against time, pipeline + agents: 0.943 at the start, 0.962 at
+  15 minutes, 0.979 at 30, 0.984 at 55. The image's budget is 30 minutes (`HARNESS_SECONDS`).
 - **First submission: `fdcc8c6` on `main`** (2026-11-12), this pipeline without `bowls`.
 - Work is on `uzum` (2026-11-12, cut from `main` at fdcc8c6, no upstream; see `decisions.md`). It
   adds the `bowls` step. `nar` and `ananas` score higher by volume on the practice set but are
