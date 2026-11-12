@@ -480,6 +480,25 @@ alone on the solid before it, 24 eval parts, sampled IoU with 20 000 points:
   371. Our volume / true volume: 1.003, 1.018, 1.000, 1.028, 1.224, 2.759, 1.936, 1.002, 1.729.
   Slowest cases: part 7 127 s, part 9 99 s, part 6 77 s.
 
+Model floors (`src/agentic_cad/model_cuts.py`, `tools/try_model_cuts.py`, 2026-11-12 afternoon, **not
+in `LATER_STEPS`**): Gemma 4 31B (vLLM on the Brev GPU, `.env`, 2 to 18 s a call) sees each straight
+view with its `regions.py` areas numbered, our solid from the same camera, both isometric views, the
+brief and facts.json, and names areas that are deeper floors and their coordinate; our code cuts the
+column (`depth.remove`). Run alone on the solids of run `20261112-141003-1fad` (out_full3) and on
+practice 8 from a single-case run, our volume / true volume:
+
+- 7: 1.9734 to 1.9449 (one floor kept, right view, 9 cm3; unchecked, no ground truth). The top
+  cavity was proposed at the flange's level (133.26, a hole centre from facts.json) and refused.
+- 9: 1.4696, nothing kept. 8: 1.0585, nothing kept. 6 (single-case solid, 2.698): 2.686, two V
+  grooves of the front view at "70.0", before the guards below existed.
+- What the model proposed was mostly wrong: coordinates copied from facts.json (hole centres, the
+  slot axis) given as floor depths, and on 8 thirteen areas of the front view "floor of the window"
+  at Y = 128, a column through the part, which the verifier accepted (1.0585 to 0.980). Guards
+  added for that: the floor not at the part's far side, the area's tone "facing", 200 fewer
+  tone-off pixels over the 8 views and no more silhouette mismatch, 99.5 % of the true volume left.
+  With them nothing wrong was kept on 8 and 9.
+- Cost: 120 to 180 s per part (drawing the 8 views for every check, 20 to 80 s of cuts per view).
+
 ## Known weaknesses
 
 - **A solid can be valid in memory and invalid in the file.** Practice part 4 (crankshaft) was

@@ -489,6 +489,19 @@ organisers' format:
 - **The dashboard** can start runs itself; those write to `runs/<run>/outputs`, not to
   `artifacts/outputs`. Only `scripts/main.py` without arguments overwrites `artifacts/outputs`.
 
+## The model on the Brev GPU
+
+- **Gemma 4 31B (FP8, vLLM, 32k context) does not read depths off the views** (2026-11-12, 3
+  practice parts, `model_cuts.py`). Asked for the floor of numbered areas with both isometric views
+  in hand, it answers with numbers from facts.json or the brief that have another meaning (a hole
+  centre, a bolt-hole bottom, the slot axis, the part's far face) and does not tell an area seen
+  edge-on from one seen square. One image costs about 260 prompt tokens, so a 1024 px view reaches
+  it heavily downscaled. It reads the brief and the pictures' content well (names the right
+  features), so its use is naming and choosing, not measuring.
+- **The verifier accepts a model's cut through the part** (practice 8, 13 areas cut to Y = 128:
+  volume 1.0585 to 0.980 of the truth, score not lower), because its score carries the volume
+  ratio. A model's cut needs the views to agree better where it acts.
+
 ## Submission mechanics
 
 - CI on a pull request runs pytest and builds the image. On a push to `main` it also submits.
