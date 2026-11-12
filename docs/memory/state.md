@@ -48,6 +48,7 @@ reasons in `decisions.md`.
 | shading (`shading_depth`) | `shading.py` | `HULL_SKIP=shading`, `HULL_SHADING_SLANTED=0`, `HULL_SHADING_DEEP=0` | IoU 0.854 to 0.861 (110: 0.79 to 0.86, 236: 0.70 to 0.73), none lower |
 | pockets (`cut_pockets`) | `pockets.py`, `lines.py` | `HULL_SKIP=pockets` | eval 236 1.354 to 1.254 times the true volume (IoU 0.740 to 0.796); 22 of 24 untouched, none lower |
 | hole count (`hole_count`) | `hole_count.py` | `HULL_HOLE_COUNT=0`, `HULL_SKIP=holecount` | the stated number of through-holes on 20 of the 24 instead of 17 (38, 212, 171 right, 123 13 of 14), none worse, sampled IoU 0.8928 to 0.8925; practice 8 of 9 instead of 6 (4: 1 to 0, 5: 6 to 15; 8 stays 9 of 11); 0 to 8 s a part, whole practice run 11 min 20 s (2026-11-12) |
+| hidden void (`hidden_void`) | `hidden_void.py` | `HULL_HIDDEN_VOID=0`, `HULL_SKIP=void` | only when every view is explained (at most 8 % of a view's lines without an edge of ours, outlines within 2 %) and the solid still has 1.5 times the part's volume: practice 6, 2.766 to 1.000 times the true volume, 0 through-holes kept, surface 0.827 to 1.254 of the true one (the layers' steps), 16.5 s, file 5.3 to 16.5 MB. Fires on none of 48 eval parts (the four with that excess have 19 to 74 % of a view's lines unexplained), so the guess itself is not checked against a ground truth. Practice run 5 min 18 s (2026-11-12) |
 | split (`split_faces`) | `split.py`, `lines.py` | `HULL_SKIP=split` | moves no material; splits faces on about 10 of the 24 |
 | export | `export.py` | | |
 
@@ -105,6 +106,7 @@ What each step does:
   just inside the circle (another tone than the face, or many tones), the opening is at least 0.3 diameters deep,
   no other ring lies inside it, and the circle is not a listed hole's own. Kept if the volume stays above the
   part's and the cut puts an edge under half of the circle's missed line.
+- **Hidden void.** A solid that every view explains and that is far too heavy is hollow; the space's volume is known, its shape not. All points deeper than one wall thickness under the surface are taken out, the thickness (found on a grid of 128 cells, practice 6: 4.4 mm) set so that the part's volume is left. The space is cut as a stack of prisms (3 grid layers each, drawn in by different hairs so that they share no edge) with a 1 mm vent through the thinnest wall, so the solid stays one shell.
 - **Hole count.** Counts the through-holes of the solid as it is written (genus from the topology, faces merged)
   against `through_holes_genus`. First takes a hair of material (0.2 mm) away at every pinch: an edge more than
   two faces share, or a point where two boundaries of one face touch; both count as holes that are not there.
