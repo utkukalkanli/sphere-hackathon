@@ -158,3 +158,223 @@ def describe_for_trace(content) -> str:
     for part in content:
         out.append(part["text"] if part.get("type") == "text" else "[image]")
     return "\n".join(out)
+
+
+# -- graph engine (tool-calling agent, text LLM + separate vision model) ------------------------------
+
+_CONTRACT_END = SYSTEM_PROMPT.index("## Coordinate frame")
+GRAPH_SYSTEM_PROMPT = SYSTEM_PROMPT[:SYSTEM_PROMPT.index("## Output contract")] + """## How you work here
+You cannot see images yourself. You get a text description of the 8 views written by a vision model, and \
+you act through tools:
+- `build_and_evaluate(code, change)`: runs your full CadQuery script (`change` = one line on what you changed), measures the solid against the facts and \
+compares its outline with the target views. Returns a score (1.0 = perfect) and the differences. The best \
+solid so far is kept automatically, so a worse attempt never loses anything.
+- `ask_vision(question, views, compare_last)`: asks the vision model a precise question about named target \
+views (front, back, left, right, top, bottom, iso_front_right_top, iso_back_left_bottom), or, with \
+compare_last=true, shows it your last model next to the target so it can say what differs. Ask short, \
+concrete questions ("how many holes are visible in the top view and where?"). It is a small model: \
+treat its answers as hints and prefer the facts sheet when they disagree.
+- `submit(reason)`: finish when the checks are within tolerance or you cannot improve further.
+Start building early: call build_and_evaluate in your first turn, then iterate on its feedback, fixing the \
+largest discrepancy first (overall shape, then big features, then holes, then edge details).
+
+## Script contract (the `code` argument)
+- A complete script that assigns the finished part to `result` (a cq.Workplane or a solid). Always the full \
+script, never a diff.
+- Exactly ONE connected solid, in millimetres. Every feature must overlap or touch the main body.
+- No file I/O, no imports other than `math` and `cadquery as cq` (both are already imported).
+
+""" + SYSTEM_PROMPT[_CONTRACT_END:]
+
+PERCEIVE_PROMPT = """You are looking at 8 rendered views of ONE mechanical part (grey solid on white). \
+Envelope: {envelope}. View conventions: {conventions}
+
+Describe the part's geometry for a CAD engineer who cannot see the images. Be factual and only state what \
+you can see; say "unclear" rather than guessing. Answer in this format:
+BASE FORM: extruded profile / body of revolution / block with features / other (which axis?)
+PROFILE: which view shows the defining profile, and its shape (corners, arcs, steps, notches)
+FEATURES: one line per feature: type (through hole, blind hole, slot, pocket, boss, rib, flange, fillet, \
+chamfer, ...), which face/view, approximate position as a fraction of the width/height in that view, count
+HOLLOW: is the part hollow, thin-walled or shelled? (yes/no/unclear)
+SYMMETRY: mirror planes or rotational symmetry you can see
+Keep it under 250 words."""
+
+VISION_QUESTION_PROMPT = """You are looking at rendered views of a mechanical part (grey solid on white). \
+View conventions: {conventions}
+{what}
+Question: {question}
+Answer briefly and concretely (positions as fractions of the view width/height, counts, which side). \
+Say "unclear" if you cannot tell."""
+
+
+def view_conventions() -> str:
+    return "; ".join(VIEW_CAPTIONS.values())
+
+
+def envelope_text(facts: dict) -> str:
+    box = facts.get("bounding_box_mm") or {}
+    if all(k in box for k in "xyz"):
+        return f"{float(box['x']):g} x {float(box['y']):g} x {float(box['z']):g} mm (X x Y x Z)"
+    return "unknown"
+
+
+def text_brief(description: str, facts: dict, context_note: bool) -> str:
+    """The brief and facts as plain text (initial_message without images)."""
+    parts = initial_message(description, facts, [], None, use_images=False, image_px=0)
+    text = "\n".join(p["text"] for p in parts[:-1])
+    if context_note:
+        text += "\n\nThe part comes from an assembly (a context image exists; ask_vision can't see it)."
+    return text
+
+
+# -- hull engine (the outline is given; the model only removes hidden material) ----------------------
+
+CARVE_SYSTEM_PROMPT = f"""You are a senior mechanical CAD engineer finishing a part in CadQuery (Python).
+
+A solid named `base` already exists. It was computed from the part's front, right and top outlines, so its \
+outer shape and bounding box are exactly right in those three directions, and openings that go straight \
+through the part along X, Y or Z are already in it. Holes and bores located by the facts sheet may already \
+be cut as well (you are told which). What `base` still gets wrong is material that no outline can show: it \
+is solid wherever the real part has pockets, recesses, blind holes, counterbores, steps hidden behind taller \
+features, grooves, or a hollow interior. Your job is to remove that material.
+
+## Output contract
+- Reply with two or three lines of reasoning, then ONE complete script in a single ```python fenced block.
+- The script starts from `base` and must assign the finished part to `result`, for example \
+`body = base` ... `result = body`.
+- Only REMOVE material: `body = body.cut(<solid>)`. Never rebuild the part from scratch, never union \
+anything, never move or scale `base`.
+- Keep ONE connected solid: a cut must not split the part or remove a whole wall.
+- No imports, no file I/O. `cq` and `math` are available. Always send the full script, never a diff.
+
+## Coordinate frame
+- All positions are in mm from the MINIMUM corner of the bounding box: the part sits inside the box \
+(0,0,0)-(X,Y,Z) of the envelope and `base` is already there.
+- front = looking along +Y (X right, Z up); right = looking along -X (Y right, Z up); top = looking along \
+-Z (X right, Y up).
+
+## Helpers (absolute coordinates, each returns a solid you can pass to .cut())
+{HELPER_DOC}
+## How to work
+1. The volume tells you how much is left to remove: `base` volume minus target volume. Account for that \
+amount with the features the brief describes, largest first.
+2. If `base` is several times heavier than the target, the part is hollow, shelled or thin-walled: cut the \
+cavity (a box, cylinder or revolve() profile that leaves the wall thickness given in the brief).
+3. Use the facts sheet for exact numbers: a cylindrical face's centre and length give where a bore starts \
+and stops (centre +- length/2 along its axis).
+4. Start a cutter 1 mm outside the face it enters from, so no skin is left; stop it at the stated depth.
+5. One feature per statement, with a comment. Prefer a few large, certain cuts over many doubtful ones: a \
+cut in the wrong place is worse than a missing one.
+
+## Example (a different part)
+```python
+body = base
+body = body.cut(box(6, 6, 4, 74, 44, 21))                    # top pocket 68 x 38, floor at Z = 4
+body = body.cut(cyl('z', 16.0, 12, 21, 40.0, 25.0))          # counterbore d16, 9 deep from the top
+body = body.cut(cyl('x', 10.0, -1, 30, 25.0, 12.0))          # blind cross bore d10 from the X = 0 face
+result = body
+```
+"""
+
+
+def carve_message(description: str, facts: dict, base_lines: list[str], bores: list[str], best_code: str | None,
+                  best_lines: list[str], failures: list[str]) -> str:
+    text = "\n".join(p["text"] for p in initial_message(description, facts, [], None, use_images=False, image_px=0)[:-1])
+    text += "\n\n# The solid `base` you start from\n" + "\n".join(base_lines)
+    if bores:
+        text += "\nAlready cut into `base` from the facts sheet (do not cut these again):\n" + "\n".join(
+            f"- {line}" for line in bores[:40])
+    if best_code:
+        text += ("\n\n# Best script so far\n```python\n" + best_code.strip() + "\n```\nIts result:\n"
+                 + "\n".join(best_lines)
+                 + "\nImprove it: keep what works and fix the largest remaining difference.")
+    if failures:
+        text += "\n\n# Scripts that were rejected (do not repeat them)\n" + "\n".join(f"- {line}" for line in failures[-6:])
+    text += "\n\nWrite the complete script now: start from `base`, remove the hidden material, assign `result`."
+    return text
+
+
+# -- hull engine, feature mode (the model fills in a JSON schema; features.py builds the geometry) ----
+
+def _feature_system_prompt() -> str:
+    from agentic_cad.features import MAX_FEATURES, SCHEMA_DOC
+
+    return f"""You are a senior mechanical CAD engineer finishing a part. You do not write code: you list \
+the features to cut and a CAD program builds them.
+
+A solid named `base` already exists. It was computed from the part's front, right and top outlines, so its \
+outer shape and bounding box are exactly right in those three directions, and openings that go straight \
+through the part along X, Y or Z are already in it. Holes and bores located by the facts sheet may already \
+be cut as well (you are told which). What `base` still gets wrong is material that no outline can show: it \
+is solid wherever the real part has pockets, recesses, blind holes, counterbores, steps hidden behind taller \
+features, grooves, or a hollow interior. Your job is to list that material so it can be removed.
+
+## Output
+One JSON object: {{"plan": "...", "features": [...]}}.
+- "plan": two to four sentences. Say how many mm3 are left to remove (`base` volume minus target volume) and \
+which features of the brief account for it, largest first.
+- "features": at most {MAX_FEATURES} volumes to REMOVE from `base`. Each one is cut on its own; a feature \
+that would split the part, open a through-hole the part does not have or take the volume below the target \
+is skipped, so one wrong feature does not spoil the others. An empty list is a valid answer when nothing \
+is hidden.
+- Every feature has a "label" (what it is in the brief) and a "type" with these fields:
+{SCHEMA_DOC}
+## Coordinate frame
+- All positions are in mm from the MINIMUM corner of the bounding box: the part sits inside the box \
+(0,0,0)-(X,Y,Z) of the envelope and `base` is already there.
+- front = looking along +Y (X right, Z up); right = looking along -X (Y right, Z up); top = looking along \
+-Z (X right, Y up).
+
+## How to work
+1. If `base` is several times heavier than the target, the part is hollow, shelled or thin-walled: remove \
+the cavity (a box, cylinder or revolve profile that leaves the wall thickness given in the brief).
+2. Use the facts sheet for exact numbers: a cylindrical face's centre and length give where a bore starts \
+and stops (centre +- length/2 along its axis).
+3. Start a feature 1 mm outside the face it enters from, so no skin is left; stop it at the stated depth.
+4. Prefer a few large, certain features over many doubtful ones: material removed in the wrong place is \
+worse than a missing feature. Never remove material that an outline shows.
+
+## Example (a different part)
+{{"plan": "base is 31400 mm3 too heavy. The top pocket (68 x 38 x 17 = 43900 minus what the outlines already \
+show) accounts for most of it, the counterbore and the blind cross bore for the rest.",
+ "features": [
+  {{"label": "top pocket 68 x 38, floor at Z = 4", "type": "box", "min": [6, 6, 4], "max": [74, 44, 22]}},
+  {{"label": "counterbore d16, 9 deep from the top", "type": "cylinder", "diameter": 16, \
+"start": [40, 25, 12], "end": [40, 25, 22]}},
+  {{"label": "blind cross bore d10 from the X = 0 face", "type": "cylinder", "diameter": 10, \
+"start": [-1, 25, 12], "end": [30, 25, 12]}}
+ ]}}
+"""
+
+
+FEATURE_SYSTEM_PROMPT = _feature_system_prompt()
+
+
+def feature_message(description: str, facts: dict, base_lines: list[str], bores: list[str], best: str | None,
+                    best_lines: list[str], failures: list[str]) -> str:
+    text = "\n".join(p["text"] for p in initial_message(description, facts, [], None, use_images=False, image_px=0)[:-1])
+    text += "\n\n# The solid `base` you start from\n" + "\n".join(base_lines)
+    if bores:
+        text += "\nAlready cut into `base` from the facts sheet (do not list these again):\n" + "\n".join(
+            f"- {line}" for line in bores[:40])
+    if best:
+        text += ("\n\n# Best feature list so far\n" + best + "\nIts result:\n" + "\n".join(best_lines)
+                 + "\nImprove it: keep the features that were cut, fix or drop the skipped ones, and add what "
+                   "accounts for the largest remaining difference.")
+    if failures:
+        text += "\n\n# Feature lists that were rejected (do not repeat them)\n" + "\n".join(
+            f"- {line}" for line in failures[-6:])
+    text += "\n\nReturn the JSON object now: the complete list of features to remove from `base`."
+    return text
+
+
+def view_parts(views: list[Path], image_px: int) -> list[dict]:
+    """The reference views as captioned image parts, for a model that can see them."""
+    parts: list[dict] = [{"type": "text", "text": "# Rendered views of the real part (grey solid on white). `base` "
+                          "matches the front, right and top outlines; look for what lies inside them: pockets, "
+                          "recesses, steps, blind holes and hollow regions, and where they are."}]
+    for path in views:
+        name = view_name(path)
+        parts.append({"type": "text", "text": f"View: {VIEW_CAPTIONS.get(name, name)}"})
+        parts.append(image_part(path, image_px))
+    return parts

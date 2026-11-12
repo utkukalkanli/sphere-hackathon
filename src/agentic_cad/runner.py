@@ -73,6 +73,15 @@ def to_single_solid(obj, notes: list):
     return solid, count
 
 
+def _through_holes(solid) -> int | None:
+    from agentic_cad.cadlib import through_holes
+
+    try:
+        return through_holes(solid)
+    except Exception:
+        return None
+
+
 def measure(solid) -> dict:
     bb = solid.BoundingBox()
     diameters: Counter = Counter()
@@ -90,6 +99,7 @@ def measure(solid) -> dict:
         "face_types": dict(Counter(f.geomType() for f in solid.Faces())),
         "cyl_diameters": {str(k): v for k, v in sorted(diameters.items())},
         "valid": bool(solid.isValid()),
+        "through_holes": _through_holes(solid),
     }
 
 
@@ -106,7 +116,8 @@ def tessellate(solid):
     return np.array([v.toTuple() for v in verts], dtype=float), np.array(tris, dtype=int)
 
 
-def run(script: Path, out_dir: Path, case_dir: Path | None, stem: str, image_size: int, tile: int) -> dict:
+def run(script: Path, out_dir: Path, case_dir: Path | None, stem: str, image_size: int, tile: int,
+        base: Path | None = None) -> dict:
     started = time.time()
     report: dict = {"ok": False, "error": None, "notes": []}
     try:
@@ -118,6 +129,8 @@ def run(script: Path, out_dir: Path, case_dir: Path | None, stem: str, image_siz
         shown: list = []
         namespace = {"cq": cq, "cadquery": cq, "math": math, "__name__": "__cad__",
                      "show_object": lambda obj, *a, **k: shown.append(obj), **HELPERS}
+        if base is not None:   # the solid the script starts from (pipeline engine): `base`
+            namespace["base"] = cq.Workplane(obj=cq.importers.importStep(str(base)).val().Solids()[0])
         source = script.read_text()
         try:
             exec(compile(source, script.name, "exec"), namespace)
@@ -130,6 +143,8 @@ def run(script: Path, out_dir: Path, case_dir: Path | None, stem: str, image_siz
             report["error_where"] = lines[-3:]
             return report
 
+        if isinstance(namespace.get("feature_log"), list):   # per-feature outcome of a compiled feature list
+            report["feature_log"] = [str(line)[:300] for line in namespace["feature_log"][:40]]
         solid, count = to_single_solid(find_result(namespace, shown), report["notes"])
         bb = solid.BoundingBox()
         solid = solid.translate(cq.Vector(-bb.xmin, -bb.ymin, -bb.zmin))
@@ -189,9 +204,10 @@ def main() -> int:
     parser.add_argument("--stem", default="candidate")
     parser.add_argument("--image-size", type=int, default=384)
     parser.add_argument("--tile", type=int, default=320)
+    parser.add_argument("--base", type=Path, default=None, help="STEP file made available to the script as `base`")
     args = parser.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
-    report = run(args.script, args.out_dir, args.case_dir, args.stem, args.image_size, args.tile)
+    report = run(args.script, args.out_dir, args.case_dir, args.stem, args.image_size, args.tile, args.base)
     (args.out_dir / f"{args.stem}.json").write_text(json.dumps(report, indent=1))
     return 0
 

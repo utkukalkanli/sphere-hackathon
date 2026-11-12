@@ -34,9 +34,12 @@ class ChatClient:
     def _headers(self) -> dict:
         return {"Authorization": f"Bearer {self.settings.api_key}", "Content-Type": "application/json"}
 
-    def chat(self, messages: list[dict], timeout: float, temperature: float | None = None) -> tuple[str, dict]:
-        """Returns (reply text, usage). Retries transient failures while time allows."""
+    def chat(self, messages: list[dict], timeout: float, temperature: float | None = None,
+             extra: dict | None = None) -> tuple[str, dict]:
+        """Returns (reply text, usage). Retries transient failures while time allows. `extra` is merged into
+        the request body (e.g. chat_template_kwargs for a vLLM-served model)."""
         payload = {
+            **(extra or {}),
             "model": self.model,
             "messages": messages,
             "max_tokens": self.settings.max_tokens,

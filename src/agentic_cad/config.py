@@ -43,6 +43,20 @@ class Settings:
     prompt_image_px: int    # reference views are downscaled to this before being sent
     mask_px: int            # resolution of the silhouette comparison
     tile_px: int            # tile size in the comparison images
+    engine: str             # "hull" (silhouette hull + facts + LLM carving), "graph" (LangGraph tool-calling
+                            # agent) or "legacy" (fixed generate/correct loop)
+    llm_stage: bool         # hull engine: let the model carve the hull (off = deterministic stages only)
+    candidates: int         # hull engine: scripts requested in parallel per round
+    patience: int           # hull engine: rounds without an improvement before the case stops
+    carve_mode: str         # hull engine: "script" (the model writes CadQuery) or "features" (the model fills in
+                            # the JSON schema of features.py and the geometry is built from it)
+    carve_images: bool      # hull engine, feature mode: send the reference views with the request (vision model)
+    carve_min_excess: float  # hull engine: the model only carves when the base is this much too heavy (1.0 = +100%)
+    vlm_base_url: str       # vision model for the graph engine; empty = text only
+    vlm_api_key: str
+    vlm_model: str
+    max_steps: int          # graph engine: LLM turns per test case
+    enable_thinking: bool   # Qwen3-style reasoning (chat_template_kwargs.enable_thinking)
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -51,7 +65,7 @@ class Settings:
             api_key=os.environ.get("OPENAI_API_KEY") or "EMPTY",
             model=os.environ.get("OPENAI_MODEL") or "",
             max_iters=_int("AGENT_MAX_ITERS", 6),
-            workers=_int("AGENT_WORKERS", 3),
+            workers=_int("AGENT_WORKERS", 9),
             time_budget_s=_float("AGENT_TIME_BUDGET_S", 17 * 60),
             llm_timeout_s=_float("AGENT_LLM_TIMEOUT_S", 240),
             exec_timeout_s=_float("AGENT_EXEC_TIMEOUT_S", 90),
@@ -62,4 +76,16 @@ class Settings:
             prompt_image_px=_int("AGENT_PROMPT_IMAGE_PX", 448),
             mask_px=_int("AGENT_MASK_PX", 512),
             tile_px=_int("AGENT_TILE_PX", 320),
+            engine=(os.environ.get("AGENT_ENGINE") or "hull").strip().lower(),
+            llm_stage=_flag("AGENT_LLM_STAGE", True),
+            candidates=_int("AGENT_CANDIDATES", 4),
+            patience=_int("AGENT_PATIENCE", 4),
+            carve_mode=(os.environ.get("AGENT_CARVE_MODE") or "script").strip().lower(),
+            carve_images=_flag("AGENT_CARVE_IMAGES", False),
+            carve_min_excess=_float("AGENT_CARVE_MIN_EXCESS", 1.0),
+            vlm_base_url=(os.environ.get("VLM_BASE_URL") or "").rstrip("/"),
+            vlm_api_key=os.environ.get("VLM_API_KEY") or os.environ.get("OPENAI_API_KEY") or "EMPTY",
+            vlm_model=os.environ.get("VLM_MODEL") or "",
+            max_steps=_int("AGENT_MAX_STEPS", 16),
+            enable_thinking=_flag("AGENT_ENABLE_THINKING", False),
         )

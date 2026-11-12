@@ -41,11 +41,19 @@ RUN python -c "import cadquery as cq; cq.exporters.export(cq.Workplane().box(1, 
 # your handed-over <team>.env replace these.
 # ENV OPENAI_BASE_URL=http://<your Brev instance>:8000/v1 \
 #     OPENAI_API_KEY=<your vLLM --api-key> \
-#     OPENAI_MODEL=<model>
-# Loop settings (defaults shown; see src/agentic_cad/config.py). The model must accept images
-# unless AGENT_USE_IMAGES=0.
-ENV AGENT_MAX_ITERS=6 \
-    AGENT_WORKERS=3 \
+#     OPENAI_MODEL=<model> \
+#     VLM_BASE_URL=http://<your Brev instance>:8001/v1 \
+#     VLM_MODEL=<vision model>            # graph engine; without it the agent works from text only
+# Loop settings (defaults shown; see src/agentic_cad/config.py). The hull engine needs a text model only;
+# the legacy engine needs one that accepts images unless AGENT_USE_IMAGES=0.
+ENV AGENT_ENGINE=hull \
+    AGENT_LLM_STAGE=1 \
+    AGENT_CARVE_MIN_EXCESS=1.0 \
+    AGENT_CANDIDATES=4 \
+    AGENT_PATIENCE=4 \
+    AGENT_MAX_STEPS=16 \
+    AGENT_MAX_ITERS=6 \
+    AGENT_WORKERS=9 \
     AGENT_TIME_BUDGET_S=1020 \
     AGENT_USE_IMAGES=1 \
     AGENT_FEEDBACK_IMAGES=1

@@ -31,12 +31,14 @@ class Attempt:
 
 
 def run_script(script: Path, out_dir: Path, stem: str, case_dir: Path | None, settings: Settings,
-               timeout: float) -> dict:
+               timeout: float, base: Path | None = None) -> dict:
     """Execute a generated script in a separate process (agentic_cad.runner) and read its report."""
     command = [sys.executable, "-m", "agentic_cad.runner", str(script), str(out_dir), "--stem", stem,
                "--image-size", str(settings.mask_px), "--tile", str(settings.tile_px if settings.feedback_images else 0)]
     if case_dir is not None:
         command += ["--case-dir", str(case_dir)]
+    if base is not None:
+        command += ["--base", str(base)]
     env = {**os.environ, "PYTHONPATH": os.pathsep.join(filter(None, [str(SRC_DIR), os.environ.get("PYTHONPATH")]))}
     report_path = out_dir / f"{stem}.json"
     report_path.unlink(missing_ok=True)
@@ -71,16 +73,14 @@ class CadAgent:
                      output_path: Path, deadline: float, trace: CaseTrace) -> dict:
         """Writes output_path (always, as soon as anything valid exists) and returns a summary."""
         s = self.settings
+        if s.engine == "hull":
+            from agentic_cad.pipeline import run_case
+            return run_case(s, name, case_dir, description, views, context, output_path, deadline, trace)
+        if s.engine == "graph":
+            from agentic_cad.graph import run_case
+            return run_case(s, name, case_dir, description, views, context, output_path, deadline, trace)
         work = trace.dir if trace.enabled else Path(tempfile.mkdtemp(prefix=f"{name}_"))
-        facts: dict = {}
-        facts_path = case_dir / "facts.json"
-        if facts_path.is_file():
-            try:
-                facts = json.loads(facts_path.read_text())
-            except json.JSONDecodeError:
-                pass
-        if not facts:
-            facts = facts_from_description(description)
+        facts = load_facts(case_dir, description)
         trace.start()
         best: Attempt | None = None
         status, error = "ok", None
@@ -121,9 +121,9 @@ class CadAgent:
                             attempt = self._attempt(number, code, work, case_dir, facts, timeout, step)
                         feedback = attempt.evaluation.lines
                         if attempt.report.get("ok") and (best_llm is None or
-                                                         attempt.evaluation.score > best_llm.evaluation.score):
+                                                         attempt.evaluation.rank > best_llm.evaluation.rank):
                             best_llm = attempt
-                            if best is None or attempt.evaluation.score >= best.evaluation.score:
+                            if best is None or attempt.evaluation.rank >= best.evaluation.rank:
                                 best = attempt
                                 self._publish(best, output_path, trace, outer)
                         outer.done(metrics=attempt.evaluation.metrics())
@@ -132,8 +132,8 @@ class CadAgent:
                             break
                     best_note = None
                     if best_llm is not None and attempt is not None and attempt is not best_llm:
-                        best_note = (f"This is worse than attempt {best_llm.number} (score "
-                                     f"{best_llm.evaluation.score:.3f} vs {attempt.evaluation.score:.3f}). Go back to "
+                        best_note = (f"This is worse than attempt {best_llm.number} (silhouette match "
+                                     f"{best_llm.evaluation.rank:.3f} vs {attempt.evaluation.rank:.3f}). Go back to "
                                      f"that version and improve it instead:\n```python\n{best_llm.code}```")
                     sheets = [work / p for p in (attempt.report.get("sheets") or [])] if attempt else []
                     turns.append([
@@ -161,30 +161,52 @@ class CadAgent:
         return summary
 
     def _attempt(self, number: int, code: str, work: Path, case_dir: Path, facts: dict, timeout: float, step) -> Attempt:
-        stem = f"attempt_{number}"
-        script = work / f"{stem}.py"
-        script.write_text(code)
-        step.artifact(script)
-        report = run_script(script, work, stem, case_dir, self.settings, timeout)
-        evaluation = evaluate(report, facts)
-        step_path = work / report["step"] if report.get("ok") and report.get("step") else None
-        if step_path is not None:
-            step.artifact(step_path)
-        for sheet in report.get("sheets") or []:
-            step.artifact(work / sheet)
-        for line in evaluation.lines:
-            step.log(line, "info" if report.get("ok") else "error")
-        step.done(output={k: v for k, v in report.items() if k not in ("traceback", "sheets")},
-                  metrics=evaluation.metrics())
-        return Attempt(number, code, report, evaluation, step_path)
+        return make_attempt(number, code, work, case_dir, facts, self.settings, timeout, step)
 
     @staticmethod
     def _publish(attempt: Attempt, output_path: Path, trace: CaseTrace, step) -> None:
-        """Copy the best solid so far to the output directory, atomically."""
-        if attempt.step_path is None or not attempt.step_path.is_file():
-            return
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = output_path.with_name(f".{output_path.name}.{os.getpid()}.tmp")
-        shutil.copyfile(attempt.step_path, tmp)
-        os.replace(tmp, output_path)
-        step.log(f"output updated from attempt {attempt.number} (score {attempt.evaluation.score:.3f})")
+        publish(attempt, output_path, step)
+
+
+def make_attempt(number: int, code: str, work: Path, case_dir: Path, facts: dict, settings: Settings, timeout: float,
+                 step, base: Path | None = None) -> Attempt:
+    """Write the script, build it in a subprocess, evaluate it against the facts and log everything to `step`."""
+    stem = f"attempt_{number}"
+    script = work / f"{stem}.py"
+    script.write_text(code)
+    step.artifact(script)
+    report = run_script(script, work, stem, case_dir, settings, timeout, base)
+    evaluation = evaluate(report, facts)
+    step_path = work / report["step"] if report.get("ok") and report.get("step") else None
+    if step_path is not None:
+        step.artifact(step_path, role="stage")   # the dashboard's step slider walks through these solids
+    for sheet in report.get("sheets") or []:
+        step.artifact(work / sheet)
+    for line in evaluation.lines:
+        step.log(line, "info" if report.get("ok") else "error")
+    step.done(output={k: v for k, v in report.items() if k not in ("traceback", "sheets")},
+              metrics=evaluation.metrics())
+    return Attempt(number, code, report, evaluation, step_path)
+
+
+def publish(attempt: Attempt, output_path: Path, step) -> None:
+    """Copy the best solid so far to the output directory, atomically."""
+    if attempt.step_path is None or not attempt.step_path.is_file():
+        return
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = output_path.with_name(f".{output_path.name}.{os.getpid()}.tmp")
+    shutil.copyfile(attempt.step_path, tmp)
+    os.replace(tmp, output_path)
+    step.log(f"output updated from attempt {attempt.number} (silhouette match {attempt.evaluation.rank:.3f}, "
+             f"score {attempt.evaluation.score:.3f})")
+
+
+def load_facts(case_dir: Path, description: str) -> dict:
+    facts: dict = {}
+    facts_path = case_dir / "facts.json"
+    if facts_path.is_file():
+        try:
+            facts = json.loads(facts_path.read_text())
+        except json.JSONDecodeError:
+            pass
+    return facts or facts_from_description(description)

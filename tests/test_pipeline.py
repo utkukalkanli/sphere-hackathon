@@ -101,6 +101,7 @@ def test_agent_corrects_itself_and_writes_one_solid(tmp_path, monkeypatch):
     from agentic_cad.agent import CadAgent
 
     monkeypatch.delenv("TRACE", raising=False)
+    monkeypatch.setenv("AGENT_ENGINE", "legacy")   # the scripted client drives the fixed loop
     client = ScriptedClient([SLEEVE_NO_BORE, SLEEVE])
     agent = CadAgent(Settings.from_env(), client=client)
     output = tmp_path / "out" / "test_case_3.stp"
@@ -130,6 +131,7 @@ def test_agent_falls_back_to_envelope_block_when_the_llm_is_down(tmp_path, monke
             raise LLMError("connection refused")
 
     monkeypatch.delenv("TRACE", raising=False)
+    monkeypatch.setenv("AGENT_ENGINE", "legacy")   # the scripted client drives the fixed loop
     output = tmp_path / "test_case_3.stp"
     summary = CadAgent(Settings.from_env(), client=DownClient()).generate_cad(
         name="test_case_3", case_dir=CASE_3, description="", views=[], context=None, output_path=output,

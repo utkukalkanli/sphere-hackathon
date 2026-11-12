@@ -23,6 +23,14 @@ class Evaluation:
     missing_diameters: list = field(default_factory=list)
     lines: list = field(default_factory=list)   # human/LLM readable findings
 
+    @property
+    def rank(self) -> float:
+        """What decides which attempt is kept and published. On the local eval set the mean silhouette IoU
+        over the views tracks the volume IoU against the ground truth (Spearman +0.66 over 94 attempts),
+        while the composite score does not (+0.12): matching the volume by removing material in the wrong
+        place scores well and loses geometry. Falls back to the score when no views were compared."""
+        return self.iou_mean if self.iou_mean is not None else self.score
+
     def metrics(self) -> dict:
         out = {"score": round(self.score, 4)}
         for key in ("bbox_err", "volume_err", "area_err", "iou_mean", "iou_min"):

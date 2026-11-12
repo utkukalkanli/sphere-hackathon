@@ -60,6 +60,19 @@ def cyl_between(d, p0, p1) -> cq.Workplane:
     return _wp(cq.Solid.makeCylinder(d / 2, (b - a).Length, a, b - a))
 
 
+def cone_between(d0, d1, p0, p1) -> cq.Workplane:
+    """Cone frustum from point p0 (diameter d0) to point p1 (diameter d1), any direction."""
+    a, b = cq.Vector(*p0), cq.Vector(*p1)
+    return _wp(cq.Solid.makeCone(max(d0, 1e-6) / 2, max(d1, 1e-6) / 2, (b - a).Length, a, b - a))
+
+
+def tube_between(d_outer, d_inner, p0, p1) -> cq.Workplane:
+    """Hollow cylinder from point p0 to point p1 (any direction): the material between the two diameters."""
+    a, b = cq.Vector(*p0), cq.Vector(*p1)
+    step = (b - a).normalized()
+    return cyl_between(d_outer, p0, p1).cut(cyl_between(d_inner, (a - step).toTuple(), (b + step).toTuple()))
+
+
 def sphere(d, x, y, z) -> cq.Workplane:
     return cq.Workplane("XY").sphere(d / 2).translate((x, y, z))
 
@@ -115,8 +128,72 @@ def try_chamfer(body, length, selector=None) -> cq.Workplane:
         return body
 
 
-HELPERS = {f.__name__: f for f in (box, cyl, tube, cone, cyl_between, sphere, prism, revolve, arc_points,
-                                   polar_points, try_fillet, try_chamfer)}
+def through_holes(solid) -> int:
+    """Number of through-holes (genus) of a solid, from its B-rep topology: the same count as
+    `through_holes_genus` in facts.json. Euler-Poincare: V - E + F - (L - F) = 2 * (shells - genus)."""
+    from OCP.BRep import BRep_Tool
+    from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE, TopAbs_VERTEX, TopAbs_WIRE
+    from OCP.TopExp import TopExp
+    from OCP.TopoDS import TopoDS
+    from OCP.TopTools import TopTools_IndexedMapOfShape
+
+    def mapped(kind):
+        found = TopTools_IndexedMapOfShape()
+        TopExp.MapShapes_s(solid.wrapped, kind, found)
+        return found
+
+    faces, edges, verts, wires = (mapped(k) for k in (TopAbs_FACE, TopAbs_EDGE, TopAbs_VERTEX, TopAbs_WIRE))
+    n_edges = sum(0 if BRep_Tool.Degenerated_s(TopoDS.Edge_s(edges.FindKey(i))) else 1
+                  for i in range(1, edges.Extent() + 1))
+    F, V, L = faces.Extent(), verts.Extent(), wires.Extent()
+    return round(len(solid.Shells()) - (V - n_edges + F - (L - F)) / 2.0)
+
+
+def try_cut(body, cutter, min_volume=0.0, max_holes=None) -> cq.Workplane:
+    """body.cut(cutter), unless that fails, removes nothing, splits the part into several solids, leaves
+    less than min_volume mm3 or gives the part more than max_holes through-holes: then `body` is returned
+    unchanged, so one bad cut never ruins the part."""
+    try:
+        out = body.cut(cutter)
+        solids = out.val().Solids()
+        before, after = body.val().Volume(), out.val().Volume()
+        if len(solids) == 1 and out.val().isValid() and min_volume <= after < before - 1e-6:
+            if max_holes is None or through_holes(solids[0]) <= max(max_holes, through_holes(body.val().Solids()[0])):
+                return out
+    except Exception:
+        pass
+    return body
+
+
+def cut_feature(body, make_cutter, label, log, min_volume=0.0, max_holes=None) -> cq.Workplane:
+    """try_cut for one feature of a feature list (features.py), with the outcome appended to `log`: the cut is
+    skipped, and the reason recorded, when the cutter cannot be built or the cut would break the part."""
+    try:
+        cutter = make_cutter()
+        out = body.cut(cutter)
+        solids = out.val().Solids()
+        before, after = body.val().Volume(), out.val().Volume()
+    except Exception as exc:
+        log.append(f"{label} -> skipped: the geometry could not be built ({type(exc).__name__})")
+        return body
+    if after >= before - 1e-6:
+        reason = "it removes nothing (it lies outside the part or in material that is already gone)"
+    elif len(solids) != 1 or not out.val().isValid():
+        reason = "it would split the part into pieces"
+    elif after < min_volume:
+        reason = (f"it would leave {after:.0f} mm3, less than the part's volume: it is too large or in the "
+                  "wrong place")
+    elif max_holes is not None and through_holes(solids[0]) > max(max_holes, through_holes(body.val().Solids()[0])):
+        reason = "it would open more through-holes than the part has: it must stay blind"
+    else:
+        log.append(f"{label} -> cut, removed {before - after:.0f} mm3")
+        return out
+    log.append(f"{label} -> skipped: {reason}")
+    return body
+
+
+HELPERS = {f.__name__: f for f in (box, cyl, tube, cone, cyl_between, cone_between, tube_between, sphere, prism,
+                                   revolve, arc_points, polar_points, try_fillet, try_chamfer, try_cut, cut_feature)}
 
 HELPER_DOC = """\
 box(x0, y0, z0, x1, y1, z1)                 axis-aligned box between two corners
@@ -135,4 +212,6 @@ arc_points(cx, cy, r, start_deg, end_deg, n=24)   polygon points along an arc (f
 polar_points(n, r, cx, cy, start_deg=0)     n points on a circle (hole patterns)
 try_fillet(body, radius, selector=None)     fillet that silently skips if the kernel fails
 try_chamfer(body, length, selector=None)
+try_cut(body, cutter, min_volume=0, max_holes=None)   body.cut(cutter), skipped if it fails, splits the part, removes
+                                            nothing or leaves more than max_holes through-holes
 """

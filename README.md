@@ -38,34 +38,73 @@ account).
 
 # How the agent works
 
-`scripts/main.py` runs one generate → build → measure → compare → correct loop per test case
-(`src/agentic_cad/`):
+`scripts/main.py` runs one agent per test case (`src/agentic_cad/`). Three engines share the same build and
+measurement code; `AGENT_ENGINE` picks one:
 
-1. **Generate** (`agent.py`, `prompts.py`, `llm.py`): the model gets the brief, `facts.json` and the 8 views
-   and writes a CadQuery script. Scripts use absolute-coordinate helpers (`cadlib.py`: `box`, `cyl`, `prism`,
-   `revolve`, ...) so features can be placed straight from the numbers in the brief.
-2. **Build** (`runner.py`): the script runs in its own process with a timeout. The result is reduced to one
-   valid solid, moved to the bounding-box origin, exported to STEP and re-imported to prove it is readable.
-3. **Measure and compare** (`evaluate.py`, `render.py`): bounding box, volume, surface area and cylinder
-   diameters are checked against `facts.json`; the silhouette is drawn in the pixel frame of each
-   orthographic view and scored by IoU; target and candidate views are tiled side by side.
-4. **Correct**: the differences (and the side-by-side images) go back to the model, which sends a full
-   corrected script. The loop stops when every check is within tolerance, after `AGENT_MAX_ITERS`
-   attempts, or when the case's share of the time budget is used up.
+**`hull` (default)**: deterministic stages first, a model only where they fall short (`pipeline.py`, `hull.py`).
+Every stage is a CadQuery script run by `runner.py`, and the output file is only replaced by a solid that
+verifies better.
 
-The best solid so far is written to the output directory after every improvement, starting with a plain
-block of the envelope before the first model call, so a slow or failing endpoint never leaves a case
-without a file. Settings are environment variables (`src/agentic_cad/config.py`); a vision model is needed
-unless `AGENT_USE_IMAGES=0`.
+1. **Envelope block**: a valid file exists before anything else happens.
+2. **Silhouette hull** (no model): the front, right and top views are outlines of the part in known planes.
+   Their contours (OpenCV) are scaled to the envelope in `facts.json`, extruded through the part and
+   intersected. The result has the exact bounding box, contains the real part, and already has every opening
+   that goes straight through along X, Y or Z. If the three-way intersection fails, fewer views are used.
+3. **Bores from the facts** (no model): every hole/bore that `facts.json` locates is cut with `try_cut`, which
+   skips a cut that would split the part or take it below the target volume.
+4. **Carving** (text LLM, `OPENAI_BASE_URL`): only when the solid of stage 3 is still more than
+   `AGENT_CARVE_MIN_EXCESS` (default 1.0 = +100%) too heavy, i.e. the part is hollow. The model gets that solid
+   as `base` and may only remove material; `AGENT_CANDIDATES` scripts per round are built in parallel, and one
+   is kept if it stays a single valid solid, keeps the outline and gets closer to the target volume. Stops after
+   `AGENT_PATIENCE` rounds without an improvement or when the time is up.
+
+Measured on 60 parts of the local eval set (volume IoU against the ground truth): envelope block 0.463, stages
+1-3 0.825, with carving on every part 0.798. Carving lowered the IoU on 24 parts and raised it on 3: the model
+reaches the target volume by removing material in the wrong place, which is why stage 4 is limited to hollow
+parts. The hull's curved faces are polylines, not true cylinders.
+
+**`graph`**: a LangGraph tool-calling agent (`graph.py`) that pairs a text LLM with a separate vision
+model, so a strong coding model that cannot see images (e.g. Qwen3) can still use the views.
+
+1. **Fallback**: a plain block of the envelope is written before any model call, so no case is ever without a file.
+2. **Perceive** (vision model, `VLM_BASE_URL`): the 8 views are turned into a structured text description
+   (base form, profile, features per face, hollowness, symmetry) that goes to the text LLM with the brief and `facts.json`.
+3. **Agent** (text LLM, `OPENAI_BASE_URL`): decides what to do by calling tools:
+   `build_and_evaluate(code, change)` runs a CadQuery script in its own process (`runner.py`), measures it against the
+   facts and scores its silhouette against the views (`evaluate.py`, `render.py`), and keeps the best solid on disk;
+   `ask_vision(question, views, compare_last)` asks the vision model about the target views or shows it the
+   target-vs-candidate comparison sheets; `submit(reason)` ends the case.
+4. The attempt that is kept and published is the one with the best mean silhouette IoU over the views, not the one
+   with the best composite score: on the local eval set the silhouette match tracks the volume IoU against the ground
+   truth and the composite score does not (a model that fixes the volume by removing material in the wrong place
+   scores well and loses geometry). The loop stops on submit, when every check is within tolerance, after
+   `AGENT_MAX_STEPS` LLM turns, or when the case's share of the time budget is used up. Identical scripts are not rebuilt; an attempt history is kept in
+   the prompt so the model does not go in circles. Without `VLM_BASE_URL` the agent works from text only.
+
+**`legacy`**: the fixed generate → build → measure → compare → correct loop (`agent.py`) that sends the views and
+comparison images straight to one vision-capable model.
+
+Scripts use absolute-coordinate helpers (`cadlib.py`: `box`, `cyl`, `prism`, `revolve`, ...) so features can be
+placed straight from the numbers in the brief. Settings are environment variables (`src/agentic_cad/config.py`).
+
+## Measuring on the local eval set
+
+`scripts/eval.py` runs a subset of `datasets/eval` (266 parts with ground truth) and scores every output against
+its ground-truth STEP on the four terms of the organisers' formula (`docs/scoring.md`): volume IoU, surface match,
+dimensions and through-holes, plus their weighted score, next to the score of the plain envelope block the agent
+falls back to (any engine has to beat that). The organisers' scorer is not in this repository, so the surface,
+dimension and hole curves are our reading of their slide. The IoU is computed on a voxel grid: OCC booleans
+between a candidate and its ground truth return empty or partial shapes too often to be a measurement.
+Use it to compare engines or prompt changes:
 
 ```sh
-uv run python scripts/main.py --only test_case_1 --output_dir /tmp/out   # one case, outputs kept out of the repo
-TRACE=1 uv run python scripts/main.py --output_dir /tmp/out              # also write traces for ui/server.py
-uv run pytest                                                            # loop tests use a scripted model
+uv run python scripts/eval.py --limit 60 --engine hull --no-llm     # deterministic stages only
+uv run python scripts/eval.py --tier simple --limit 20 --engine graph
+uv run python scripts/eval.py --tier simple --limit 20 --engine legacy
+uv run python scripts/eval.py --score-only runs/eval_<id>      # re-score without re-running
 ```
 
-`cad/` holds hand-written CadQuery models of the nine practice parts, kept as a reference for what a good
-script looks like. They are not used by the agent and are excluded from the image.
+Runs are traced under `runs/` and show up in the dashboard (`uv run python ui/server.py`).
 
 # Submission format
 
