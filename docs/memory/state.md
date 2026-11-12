@@ -8,11 +8,17 @@ reasons in `decisions.md`.
 
 ## Summary
 
-- **Nothing has been submitted.** `main` has the template, the eval set and the first dashboard.
-- Work is on `feat/phase0-safe-runs` (pushed, contains `feat/visual-hull`). Plan phases 0 to 2 and
-  the model-free part of phase 3 (`docs/plan-pipeline.md`) are committed there.
-- Every step is deterministic. The model step exists and is off: no endpoint is configured, no
-  model has ever been asked.
+- **First submission: 2026-11-12, commit `fdcc8c6` on `main`** (CI run 43239297964: tests and
+  submit green). The deterministic pipeline, model step off. No score seen yet: the leaderboard's
+  address is not in the README.
+- `main` now has this branch's tree. A teammate's other pipeline (LLM CadQuery loop, hull and
+  graph engines, vLLM serving script, Brev guides; 12 commits up to `70b1a15`) was on `main` and
+  was merged with `-s ours` (user, 2026-11-12): its files are in the history, not in the tree.
+- Work goes on on `feat/phase0-safe-runs` (same commit as `main`). Plan phases 0 to 3
+  (`docs/plan-pipeline.md`) are committed.
+- Every step of the submitted pipeline is deterministic. The model step is off in the image: the
+  model (Gemma 4 31B FP8 on the team's Brev H100, vLLM) is reachable only through an SSH tunnel
+  from the laptop (`.env` for the dashboard), not from the image or the organisers' machine.
 - Latest whole-pipeline numbers: sampled IoU 0.8929 on the fixed 24 eval parts (simple 0.9943,
   medium 0.9260, complex 0.7584); practice parts 1, 2, 3, 4 within 3 % of the true volume, 8 at
   1.06, 5 and 9 at 1.2, 7 at 1.9, 6 at 2.8.
@@ -29,7 +35,7 @@ reasons in `decisions.md`.
 | rounds (`cut_rounds`) | `rounds.py` | `HULL_SKIP=rounds`, `HULL_ROUNDS_DISC=0` | IoU 0.834 to 0.847 (simple 0.960 to 0.994); "disc": cuts 6 of 266 eval parts, none lower; practice 6 3.81 to 3.31 |
 | curved recesses (`cut_curved`) | `curved.py`, `tone.py`, `regions.py` | `HULL_SKIP=curved` | no cut on the 24; 5 of the 37 lathe-type eval parts, none worse (249: 0.725 to 0.981); practice 2 1.105 to 1.018 |
 | level faces (`level_faces`) | `depth.py` | `HULL_SKIP=depth`, `HULL_DEPTH_SUPPORT=0` | IoU 0.847 to 0.854; supported cuts 0.8668 to 0.8791 (38: 0.628 to 0.933; 99: 0.252 to 0.241, accepted); practice 6 3.31 to 2.77 |
-| model (`model_cuts`) | `propose.py`, `ops.py`, `judge.py` | off unless `OPENAI_BASE_URL` and `OPENAI_MODEL` are set; `HULL_PROPOSALS=<dir>` replays files | never measured against ground truth (below) |
+| model (`model_cuts`) | `propose.py`, `ops.py`, `judge.py` | off unless `OPENAI_BASE_URL` and `OPENAI_MODEL` are set; `HULL_PROPOSALS=<dir>` replays files | 12 eval parts with excess, Gemma 4 31B, same start solid, 20 000 points: IoU 0.9181 without, 0.9423 with (236: 0.796 to 0.990; 171: 0.759 to 0.862; 74: 0.899 to 0.918; 3: 0.918 to 0.906; 38 and 110 down 0.007); up to 554 s a part (below) |
 | shading (`shading_depth`) | `shading.py` | `HULL_SKIP=shading`, `HULL_SHADING_SLANTED=0`, `HULL_SHADING_DEEP=0` | IoU 0.854 to 0.861 (110: 0.79 to 0.86, 236: 0.70 to 0.73), none lower |
 | pockets (`cut_pockets`) | `pockets.py`, `lines.py` | `HULL_SKIP=pockets` | eval 236 1.354 to 1.254 times the true volume (IoU 0.740 to 0.796); 22 of 24 untouched, none lower |
 | split (`split_faces`) | `split.py`, `lines.py` | `HULL_SKIP=split` | moves no material; splits faces on about 10 of the 24 |
@@ -175,10 +181,17 @@ Practice set, our volume / true volume (no ground truth, so only excess shows):
   9) and the shading cuts on 4 have not been checked by eye.
 - Against the views (`tools/check_views.py`, tone off on share of part pixels): practice 9 4.2 %
   (22.1 % that morning), practice 5 4.0 %, 8 6.2 %, 7 16.7 %.
-- Model step, replay of proposals written by three large stand-in models for older solids
+- Model step with the served model (2026-11-12, `tools/check_judge.py --rules score model`).
+  Asked for cuts with numbers, Gemma handed back the hole list of `facts.json` and the depths of
+  the region table (practice 5: 20 proposals, 0.135 cm3 removed). Asked only which numbered
+  regions are floors of recesses, with our solid drawn beside the isometric views, it named right
+  ones: eval 236 12 of 12 kept, 171 7 of 8. The depth is searched by the pipeline (9 depths,
+  shallow to deep, the judge keeps the best). The loss on eval 3 (a tyre) was four cuts in
+  regions of kind "curved"; since then only "facing" regions are searched and the search stops
+  when two depths in a row are no better. That version is being measured.
+- Replay of proposals written by three large stand-in models for older solids
   (`runs/_research_scratch/round4_model/`): practice 5 1.225 to 0.990, 7 1.913 to 1.316, 9 1.205
-  to 1.123. **This shows the step runs, not that the cuts are right**: the proposers were told
-  the excess and practice 5 ends under the true volume.
+  to 1.123. Not a measurement of right cuts: the proposers were told the excess.
 
 Time: the 9 practice parts take about 7 minutes on the loaded laptop (part 7 about 130 s, 9
 about 90 s, 6 about 70 s); shading, split, level faces and pockets are 90 % of it. The amd64
@@ -186,18 +199,21 @@ image, emulated, took 10.5 minutes at phase 0.
 
 ## Submission readiness
 
-- `artifacts/outputs` holds image-made files of 2026-11-11 (steps 1 + 2). **They are stale**
-  (part 8 among them) and must be regenerated from the `linux/amd64` image before a submission.
-- The image was last built and run at phase 0 (non-root user, read-only root and inputs: 9
-  valid solids). Not run since: phases 1 to 3, the hole work. Image and laptop gave different
-  solids on practice 6, 7 and 9 (volume 0.3 %, 1.1 %, 1e-10); the cause was not looked into.
+- `artifacts/outputs` holds the files the `linux/amd64` image of commit `bda2104` wrote on
+  2026-11-12 (non-root user, read-only root and inputs, 11.9 minutes emulated, all 9 one valid
+  solid). It was run with `HULL_RUN_BUDGET=7200`: emulation is 3 to 4 times slower than the
+  laptop and the case shares would have skipped steps on practice 7. Against a native laptop run
+  of the same code the volumes agree to 2e-6 on all nine.
+- **A model in a submission needs a public endpoint**: the port opened on Brev (TCP, not the
+  login-protected HTTP port), vLLM with a real `--api-key`, and the three values as `ENV` in the
+  Dockerfile and in `team-d.env`.
 - GitHub Actions variables for team-d are set, so a push to `main` submits.
 - Other branches on origin, not read for this file: `feat/llm-cad-agent` (a teammate's model
   serving), `ananas`, `nar`.
 
 ## Not done
 
-- Model: the test on parts with ground truth (plan phase 3 step 0), the hard set
+- Model: the time of the step bounded and measured on the practice set, the hard set
   (`tools/find_hard.py` is written and not run: it needs hull and holes on all 266 parts, which
   needs the user's go), a volume-closing depth, depths for boxes and prisms.
 - `tools/eval_hull.py` calls `build_hull`, `cut_holes` and the mouths itself, not `carve`: a

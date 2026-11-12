@@ -5,8 +5,12 @@ Remove a question when it is answered and record the answer in `decisions.md`, `
 
 ## Submission (the user decides)
 
-- **When do we make the first submission?** Nothing is on the leaderboard. It takes fresh
-  outputs from the amd64 image and a merge to `main`.
+- **Where is the leaderboard, and what did commit `fdcc8c6` score?** (2026-11-12.) The first
+  submission is in; the README gives no address. A score per part would also answer the next
+  question.
+- **What happens to the teammate's pipeline that was on `main`?** (2026-11-12.) It is in the
+  history (`70b1a15`), not in the tree. Whether parts of it come back (the vLLM serving script,
+  the Brev guides) is for the user and the teammate.
 - **What does the organisers' score measure, and how does it treat an enclosed void?** We assume
   volume overlap. If it is surface based or counts faces, polygonal outlines and extra faces cost
   more than we think. A first submission with a score per part would show it: practice 6 near 0.3
