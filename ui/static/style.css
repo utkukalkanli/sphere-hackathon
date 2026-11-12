@@ -146,6 +146,21 @@ table.grid :is(th, td):last-child { padding-right: 0; }
 #cut { width: 110px; margin: 0 6px 0 4px; align-self: center; accent-color: var(--accent); }
 #cut[hidden] { display: none; }
 .no-truth [data-diff] { display: none; }
+.marking .stage canvas { cursor: crosshair; }
+#marks { position: absolute; z-index: 2; right: 14px; bottom: 60px; display: grid; gap: 2px; width: 250px; max-height: calc(100% - 130px); overflow-y: auto; padding: 6px; border-radius: 10px; background: rgba(19, 21, 24, 0.8); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); font-size: 12px; }
+#marks[hidden] { display: none; }
+#marks > div { display: grid; grid-template-columns: 18px auto minmax(0, 1fr) 22px; align-items: center; gap: 6px; }
+#marks b { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: #ffd24a; color: #000; font: 600 10px var(--mono); }
+#marks span { font: 11px var(--mono); color: var(--muted); white-space: nowrap; }
+#marks input { min-width: 0; height: 26px; padding: 0 7px; border: 0; border-radius: 6px; background: var(--hover); color: var(--ink); font: inherit; }
+#marks input:focus { outline: 1px solid var(--accent); }
+#marks button { height: 26px; padding: 0 10px; border: 0; border-radius: 7px; background: none; color: var(--muted); font: inherit; }
+#marks > div button { padding: 0; }
+#marks button:hover { background: var(--hover); color: var(--ink); }
+#marks footer { display: flex; justify-content: flex-end; gap: 4px; margin-top: 4px; }
+#marks .go { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+#marks .go:hover { background: var(--accent); color: var(--accent-ink); filter: brightness(1.1); }
+#marks .note { padding: 2px 6px; }
 
 /* what is on screen, written over the big view */
 .hud { position: absolute; left: 18px; top: 14px; display: grid; gap: 8px; justify-items: start; max-width: 70%; max-height: calc(100% - 28px); pointer-events: none; }
@@ -287,6 +302,7 @@ h4 { margin: 9px 0 4px; font-size: 11px; font-weight: 500; color: var(--muted); 
 #overlay { display: none; }
 #overlay.open { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; background: rgba(8, 9, 11, 0.9); cursor: zoom-out; animation: appear 0.18s var(--ease); }
 #overlay img { max-width: 90vw; max-height: 90vh; border-radius: 6px; }
+.toast.ok { border-color: rgba(116, 211, 160, 0.4); }
 .toast { position: fixed; left: 50%; bottom: 22px; translate: -50% 0; z-index: 20; padding: 9px 14px; border: 1px solid rgba(255, 123, 110, 0.4); border-radius: 7px; background: var(--raise); color: var(--ink); box-shadow: 0 10px 30px -8px rgba(0, 0, 0, 0.7); }
 
 @media (max-width: 980px) {

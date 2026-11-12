@@ -11,6 +11,7 @@ it is not part of the submitted image (ui/ is in .dockerignore) and listens on l
 from __future__ import annotations
 
 import argparse
+import base64
 import csv
 import json
 import mimetypes
@@ -468,6 +469,42 @@ def source_picture(dataset: str, case: str, view: str, kind: str) -> Path | None
     return wanted if wanted.exists() else None
 
 
+# -- marks: places on a solid the user pointed at in the dashboard, for tools/marks.py --------------
+
+MARKS = RUNS / "_marks"
+
+
+def url_file(url) -> str | None:
+    """The file behind a /files/ address, from the repository's root."""
+    if not isinstance(url, str) or not url.startswith("/files/"):
+        return None
+    root, _, rest = unquote(urlparse(url).path)[len("/files/"):].partition("/")
+    path = safe_join(FILE_ROOTS[root], rest) if root in FILE_ROOTS else None
+    return os.path.relpath(path, ROOT) if path else None
+
+
+def save_marks(body: dict) -> dict:
+    name, dataset, case = (str(body.get(key) or "") for key in ("id", "dataset", "case"))
+    if not NAME_RE.match(name) or dataset not in DATASETS or not NAME_RE.match(case):
+        raise ValueError("bad name")
+    folder = MARKS / name
+    folder.mkdir(parents=True, exist_ok=True)
+    shots = []
+    for tag, data in (body.get("shots") or {}).items():
+        if tag in ("ours", "truth") and isinstance(data, str) and data.startswith("data:image/png;base64,"):
+            (folder / f"shot_{tag}.png").write_bytes(base64.b64decode(data.split(",", 1)[1]))
+            shots.append(f"shot_{tag}.png")
+    marks = [m for m in body.get("marks") or [] if isinstance(m, dict)]
+    for mark in marks:
+        mark["solid_file"] = url_file(mark.get("solid"))
+    record = {"id": name, "saved_at": datetime.now().isoformat(timespec="seconds"), "dataset": dataset, "case": case,
+              "run": body.get("run"), "inputs": os.path.relpath(DATASETS[dataset]["inputs"] / case, ROOT),
+              "truth_file": url_file(body.get("truth")), "shots": shots, "marks": marks}
+    (folder / "marks.json").write_text(json.dumps(record, indent=1))
+    (MARKS / "latest").write_text(name)
+    return {"id": name, "path": os.path.relpath(folder, ROOT)}
+
+
 def safe_join(base: Path, relative: str) -> Path | None:
     target = (base / relative).resolve()
     return target if target.is_relative_to(base.resolve()) and target.is_file() else None
@@ -603,6 +640,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"ok": True})
             if path == "/api/promote":
                 return self.send_json(promote(run, only or None))
+            if path == "/api/marks":
+                return self.send_json(save_marks(body))
             if path == "/api/pytest":
                 return self.send_json(run_pytest())
             return self.send_json({"error": "not found"}, 404)

@@ -62,8 +62,12 @@ uv run python tools/eval_hull.py                       # score on 24 fixed eval 
 uv run python tools/eval_hull.py --iou                 # also check the overlap against ground truth
 uv run python tools/check_verify.py                    # verifier scores of ground truth, our solid and the box
 uv run python ui/server.py                             # dashboard, http://localhost:8765
+uv run python tools/marks.py                           # the places the user marked in the dashboard (M, click, Send)
 uv run pytest                                          # what CI runs
 ```
+
+When the user pastes a text starting with "Marks <id>:" or says they marked something, run
+`tools/marks.py [<id>]` and read the pictures it names (`shot_*.png`, `mark_<n>.png`) before answering.
 
 ## Layout
 

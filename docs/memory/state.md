@@ -337,6 +337,7 @@ image, emulated, took 10.5 minutes at phase 0.
   missing volume computed in the browser).
 - Every case shows the same 18 stops; a step that did not run is dimmed as pending, off, skipped
   or not run; steps outside the plan fold into the stop they happened in.
+| `tools/marks.py [ID]` | the places the user marked on a solid in the dashboard, for a session to read: face and its numbers, material under the point and room over it along the normal, inside or outside the ground truth and how far its surface is, the pixel in each of the 8 views, `mark_<n>.png` with the place ringed. 1.4 s for four marks on eval 52 |
 - Keys: D diff colouring (red excess, violet missing), C a colour per face, X section plane, S
   scores panel (per tier, worst first). Case and run lists filter by typing; the run list shows
   the runs of the case on screen with its score.
@@ -359,6 +360,12 @@ image, emulated, took 10.5 minutes at phase 0.
   Chrome against the committed dashboard: eval 99 solid on screen 20.6 to 11.4 s and its IoU
   58 to 11.7 s after opening; eval 6 16.8 to 8.4 s and 32.6 to 8.6 s; practice 7 3.2 to 2.1 s.
   What is left is the reading of one large file.
+- Marks (M or the pin in the tools; 2026-11-12): a click on our solid
+  or the ground truth puts a numbered mark there (on the cut face when the section is on: a place
+  inside the material), a click on a mark removes it; a note per mark; Send writes
+  `runs/_marks/<id>/marks.json` and a picture of each marked view and copies a summary for
+  pasting to a session; `tools/marks.py` works out the rest. Driven in headless Chrome on eval 52
+  (surface, section, truth, note, send; no page errors), not yet used by the user.
 - Not yet looked at in a browser by the user: the picture zoom controls, the run list per case,
   the "evidence" stop (it has no solid). The left view's changes were driven in headless Chrome
   (clicks, keys, no page errors), not seen by the user.
