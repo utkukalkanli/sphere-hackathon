@@ -136,6 +136,34 @@ export function setFaces(on) {
   try { localStorage.setItem('faces', facets ? 'on' : 'off'); } catch { /* private mode */ }
   invalidate();
 }
+// Marking (M): a click on a solid, without dragging, is handed to the viewer's `onPick` with the place
+// under the pointer, and the viewer's `pins` are drawn over the picture.
+let picking = false;
+export const marking = () => picking;
+export function setMarking(on) {
+  picking = Boolean(on);
+  invalidate();
+}
+export { invalidate as redraw };
+
+// The face of the solid a triangle belongs to, summed up from its triangles
+function faceOf(m, triangle, before) {
+  let f = -1;
+  for (let i = 0; i < m.faces.length / 2; i++) if (m.faces[2 * i] <= triangle && triangle <= m.faces[2 * i + 1]) { f = i; break; }
+  if (f < 0) return null;
+  const p = m.position, min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity], sum = [0, 0, 0];
+  let area = 0;
+  for (let t = m.faces[2 * f]; t <= m.faces[2 * f + 1]; t++) {
+    const [a, b, c] = [0, 1, 2].map((k) => m.index[3 * t + k] * 3);
+    for (const v of [a, b, c]) for (let k = 0; k < 3; k++) { min[k] = Math.min(min[k], p[v + k]); max[k] = Math.max(max[k], p[v + k]); }
+    const n = cross([p[b] - p[a], p[b + 1] - p[a + 1], p[b + 2] - p[a + 2]], [p[c] - p[a], p[c + 1] - p[a + 1], p[c + 2] - p[a + 2]]);
+    area += Math.hypot(...n) / 2;
+    for (let k = 0; k < 3; k++) sum[k] += n[k] / 2;
+  }
+  const flat = Math.hypot(...sum) > 0.9995 * area;
+  return { index: before + f, area, flat, normal: flat ? unit(sum) : null, min, max };
+}
+
 // A section plane (X): every viewer shows its solid cut open square to one axis. `axis` is 0, 1, 2
 // or -1 for none; `at` is where along the solid's box, 0 to 1. The half towards the camera is taken
 // away, so the cut face is what you look at from either side.
@@ -223,7 +251,7 @@ export const COLORS = { ours: 0xb3bcc6, truth: 0xcfa462, ghost: 0x5b9bff, excess
 // `diff`: { meshes, shift } of the ground truth (shift lays its min corner on the solid's). The solid
 // is then painted red where it has material the truth lacks, and the truth shows in violet where it
 // sticks out of the solid.
-export async function createViewer(container, meshes, color = COLORS.ours, { interactive = true, ghost: before = null, frame = null, diff = null } = {}) {
+export async function createViewer(container, meshes, color = COLORS.ours, { interactive = true, ghost: before = null, frame = null, diff = null, pins = null, onPick = null } = {}) {
   const { THREE, renderer } = await load();
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
@@ -302,6 +330,7 @@ export async function createViewer(container, meshes, color = COLORS.ours, { int
       const entry = acquire(THREE, m);
       used.push(m);
       const mesh = new THREE.Mesh(entry.geometry, fill);
+      mesh.userData.m = m;
       mesh.renderOrder = order;
       group.add(mesh);
       triangles += m.index.length / 3;
@@ -459,6 +488,59 @@ export async function createViewer(container, meshes, color = COLORS.ours, { int
     ctx.fillRect(0, 0, w, h);
     ctx.drawImage(renderer.domElement, 0, renderer.domElement.height - h, w, h, 0, 0, w, h);
     if (interactive) drawAxes(dpr, h);
+    if (pins) drawPins(dpr, w, h);
+  }
+
+  // The marks: a dot on the exact place, its number beside it. Fainter on a face turned away.
+  const spot = new THREE.Vector3();
+  const onScreen = (p, w, h) => { spot.set(...p).project(camera); return [(spot.x + 1) / 2 * w, (1 - spot.y) / 2 * h]; };
+  function drawPins(dpr, w, h) {
+    const { dir } = basis();
+    ctx.font = `600 ${10 * dpr}px ui-monospace, Menlo, monospace`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineWidth = 1.5 * dpr;
+    for (const pin of pins()) {
+      const [x, y] = onScreen(pin.at, w, h), bx = x + 13 * dpr, by = y - 13 * dpr;
+      ctx.globalAlpha = dot(pin.normal, dir) < -0.05 ? 0.45 : 1;
+      ctx.strokeStyle = '#000';
+      ctx.fillStyle = '#ffd24a';
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(bx, by); ctx.stroke();
+      ctx.beginPath(); ctx.arc(x, y, 3.5 * dpr, 0, 7); ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.arc(bx, by, 8.5 * dpr, 0, 7); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#000';
+      ctx.fillText(pin.n, bx, by + 0.5 * dpr);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // What lies under the pointer: a mark already there, else the nearest surface of the solid that
+  // the section has not taken away. Where the camera looks into the cut solid, the place is on the
+  // cut face, inside the material.
+  const caster = new THREE.Raycaster();
+  function pickAt(e) {
+    const rect = canvas.getBoundingClientRect(), x = e.clientX - rect.left, y = e.clientY - rect.top;
+    for (const pin of pins ? pins() : []) {
+      const [px, py] = onScreen(pin.at, rect.width, rect.height);
+      if (Math.hypot(px - x, py - y) < 8 || Math.hypot(px + 13 - x, py - 13 - y) < 10) return onPick({ pin });
+    }
+    const { dir, up, right } = basis(), ray = caster.ray;
+    camera.updateMatrixWorld();
+    ray.origin.set(x / rect.width * 2 - 1, 1 - y / rect.height * 2, -1).unproject(camera);
+    ray.direction.set(...dir).negate();
+    const solids = root.children.filter((o) => o.isMesh);
+    const hit = caster.intersectObjects(solids, false).find((h) => plane.distanceToPoint(h.point) >= 0);
+    if (!hit) return;
+    const inside = hit.face.normal.dot(ray.direction) > 0, cutFace = inside && slice.axis >= 0;
+    const point = cutFace ? ray.intersectPlane(plane, new THREE.Vector3()) : hit.point;
+    if (!point) return;
+    const normal = cutFace ? plane.normal.clone().negate() : inside ? hit.face.normal.clone().negate() : hit.face.normal;
+    const m = hit.object.userData.m;
+    const before = solids.slice(0, solids.indexOf(hit.object)).reduce((sum, o) => sum + o.userData.m.faces.length / 2, 0);
+    onPick({
+      kind: cutFace ? 'section' : 'surface', at: point.toArray(), normal: normal.toArray(),
+      face: cutFace ? null : faceOf(m, hit.faceIndex, before), camera: { right, up, towards: dir },
+    });
   }
 
   function drawAxes(dpr, h) {  // which way the part is turned
@@ -490,11 +572,17 @@ export async function createViewer(container, meshes, color = COLORS.ours, { int
     cancelAnimationFrame(tween);
     // past the pole the part is upside down: turn the other way so it still follows the pointer
     const flip = pose.up[2] < 0 ? -1 : 1;
-    drag = { x: e.clientX, y: e.clientY, pan: e.shiftKey || e.button !== 0, flip };
+    drag = { x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, pan: e.shiftKey || e.button !== 0, flip, moved: false };
     canvas.classList.add('dragging');
   });
   canvas.addEventListener('pointermove', (e) => {
     if (!drag) return;
+    if (!drag.moved) {  // while marking, a click that slips a pixel or two does not turn the part
+      if (picking && onPick && Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) < 4) return;
+      drag.moved = true;
+      drag.x = e.clientX;
+      drag.y = e.clientY;
+    }
     const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
     drag.x = e.clientX;
     drag.y = e.clientY;
@@ -513,10 +601,14 @@ export async function createViewer(container, meshes, color = COLORS.ours, { int
     invalidate();
   });
   const release = () => { drag = null; canvas.classList.remove('dragging'); };
-  canvas.addEventListener('pointerup', release);
+  canvas.addEventListener('pointerup', (e) => {
+    const click = drag && !drag.moved && !drag.pan && picking && onPick;
+    release();
+    if (click) pickAt(e);
+  });
   canvas.addEventListener('pointercancel', release);
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
-  canvas.addEventListener('dblclick', fit);
+  canvas.addEventListener('dblclick', () => { if (!(picking && onPick)) fit(); });
   canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
     cancelAnimationFrame(tween);

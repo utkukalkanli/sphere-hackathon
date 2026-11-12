@@ -1,8 +1,11 @@
-// Dashboard front end. One large 3D view of the solid after the chosen pipeline step, with what that
-// step removed drawn over it; a slider of the steps underneath; everything about the input on the
-// left; the ground truth, as large as its panel, on the right, with two
-// panels under it: how the chosen step's solid differs from the truth, and what the step extracted. Both side panels can be dragged wider. No build step, no framework.
-import { createViewer, setView, fit, zoomBy, trackball, setTrackball, ghost, setGhost, faces, setFaces, section, setSection, VIEWS, COLORS } from '/static/viewer.js';
+// Dashboard front end. Two views side by side, like two processes with a link between them. Left
+// what was given: one window with its own slider (brief, facts, input pictures, ground truth). Right
+// what we made: the solid after the chosen pipeline step, with what that step removed drawn over it.
+// On the boundary between them floats what the chosen step extracted (it can be dragged away).
+// Underneath, in an area whose height can be dragged: the steps as a line in the middle of it (it
+// wraps when there are too many for one row), and how the chosen step's solid differs from the truth. On the right one window with
+// The boundary between the two views can be dragged. No build step, no framework.
+import { createViewer, setView, fit, zoomBy, trackball, setTrackball, ghost, setGhost, faces, setFaces, section, setSection, marking, setMarking, redraw, VIEWS, COLORS } from '/static/viewer.js';
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -27,6 +30,7 @@ const ICON = {
   order: icon('<path d="M3 4h10M3 8h7M3 12h4"/>'),
   down: icon('<path d="M4.5 6.5 8 10l3.5-3.5"/>'),
   ghost: icon('<path d="M3 5.5 8 3l5 2.5v5L8 13l-5-2.5z" stroke-dasharray="2 1.7"/>'),
+  pin: icon('<path d="M8 14s4-4.2 4-7.5a4 4 0 0 0-8 0C4 9.8 8 14 8 14z"/><circle cx="8" cy="6.5" r="1.3"/>'),
   play: icon('<path d="M5 3.5v9l7-4.5z" fill="currentColor"/>'),
   stop: icon('<rect x="4" y="4" width="8" height="8" rx="1" fill="currentColor"/>'),
 };
@@ -34,7 +38,8 @@ const ICON = {
 const S = {
   datasets: [], runs: [], cases: {}, now: 0,
   dataset: null, caseName: null, runId: null,  // runId '' = committed outputs / no run
-  image: DEFAULT_VIEW,
+  source: 'truth',  // what the right window shows: 'brief', 'facts', an input picture or 'truth'
+  derived: 'picture',  // ... and of a picture: itself, or a source read off it (lines, faces, normals, depth)
   sel: null,  // the step whose solid is shown; null = follow the latest
   diff: false,  // the big view shows the difference to the ground truth instead of the solid
 };
@@ -60,9 +65,9 @@ async function api(path, body) {
   return data;
 }
 
-function toast(message) {
+function toast(message, kind = '') {
   const node = document.createElement('div');
-  node.className = 'toast';
+  node.className = `toast ${kind}`;
   node.setAttribute('role', 'alert');
   node.textContent = message;
   document.body.append(node);
@@ -115,11 +120,12 @@ function outputOf(c) {
 // The renders come on a white sheet. Cut the sheet away (flood from the border) so the part sits
 // on the dark interface instead of in a glaring white square.
 const cutouts = new Map();
-function cutout(src) {
-  if (!cutouts.has(src)) {
-    cutouts.set(src, (async () => {
+function cutout(src, size = 768) {  // size: the longest side in pixels; the big picture is kept whole
+  const key = `${size}|${src}`;
+  if (!cutouts.has(key)) {
+    cutouts.set(key, (async () => {
       const bitmap = await createImageBitmap(await (await fetch(src)).blob());
-      const scale = Math.min(1, 768 / Math.max(bitmap.width, bitmap.height));
+      const scale = Math.min(1, size / Math.max(bitmap.width, bitmap.height));
       const w = Math.round(bitmap.width * scale), h = Math.round(bitmap.height * scale);
       const canvas = Object.assign(document.createElement('canvas'), { width: w, height: h });
       const ctx = canvas.getContext('2d', { willReadFrequently: true });
@@ -148,48 +154,77 @@ function cutout(src) {
       return URL.createObjectURL(await new Promise((resolve) => canvas.toBlob(resolve)));
     })().catch(() => src));
   }
-  return cutouts.get(src);
+  return cutouts.get(key);
 }
 
 function hydrateImages(root = document) {
   $$('img[data-cut]', root).forEach(async (img) => {
     const src = img.dataset.cut;
     if (img.dataset.done === src) return;
-    const url = await cutout(src);
+    const url = await cutout(src, Number(img.dataset.size) || 768);
     if (img.dataset.cut === src) { img.src = url; img.dataset.done = src; }
   });
 }
 
 // -- STEP loading -------------------------------------------------------------------------------
 
-let worker = null, jobs = new Map(), jobId = 0;
+// Reading a .stp and measuring an overlap happen in a few workers. What is on screen goes first
+// (rank 1, the newest request before older ones); the steps warmed up for scrubbing wait behind it,
+// the nearest to the chosen step first (rank -distance).
+const POOL = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 4) - 1));
+const crew = [], waiting = [];
+let asked = 0;
+function dispatch() {
+  while (waiting.length) {
+    let slot = crew.find((s) => !s.job);
+    if (!slot && crew.length < POOL) {
+      const made = slot = { worker: new Worker('/static/step-worker.js'), job: null };
+      const finish = (act) => { const job = made.job; made.job = null; if (job) act(job); dispatch(); };
+      made.worker.onmessage = ({ data }) => finish((job) => (data.ok ? job.resolve(data) : job.reject(new Error(data.error))));
+      made.worker.onerror = (event) => {  // the worker itself died: its job fails, another worker takes its place
+        made.worker.terminate();
+        crew.splice(crew.indexOf(made), 1);
+        finish((job) => job.reject(new Error(event.message || 'the worker failed')));
+      };
+      crew.push(slot);
+    }
+    if (!slot) return;
+    let best = 0;
+    waiting.forEach((job, i) => { const b = waiting[best]; if (job.rank > b.rank || (job.rank === b.rank && job.at > b.at)) best = i; });
+    const job = waiting.splice(best, 1)[0], taken = slot;
+    taken.job = job;
+    job.waiting = false;
+    Promise.resolve().then(job.make).then((message) => taken.worker.postMessage({ id: 0, ...message }, message.buffer ? [message.buffer] : []))
+      .catch((error) => { if (taken.job === job) taken.job = null; job.reject(error); dispatch(); });
+  }
+}
+function work(make, rank) {
+  const job = { make, rank, at: ++asked, waiting: true };
+  job.promise = new Promise((resolve, reject) => Object.assign(job, { resolve, reject }));
+  waiting.push(job);
+  dispatch();
+  return job;
+}
+
 const stepCache = new Map();
-function loadStep(url, key = url) {
-  if (stepCache.has(key)) return stepCache.get(key);
-  const promise = (async () => {
+function loadStep(url, key = url, rank = 1) {
+  const hit = stepCache.get(key);
+  if (hit) {  // asked again for the screen while it waits as a warm-up: move it to the front
+    if (hit.waiting && rank >= hit.rank) Object.assign(hit, { rank, at: ++asked });
+    return hit.promise;
+  }
+  const job = work(async () => {  // fetched only when a worker is free for it
     const response = await fetch(url, { cache: 'no-store' });
     if (!response.ok) throw new Error(`could not load file (${response.status})`);
     const buffer = await response.arrayBuffer();
     const head = new TextDecoder().decode(buffer.slice(0, 64)).trimStart();
     if (!head.startsWith('ISO-10303-21')) throw new Error('not a STEP file');
-    if (!worker) {
-      worker = new Worker('/static/step-worker.js');
-      worker.onmessage = ({ data }) => {
-        const job = jobs.get(data.id);
-        jobs.delete(data.id);
-        if (job) data.ok ? job.resolve(data) : job.reject(new Error(data.error));
-      };
-    }
-    return new Promise((resolve, reject) => {
-      const id = ++jobId;
-      jobs.set(id, { resolve, reject });
-      worker.postMessage({ id, buffer });
-    });
-  })();
-  stepCache.set(key, promise);
-  promise.catch(() => stepCache.delete(key));
+    return { buffer };
+  }, rank);
+  stepCache.set(key, job);
+  job.promise.catch(() => { if (stepCache.get(key) === job) stepCache.delete(key); });
   if (stepCache.size > 32) stepCache.delete(stepCache.keys().next().value);
-  return promise;
+  return job.promise;
 }
 
 // Show a .stp in a viewport. The previous solid stays up until the next one is ready, so stepping
@@ -215,8 +250,9 @@ async function showModel(viewport, url, key, color, empty = '', { before = null,
     const optional = (model) => (model ? loadStep(model.url, model.key).catch(() => null) : null);
     const [solid, old, box, real] = await Promise.all([loadStep(url, key), optional(before), optional(frame), optional(truth)]);
     if (!fresh()) return;
+    const { mark, ...rest } = options;  // mark: 'ours' or 'truth', a solid places can be marked on
     const viewer = await createViewer(stage, solid.meshes, color, {
-      ...options, ghost: old && old.meshes, frame: box && box.measured,
+      ...rest, pins: mark && (() => marks.filter((m) => m.on === mark)), onPick: mark && ((hit) => picked(mark, hit, url, solid.measured)), ghost: old && old.meshes, frame: box && box.measured,
       diff: real && { meshes: real.meshes, shift: solid.measured.min.map((v, i) => v - real.measured.min[i]) } });
     if (!fresh()) return viewer.dispose();
     if (stage.viewer) stage.viewer.dispose();
@@ -236,21 +272,12 @@ const viewportHTML = (id, label, tools = true) => `<div class="viewport" id="${i
     <button data-faces aria-pressed="${faces()}" title="Every face in its own colour (C)" aria-label="Every face in its own colour">${ICON.faces}</button>
     <button data-cut aria-pressed="${section().axis >= 0}" title="Cut the solids open: X, Y, Z, off (X)" aria-label="Section plane">${cutLabel()}</button>
     <input type="range" id="cut" min="0" max="1" step="0.005" value="${section().at}" aria-label="Where the section plane is" ${section().axis < 0 ? 'hidden' : ''}>
+    <button data-mark aria-pressed="${marking()}" title="Mark places on the solid for Claude: click to mark, click a mark to remove it (M)" aria-label="Mark places for Claude">${ICON.pin}</button>
     <button data-orbit aria-pressed="${trackball()}" title="Free rotation (T)" aria-label="Free rotation">${ICON.orbit}</button>
     <button data-zoom="0.8" title="Zoom out (−)" aria-label="Zoom out">${ICON.minus}</button>
     <button data-zoom="1.25" title="Zoom in (+)" aria-label="Zoom in">${ICON.plus}</button>
     <button data-fit title="Fit the part (F, or double-click)" aria-label="Fit the part">${ICON.fit}</button>
   </div>` : ''}</div>`;
-
-// A panel that folds away under its title. Whether it is open is remembered.
-function dropHTML(id, title, body, open = true) {
-  try { open = (localStorage.getItem(`drop-${id}`) || (open ? 'open' : 'closed')) !== 'closed'; } catch { /* private mode */ }
-  return `<details class="drop" id="${id}" ${open ? 'open' : ''}><summary>${title}<span></span></summary>${body}</details>`;
-}
-document.addEventListener('toggle', (event) => {
-  if (!event.target.matches || !event.target.matches('details.drop')) return;
-  try { localStorage.setItem(`drop-${event.target.id}`, event.target.open ? 'open' : 'closed'); } catch { /* private mode */ }
-}, true);
 
 function toggleOrbit() {
   setTrackball(!trackball());
@@ -279,6 +306,86 @@ function cycleSection() {  // off, X, Y, Z, off
 function toggleGhost() {
   setGhost(!ghost());
   $$('[data-ghost]').forEach((button) => button.setAttribute('aria-pressed', ghost()));
+}
+
+// -- marks ----------------------------------------------------------------------------------------
+
+// Places pointed at on a solid, to talk about with Claude: M, click the solid (ours or the ground
+// truth), write a note if wanted, Send. The marks go to runs/_marks/<id>/ with a picture of the
+// view, and a summary to the clipboard; `tools/marks.py` works out the rest. A mark is in mm from
+// the min corner of the part's box, the frame of facts.json and of our solids.
+const marks = [];
+function picked(on, hit, url, measured) {
+  if (hit.pin) marks.splice(marks.indexOf(hit.pin), 1);
+  else {
+    const origin = on === 'truth' ? measured.min : [0, 0, 0];  // the ground truth lies anywhere
+    const row = live.rows.find((r) => r.id === live.chosen);
+    marks.push({
+      on, kind: hit.kind, at: hit.at, point: hit.at.map((v, i) => v - origin[i]), origin, normal: hit.normal, face: hit.face, note: '',
+      solid: url, box: { min: measured.min, max: measured.max }, camera: hit.camera,
+      step: on === 'ours' && row ? { n: row.n, name: row.name, trace: row.raw } : null,
+      diff: on === 'ours' && S.diff, section: section().axis >= 0 ? 'XYZ'[section().axis] : null,
+    });
+  }
+  marks.forEach((m, i) => { m.n = i + 1; });
+  renderMarks();
+  redraw();
+}
+function renderMarks() {
+  const box = $('#marks');
+  if (!box) return;
+  box.hidden = !marking() && !marks.length;
+  setHTML(box, marks.length ? `${marks.map((m, i) => `<div><b>${m.n}</b><span>${m.point.map((v) => v.toFixed(1)).join(' ')}</span>
+    <input data-note="${i}" value="${esc(m.note)}" placeholder="note" aria-label="Note for mark ${m.n}">
+    <button data-unmark="${i}" title="Remove" aria-label="Remove mark ${m.n}">×</button></div>`).join('')}
+    <footer><button data-marks="clear">Clear</button><button data-marks="send" class="go" title="Save for Claude and copy a summary (⌘↵)">Send</button></footer>`
+    : '<p class="note">Click the solid</p>');
+}
+function toggleMarking() {
+  setMarking(!marking());
+  document.body.classList.toggle('marking', marking());
+  $$('[data-mark]').forEach((button) => button.setAttribute('aria-pressed', marking()));
+  renderMarks();
+}
+function clearMarks() {
+  marks.length = 0;
+  renderMarks();
+  redraw();
+}
+const along = (n) => {  // a direction in words where it is an axis
+  const k = n.findIndex((v) => Math.abs(v) > 0.9995);
+  return k >= 0 ? `${n[k] > 0 ? '+' : '-'}${'XYZ'[k]}` : `(${n.map((v) => v.toFixed(2)).join(', ')})`;
+};
+function marksText(id, c) {
+  const lines = marks.map((m) => {
+    const where = m.on === 'truth' ? 'ground truth' : `our solid${m.step ? `, step ${m.step.n} ${m.step.name}` : ''}`;
+    const what = m.kind === 'section' ? `inside the material, on the section square to ${m.section}`
+      : m.face ? `on face ${m.face.index} (${m.face.flat ? 'flat' : 'curved'}, ${num(m.face.area, 1)} mm², normal here ${along(m.normal)})` : `normal ${along(m.normal)}`;
+    return `${m.n}. ${where}: (${m.point.map((v) => v.toFixed(2)).join(', ')}) mm ${what}${m.note ? ` — "${m.note}"` : ''}`;
+  });
+  return [`Marks ${id}: ${S.dataset} ${c.name}${S.runId ? `, run ${S.runId}` : ', committed output'}`, ...lines,
+    `Details: uv run python tools/marks.py ${id}`].join('\n');
+}
+async function sendMarks() {
+  const c = currentCase();
+  if (!c || !marks.length) return;
+  const now = new Date(), two = (v) => String(v).padStart(2, '0');
+  const id = `${now.getFullYear()}${two(now.getMonth() + 1)}${two(now.getDate())}-${two(now.getHours())}${two(now.getMinutes())}${two(now.getSeconds())}`;
+  const text = marksText(id, c);
+  const copied = navigator.clipboard ? navigator.clipboard.writeText(text).then(() => true, () => false) : Promise.resolve(false);
+  const shots = {};
+  for (const [on, viewport] of [['ours', '#ours'], ['truth', '#out']]) {
+    const viewer = ($(`${viewport} .stage`) || {}).viewer;
+    if (!viewer || !marks.some((m) => m.on === on)) continue;
+    viewer.render();
+    shots[on] = viewer.canvas.toDataURL('image/png');
+  }
+  try {
+    await api('/api/marks', { id, dataset: S.dataset, case: c.name, run: S.runId || null, truth: c.truth ? c.truth.url : null,
+      marks: marks.map(({ at, ...m }) => m), shots });
+    toast(`${marks.length} mark${marks.length === 1 ? '' : 's'} sent${await copied ? ' and copied' : ''} · ${id}`, 'ok');
+    clearMarks();
+  } catch (error) { toast(`Could not send the marks: ${error.message}`); }
 }
 
 // -- routing ------------------------------------------------------------------------------------
@@ -409,6 +516,7 @@ function renderBar() {
     </label>
     <span class="spacer"></span>
     <span class="offline-note">Dashboard server is not responding</span>
+    ${working().length ? `<button data-active aria-pressed="${!activeShut}" title="The cases being run now (R)" aria-label="The cases being run now"><i class="dot"></i>${working().length}</button>` : ''}
     ${running && run.launched_by === 'ui' ? `<button data-action="stop">${ICON.stop}Stop</button>` : ''}
     <button class="primary" data-action="run" title="Run scripts/main.py on this case with tracing">${ICON.play}Run this case</button>`);
 }
@@ -423,32 +531,44 @@ function renderMain() {
     main.dataset.key = key;
     $$('.stage', main).forEach((stage) => stage.viewer && stage.viewer.dispose());
     live = { id: live.id + 1, rows: [] };
+    marks.length = 0;
     htmlCache.delete(main);
     main.innerHTML = `
-      <aside class="side" id="input" aria-label="Input"></aside>
+      <aside id="result" aria-label="Input and ground truth">
+        <div class="view">${viewportHTML('out', 'Ground truth', false)}
+          <img id="big" alt="">
+          <div class="tools" id="pic-tools">
+            <button data-pic="0.5" title="Zoom out (right click)" aria-label="Zoom out">${ICON.minus}</button>
+            <button data-pic="2" title="Zoom in (click)" aria-label="Zoom in">${ICON.plus}</button>
+            <button data-pic="0" title="Whole picture" aria-label="Whole picture">${ICON.fit}</button>
+          </div>
+          <div class="seg" id="derived" role="radiogroup" aria-label="What is read off the picture" hidden></div>
+          <p class="note" id="big-note" hidden></p>
+          <div id="doc"></div>
+          <div class="hud" id="result-head"></div></div>
+        <div id="sources"></div>
+      </aside>
       <section id="centre" class="${c.truth ? '' : 'no-truth'}" aria-label="The solid after the chosen step">
         ${viewportHTML('ours', 'Our solid after the chosen step. Drag to rotate, shift-drag to pan, scroll to zoom.')}
         <div class="hud"><div id="stage-label"></div><div id="steps-note"></div></div>
         <div class="hud end" id="steps-status"></div>
-        <div class="grip" data-side="left" role="separator" aria-orientation="vertical" title="Drag to resize, double-click to reset"></div>
-        <div class="grip" data-side="right" role="separator" aria-orientation="vertical" title="Drag to resize, double-click to reset"></div>
+        <div id="marks" hidden></div>
+        <div class="grip" role="separator" aria-orientation="vertical" title="Drag to resize, double-click to reset"></div>
       </section>
-      <aside id="result" aria-label="Ground truth">
-        <div class="view">${viewportHTML('out', 'Ground truth', false)}<div class="hud" id="result-head"></div></div>
-        <div id="info">
-          ${dropHTML('diff', 'Diff', '<div id="metrics"></div>')}
-          ${dropHTML('extracted', 'Extracted', '<div id="step-detail"></div>')}
-        </div>
-      </aside>
-      <footer id="timeline"></footer>`;
-    renderInput(c);
+      <section id="extracted" aria-label="What the chosen step extracted"><div id="step-detail"></div></section>
+      <footer id="foot"><div id="timeline"></div><div id="metrics"></div></footer>
+      <div class="grip row" role="separator" aria-orientation="horizontal" title="Drag to resize, double-click to reset"></div>`;
+    placeExtracted();
+    new ResizeObserver(layoutTimeline).observe($('#timeline'));
+    renderMarks();
+    loadBrief(c);
     startMeasuring(c);
   }
   renderResult(c);
   renderSteps(c);
 }
 
-// -- left: input --------------------------------------------------------------------------------
+// -- the brief and the facts ------------------------------------------------------------------------
 
 function fmt(value) {
   if (value == null) return '–';
@@ -507,40 +627,118 @@ function markdown(text) {
 
 const imageSrc = (c, name) => `${dataset().inputs_url}/${c.name}/${name === 'context' ? 'context.png' : `images/${name}.png`}`;
 
-function renderInput(c) {
-  const images = [...c.views.map((file) => file.replace(/\.png$/, '')), ...(c.context ? ['context'] : [])];
-  if (!images.includes(S.image)) S.image = images.includes(DEFAULT_VIEW) ? DEFAULT_VIEW : images[0];
-  // The panel is a window on the input pictures; the brief and the facts fold away under it, closed
-  $('#input').innerHTML = `
-    <div class="window">${images.length ? `<figure class="ref"><img id="big" alt="Reference render, ${esc(viewLabel(S.image))}" src="${imageSrc(c, S.image)}" data-cut="${imageSrc(c, S.image)}">
-      <figcaption id="big-label">${esc(viewLabel(S.image))}</figcaption></figure>
-    <div class="thumbs">${images.map((name, i) => `<button data-image="${name}" aria-pressed="${name === S.image}"
-      title="${viewLabel(name)}${VIEWS[name] ? ` — turns the 3D views to this side (${i + 1})` : ''}">
-      <img alt="${viewLabel(name)}" src="${imageSrc(c, name)}" data-cut="${imageSrc(c, name)}"></button>`).join('')}</div>` : '<p class="note">This case has no reference renders.</p>'}</div>
-    <div class="more">
-      ${dropHTML('brief-drop', 'Brief', '<div><article class="prose" id="brief"></article></div>', false)}
-      ${dropHTML('facts-drop', 'Facts', `<div>${factsHTML(c.facts)}</div>`, false)}
-    </div>`;
-  hydrateImages($('#input'));
-  const id = live.id;
+function loadBrief(c) {
+  const shown = live;
   fetch(`/api/description?dataset=${S.dataset}&case=${c.name}`).then((r) => r.text()).then((text) => {
-    if (id === live.id) $('#brief').innerHTML = markdown(text);
-  });
+    shown.brief = text;
+    if (shown === live) renderResult(c);
+  }, () => {});
 }
 
-function showImage(name, turn = true) {
+// -- right: one window on the brief, the facts, the input pictures and the ground truth ------------
+
+const isPicture = (name) => !['brief', 'facts', 'truth'].includes(name);
+const sourceLabel = (name) => ({ brief: 'Brief', facts: 'Facts', truth: 'Ground truth' }[name] || viewLabel(name));
+function sourcesOf(c) {
+  const images = [...c.views.map((file) => file.replace(/\.png$/, '')), ...(c.context ? ['context'] : [])];
+  return ['brief', 'facts', ...images, ...(c.truth ? ['truth'] : [])];
+}
+// The chosen one if this case has it; else the truth, else a picture (the practice set has no truth)
+function sourceOf(c) {
+  const list = sourcesOf(c);
+  if (list.includes(S.source)) return S.source;
+  return list.includes('truth') ? 'truth' : list.includes(DEFAULT_VIEW) ? DEFAULT_VIEW : list.find(isPicture) || 'brief';
+}
+
+// What is read off a picture before any solid (src/agentic_cad/sources.py), drawn by the server
+const DERIVED = { picture: 'Picture', lines: 'Lines', faces: 'Faces', normals: 'Normals', depth: 'Depth' };
+const DERIVED_ABOUT = {
+  picture: 'The view as given',
+  lines: 'Every edge of the picture, redrawn as curves',
+  faces: 'Every area between the edges in a colour of its own',
+  normals: 'Normal of the faces the tone gives a direction; grey: the picture does not say',
+  depth: 'Depth of the faces whose plane was found, near warm; pale: not sure; grey: the picture does not say',
+};
+function derivedOf(name) {
+  if (!isPicture(name) || name === 'context') return [];
+  return ['picture', 'lines', 'faces', 'normals', 'depth'];
+}
+let peek = false;  // while the space bar is held: the picture as given, to compare with what was read off it
+const derivedAt = (name) => (!peek && derivedOf(name).includes(S.derived) ? S.derived : 'picture');
+function shownSrc(c, name) {
+  const kind = derivedAt(name);
+  return kind === 'picture' ? imageSrc(c, name) : `/api/source?dataset=${S.dataset}&case=${c.name}&view=${name}&kind=${kind}`;
+}
+function selectDerived(kind) {
   const c = currentCase();
-  if (!c || !$('#big')) return;
-  S.image = name;
-  $$('.thumbs button').forEach((b) => b.setAttribute('aria-pressed', b.dataset.image === name));
-  $('#big').dataset.cut = imageSrc(c, name);
-  $('#big-label').textContent = viewLabel(name);
+  if (!c || !DERIVED[kind]) return;
+  S.derived = kind;
+  try { localStorage.setItem('derived', kind); } catch { /* private mode */ }
   renderResult(c);
-  hydrateImages();
+}
+try { if (DERIVED[localStorage.getItem('derived')]) S.derived = localStorage.getItem('derived'); } catch { /* private mode */ }
+function moveDerived(offset) {
+  const c = currentCase(), list = c ? derivedOf(sourceOf(c)) : [];
+  if (list.length) selectDerived(list[(list.indexOf(derivedAt(sourceOf(c))) + offset + list.length) % list.length]);
+}
+function setPeek(on) {
+  const c = currentCase();
+  if (peek === on || !c) return;
+  peek = on;
+  renderResult(c);
+}
+
+// The pictures the server draws (lines, faces, normals, depth of a view). The first one of a case
+// takes seconds, since all of the case are drawn together; they are kept for the page's life.
+const drawn = new Map();
+function drawnPicture(src) {
+  if (!drawn.has(src)) {
+    drawn.set(src, (async () => {
+      const response = await fetch(src);
+      if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || response.statusText);
+      return URL.createObjectURL(await response.blob());
+    })());
+    drawn.get(src).catch(() => drawn.delete(src));
+  }
+  return drawn.get(src);
+}
+
+// The big picture of the left window. What was on screen stays, dimmed, until the next one is there.
+async function showBig(c, at) {
+  const img = $('#big'), note = $('#big-note'), kind = derivedAt(at), src = shownSrc(c, at);
+  if (img.dataset.cut === src) return;
+  if (img.dataset.view !== at) resetBig();  // another source of the same view keeps the zoom
+  Object.assign(img.dataset, { view: at, cut: src });
+  img.alt = `${DERIVED[kind]}, ${viewLabel(at)}`;
+  const current = () => img.isConnected && img.dataset.cut === src;
+  const say = (text, bad = false) => { note.hidden = !text; note.textContent = text; note.className = `note ${bad ? 'bad' : 'pulse'}`; };
+  say('');
+  const slow = setTimeout(() => { if (current()) { img.classList.add('stale'); say(kind === 'picture' ? '' : 'Reading the views…'); } }, 150);
+  try {
+    const url = await (kind === 'picture' ? cutout(src, 4096) : drawnPicture(src));
+    if (!current()) return;
+    img.src = url;
+    img.dataset.done = src;
+    img.classList.toggle('drawn', kind !== 'picture');
+    img.classList.remove('stale');
+    say('');
+    // someone who stays on it will ask for the others: fetch them meanwhile (the normals and depths
+    // have the server draw the whole case), so that the next choice is instant
+    if (kind !== 'picture') {
+      setTimeout(() => { if (current()) derivedOf(at).filter((k) => k !== 'picture' && k !== kind).forEach((k) => drawnPicture(src.replace(`kind=${kind}`, `kind=${k}`)).catch(() => {})); }, 1500);
+    }
+  } catch (error) {
+    if (current()) { img.classList.add('stale'); say(`Could not read the views: ${error.message}`, true); }
+  } finally { clearTimeout(slow); }
+}
+
+function selectSource(name, turn = true) {
+  const c = currentCase();
+  if (!c || !sourcesOf(c).includes(name)) return;
+  S.source = name;
+  renderResult(c);
   if (turn && VIEWS[name]) setView(name);
 }
-
-// -- right: ground truth and the diff ------------------------------------------------------------------------------
 
 function startMeasuring(c) {
   const id = live.id, state = live.state = { truth: c.truth ? undefined : null, ours: null };
@@ -549,49 +747,100 @@ function startMeasuring(c) {
   }
 }
 
-// The ground truth. The practice set has no ground-truth solid: there the window shows the
-// organisers' render of the real part, in the view chosen on the left. Never our own output.
 function renderResult(c) {
-  setHTML($('#result-head'), `<h2><i class="sw truth"></i>Ground truth</h2>${c.truth ? '' : '<span id="truth-label"></span>'}`);
-  if (c.truth) return showModel($('#out'), c.truth.url, `${c.truth.url}?${c.truth.mtime}`, COLORS.truth);
-  const stage = $('#out .stage');
-  if (!$('img.ref', stage)) {
-    stage.innerHTML = c.views.length ? '<img class="ref" alt="Render of the real part">' : '<p class="note">No ground truth</p>';
+  const view = $('#result .view');
+  if (!view) return;
+  const list = sourcesOf(c), at = sourceOf(c);
+  setHTML($('#result-head'), `<h2>${at === 'truth' ? '<i class="sw truth"></i>' : ''}${esc(sourceLabel(at))}</h2>`);
+  view.dataset.show = at === 'truth' ? 'model' : isPicture(at) ? 'image' : 'doc';
+  if (c.truth) showModel($('#out'), c.truth.url, `${c.truth.url}?${c.truth.mtime}`, COLORS.truth, '', { mark: 'truth' });  // stays loaded behind the others
+  if (isPicture(at)) showBig(c, at);
+  else if (at === 'brief') setHTML($('#doc'), `<article class="prose">${live.brief == null ? '' : markdown(live.brief)}</article>`);
+  else if (at === 'facts') setHTML($('#doc'), factsHTML(c.facts));
+  renderSources(c, list, at);
+  renderDerived(at);
+}
+
+// In the corner of a picture: what is read off it. Click, V for the next one, hold space for the picture itself.
+function renderDerived(at) {
+  const box = $('#derived'), list = derivedOf(at);
+  box.hidden = !list.length;
+  if (!list.length) return;
+  const chosen = derivedAt(at);
+  setHTML(box, list.map((kind) => `<button role="radio" data-derived="${kind}" aria-checked="${kind === chosen}" title="${esc(DERIVED_ABOUT[kind])}">${DERIVED[kind]}</button>`).join(''));
+}
+
+// The slider under the window: brief, facts, the pictures, the truth
+function renderSources(c, list, at) {
+  const box = $('#sources'), signature = `${S.dataset}/${c.name}/${list.join()}`;
+  if (box.dataset.rows !== signature) {
+    box.dataset.rows = signature;
+    box.innerHTML = `<div class="track" style="--n:${list.length}">
+      <div class="rail"></div>
+      <input type="range" id="source" min="0" max="${list.length - 1}" step="1" aria-label="What the window shows">
+      ${list.map((name, i) => `<button class="stop" data-source="${name}" title="${esc(sourceLabel(name))}${VIEWS[name] ? ` — turns the 3D views to this side (${VIEW_NAMES.indexOf(name) + 1})` : ''}">
+        <i class="dot"></i>${isPicture(name) ? `<img alt="${esc(viewLabel(name))}" data-size="96" data-cut="${imageSrc(c, name)}">` : `<span class="name">${name === 'truth' ? 'Truth' : sourceLabel(name)}</span>`}</button>`).join('')}
+    </div>`;
+    hydrateImages(box);
   }
-  const img = $('img.ref', stage);
-  if (img && img.dataset.cut !== imageSrc(c, S.image)) { img.dataset.cut = imageSrc(c, S.image); hydrateImages(stage); }
-  if ($('#truth-label')) $('#truth-label').textContent = `render, ${viewLabel(S.image)}`;
+  const index = list.indexOf(at), slider = $('#source');
+  if (Number(slider.value) !== index) slider.value = index;
+  slider.setAttribute('aria-valuetext', sourceLabel(at));
+  $$('.stop', box).forEach((stop, i) => stop.setAttribute('aria-current', i === index));
 }
 
-// -- side panels: drag the edge to resize ----------------------------------------------------------
+// -- the boundary between the two views: drag to resize ----------------------------------------------
 
-const WIDTHS = { left: 280, right: 310 };
-function setWidth(side, width) {
-  const value = Math.round(Math.max(220, Math.min(innerWidth * 0.45, width)));
-  document.body.style.setProperty(`--${side}`, `${value}px`);
-  try { localStorage.setItem(`panel-${side}`, value); } catch { /* private mode */ }
+function setSplit(width) {  // null: back to the share the stylesheet gives the left view
+  const value = width == null ? null : Math.round(Math.max(260, Math.min(innerWidth * 0.65, width)));
+  if (value == null) document.body.style.removeProperty('--split'); else document.body.style.setProperty('--split', `${value}px`);
+  try { value == null ? localStorage.removeItem('panel-split') : localStorage.setItem('panel-split', value); } catch { /* private mode */ }
 }
-for (const side of Object.keys(WIDTHS)) {
-  let saved = null;
-  try { saved = Number(localStorage.getItem(`panel-${side}`)); } catch { /* private mode */ }
-  if (saved) document.body.style.setProperty(`--${side}`, `${saved}px`);
+try { if (Number(localStorage.getItem('panel-split'))) setSplit(Number(localStorage.getItem('panel-split'))); } catch { /* private mode */ }
+
+// The area under the views: as high as its content unless it was dragged
+function setFoot(height) {
+  const value = height == null ? null : Math.round(Math.max(70, Math.min(innerHeight * 0.6, height)));
+  if (value == null) document.body.style.removeProperty('--foot'); else document.body.style.setProperty('--foot', `${value}px`);
+  try { value == null ? localStorage.removeItem('panel-foot') : localStorage.setItem('panel-foot', value); } catch { /* private mode */ }
+}
+try { if (Number(localStorage.getItem('panel-foot'))) setFoot(Number(localStorage.getItem('panel-foot'))); } catch { /* private mode */ }
+
+// The window on what the step extracted floats on the boundary. Dragged by its title it stays where
+// it was put (as an offset from the boundary); a double-click on the title puts it back.
+let floatAt = [0, 0];
+try { floatAt = JSON.parse(localStorage.getItem('extracted-at')) || [0, 0]; } catch { /* private mode */ }
+function placeExtracted(at = floatAt) {
+  floatAt = at;
+  if ($('#extracted')) $('#extracted').style.translate = `${at[0]}px ${at[1]}px`;
+}
+
+function drag(event, handle, move) {
+  event.preventDefault();
+  handle.setPointerCapture(event.pointerId);
+  handle.classList.add('on');
+  const done = () => { handle.classList.remove('on'); handle.removeEventListener('pointermove', move); };
+  handle.addEventListener('pointermove', move);
+  handle.addEventListener('pointerup', done, { once: true });
+  handle.addEventListener('pointercancel', done, { once: true });
 }
 document.addEventListener('pointerdown', (event) => {
-  const grip = event.target.closest('.grip');
-  if (!grip) return;
-  event.preventDefault();
-  grip.setPointerCapture(event.pointerId);
-  grip.classList.add('on');
-  const side = grip.dataset.side, box = $('#main').getBoundingClientRect();
-  const move = (e) => setWidth(side, side === 'left' ? e.clientX - box.left - 12 : box.right - e.clientX);
-  const done = () => { grip.classList.remove('on'); grip.removeEventListener('pointermove', move); };
-  grip.addEventListener('pointermove', move);
-  grip.addEventListener('pointerup', done, { once: true });
-  grip.addEventListener('pointercancel', done, { once: true });
+  const grip = event.target.closest('.grip'), title = event.target.closest('#extracted h2');
+  if (grip) {
+    const box = $('#main').getBoundingClientRect(), row = grip.classList.contains('row');
+    drag(event, grip, (e) => (row ? setFoot(box.bottom - e.clientY) : setSplit(e.clientX - box.left)));
+  } else if (title) {
+    const from = [event.clientX - floatAt[0], event.clientY - floatAt[1]];
+    drag(event, title, (e) => {
+      placeExtracted([e.clientX - from[0], e.clientY - from[1]]);
+      try { localStorage.setItem('extracted-at', JSON.stringify(floatAt)); } catch { /* private mode */ }
+    });
+  }
 });
 document.addEventListener('dblclick', (event) => {
   const grip = event.target.closest('.grip');
-  if (grip) setWidth(grip.dataset.side, WIDTHS[grip.dataset.side]);
+  if (grip) grip.classList.contains('row') ? setFoot(null) : setSplit(null);
+  if (event.target.closest('#extracted h2')) { placeExtracted([0, 0]); try { localStorage.removeItem('extracted-at'); } catch { /* private mode */ } }
 });
 
 const settle = (promise) => promise.then((data) => data.measured, () => null);
@@ -627,11 +876,8 @@ const overlaps = new Map();
 function compare(key, ours, truth) {
   if (!overlaps.has(key)) {
     const solid = ({ meshes, measured }) => ({ meshes: meshes.map(({ position, index }) => ({ position, index })), min: measured.min, max: measured.max });
-    overlaps.set(key, new Promise((resolve, reject) => {
-      const id = ++jobId;
-      jobs.set(id, { resolve, reject });
-      worker.postMessage({ id, compare: { a: solid(ours), b: solid(truth) } });
-    }).then((data) => data.overlap));
+    overlaps.set(key, work(() => ({ compare: { a: solid(ours), b: solid(truth) } }), 1).promise.then((data) => data.overlap));
+    overlaps.get(key).catch(() => overlaps.delete(key));
     if (overlaps.size > 64) overlaps.delete(overlaps.keys().next().value);
   }
   return overlaps.get(key);
@@ -665,11 +911,12 @@ function renderMetrics(c, state) {
   ].filter(Boolean);
   const cell = (value) => (value == null || !isFinite(value) ? '<td class="none">–</td>' : `<td>${num(value)}</td>`);
   const note = ours === undefined || (ours && c.truth && !o) ? '<p class="note pulse">Measuring…</p>' : '';
-  setHTML($('#diff summary span'), state.name ? `after ${esc(state.name)}` : '');
-  setHTML($('#metrics'), `${scores.length ? `<dl class="kv scores">${scores.map(([label, value, hint]) => `<dt title="${esc(hint)}">${label}</dt><dd>${value}</dd>`).join('')}</dl>` : ''}
+  setHTML($('#metrics'), `${scores.length ? `<dl class="scores">${scores.map(([label, value, hint]) => `<div title="${esc(hint)}"><dt>${label}</dt><dd>${value}</dd></div>`).join('')}</dl>` : ''}
   <table class="metrics">
-    <thead><tr><th></th><th><i class="sw truth"></i>Truth</th><th><i class="sw ours"></i>Ours</th><th>Diff</th></tr></thead>
-    <tbody>${rows.map(([label, unit, expected, actual]) => `<tr><th>${label} <small>${unit}</small></th>${cell(expected)}${cell(actual)}${delta(expected, actual)}</tr>`).join('')}</tbody>
+    <thead><tr><th></th>${rows.map(([label, unit]) => `<th>${label} <small>${unit}</small></th>`).join('')}</tr></thead>
+    <tbody><tr><th><i class="sw truth"></i>Truth</th>${rows.map((r) => cell(r[2])).join('')}</tr>
+      <tr><th><i class="sw ours"></i>Ours</th>${rows.map((r) => cell(r[3])).join('')}</tr>
+      <tr><th>Diff</th>${rows.map((r) => delta(r[2], r[3])).join('')}</tr></tbody>
   </table>${note}`);
 }
 
@@ -697,7 +944,9 @@ function buildTrace(events) {
   return t;
 }
 
-async function fetchTrace(run, name) {
+// `final`: asked when the run was already over, so what comes back is the whole trace. Until such an
+// answer is in, a trace without its end is still being read, not interrupted.
+async function fetchTrace(run, name, final = false) {
   const key = `${run}/${name}`;
   const entry = traces.get(key) || { events: [], loading: false };
   traces.set(key, entry);
@@ -708,6 +957,7 @@ async function fetchTrace(run, name) {
     entry.events.push(...data.events);
     entry.loaded = true;
     entry.failed = null;
+    if (final) entry.final = true;
   } catch (error) { entry.failed = error.message; } finally { entry.loading = false; }
   if (S.runId === run && S.caseName === name) renderSteps(currentCase());
 }
@@ -732,8 +982,24 @@ function attachedJSON(url) {
   return attached.get(url);
 }
 
+// A cut along one direction reads two opposite views. Both are shown, the second one mirrored the
+// way the agent mirrors it, so the two and the joined silhouette under them line up.
+const PAIRS = { front_back: ['front', 'back', 'X'], right_left: ['right', 'left', 'X'], top_bottom: ['top', 'bottom', 'Y'] };
+function pairHTML2(s) {
+  const pair = PAIRS[(s.name.match(/^cut_(front_back|right_left|top_bottom)$/) || [])[1]], c = currentCase();
+  if (!pair || !c) return '';
+  const view = (side) => (c.views.find((file) => file.endsWith(`_${side}.png`)) || '').replace(/\.png$/, '');
+  const figure = (side, flip) => {
+    const name = view(side);
+    return name ? `<figure><button class="art plain" data-lightbox="${imageSrc(c, name)}"><img alt="${side} view" data-cut="${imageSrc(c, name)}" ${flip ? `style="scale: ${flip === 'X' ? '-1 1' : '1 -1'}"` : ''}></button>
+      <figcaption>${side}${flip ? ' <small>mirrored</small>' : ''}</figcaption></figure>` : '';
+  };
+  return `<div class="pair">${figure(pair[0])}${figure(pair[1], pair[2])}</div>`;
+}
+
 // What the chosen step took from the inputs: its pictures, its lists, its numbers and what it said
 function detailHTML(s, base, time) {
+  const joined = pairHTML2(s);
   const images = s.artifacts.filter((a) => isImage(a.name));
   const lists = s.artifacts.filter((a) => /\.json$/i.test(a.name));
   // the same number is often both in the output (mm3) and in the metrics (cm3): keep the metric
@@ -744,8 +1010,9 @@ function detailHTML(s, base, time) {
   const data = [s.input !== undefined ? `<h4>Input</h4>${raw(s.input)}` : '', s.output != null ? `<h4>Output</h4>${raw(s.output)}` : ''].join('');
   return [
     s.error ? `<pre class="bad">${esc(s.error)}</pre>` : '',
-    ...images.map((a) => `<button class="art" data-lightbox="${esc(`${base}/${a.path}`)}" title="${esc(a.name)}">
-      <img alt="${esc(a.name)}" src="${esc(`${base}/${a.path}`)}"></button>`),
+    joined,
+    ...images.map((a) => `<figure><button class="art" data-lightbox="${esc(`${base}/${a.path}`)}" title="${esc(a.name)}">
+      <img alt="${esc(a.name)}" src="${esc(`${base}/${a.path}`)}"></button>${joined && /^silhouette_/.test(a.name) ? '<figcaption>Both joined <small>cut only where both are empty</small></figcaption>' : ''}</figure>`),
     ...lists.map((a) => {
       const value = attachedJSON(`${base}/${a.path}`);
       return value == null ? '' : `<h3>${esc(words(a.name.replace(/\.json$/i, '')))}${Array.isArray(value) ? ` <small>${value.length}</small>` : ''}</h3>${tableHTML(value)}`;
@@ -764,51 +1031,68 @@ function renderSteps(c) {
   let note = '', status = '', running = false;
   if (run) {
     const key = `${run.id}/${c.name}`, entry = traces.get(key);
-    if (!entry) fetchTrace(run.id, c.name);
+    if (!entry) fetchTrace(run.id, c.name, run.status !== 'running');
     if (!entry || !entry.loaded) note = entry && entry.failed ? `<p class="note bad">Could not load the trace: ${esc(entry.failed)}</p>` : '<p class="note pulse">Loading the trace…</p>';
     else if (!entry.events.length) note = '<p class="note">Not part of this run.</p>';
     else {
       const t = buildTrace(entry.events), base = `/files/runs/${run.id}/${c.name}`;
-      running = run.status === 'running' && t.status === 'running';
+      running = t.status === 'running' && (run.status === 'running' || !entry.final);
       const now = Date.now() / 1000;
       const state = running ? 'running' : t.status === 'running' ? 'interrupted' : t.status;
       status = `<span class="state ${state}">${state}</span> ${duration((t.end || (running ? now : t.last)) - t.start)}`;
       if (t.error) note = `<pre class="bad">${esc(t.error)}</pre>`;
-      let model = null, at = 0, lastRun = null;
-      // A planned step that has not run: still to come, switched off, or passed over
-      const planned = (p, passed) => {
-        const state = p.off ? 'off' : passed || t.skips.has(p.name) ? 'skipped' : running ? 'pending' : 'not run';
-        const why = p.off || t.skips.get(p.name) || { skipped: 'Skipped in this case.', pending: 'Not started yet.', 'not run': 'The case ended before this step.' }[state];
-        rows.push({ id: `plan:${p.name}`, raw: p.name, about: about({ name: p.name }), model, before: null, changed: false, state,
-          n: String(rows.length + 1).padStart(2, '0'), name: words(p.name.replace(/^cut_/, '')), ratio: '', chips: '',
-          detail: () => `<p class="note">${esc(why)}</p>` });
-      };
+      let model = null, lastRun = null, volumeWas = '';
+      // Every case shows the same stops: the plan. A step the plan does not list (a retry, a cut
+      // repeated inside a check) is folded into the stop it happened in.
+      const plan = fullPlan(t.plan);
+      const groups = plan.map(() => []), home = new Map();
+      let at = 0, here = 0;
       t.list.forEach((s) => {
-        // steps the plan does not list (a retry, a cut repeated inside a check) go in where they happen
-        const j = t.plan.findIndex((p, i) => i >= at && !p.off && p.name === s.name);
-        if (j >= 0) { for (; at < j; at++) planned(t.plan[at], true); at = j + 1; }
-        const stage = s.artifacts.filter((a) => a.role === 'stage' && isStep(a.name)).pop();
+        if (home.has(s.parent)) { home.set(s.id, home.get(s.parent)); groups[home.get(s.parent).at].push(s); return; }
+        const j = plan.findIndex((p, i) => i >= at && p.name === s.name);
+        if (j >= 0) { here = j; at = j + 1; }
+        home.set(s.id, { at: here, own: j >= 0 });
+        groups[here].push(s);
+      });
+      plan.forEach((p, index) => {
+        const steps = groups[index], s = steps.find((x) => x.name === p.name && home.get(x.id).own && !t.steps.get(x.parent));
+        if (!s) {  // has not run: still to come, switched off, or passed over
+          const state = p.off ? 'off' : index < here || t.skips.has(p.name) ? 'skipped' : running ? 'pending' : 'not run';
+          const why = t.skips.get(p.name) || p.off || { skipped: 'Skipped in this case.', pending: 'Not started yet.', 'not run': 'The case ended before this step.' }[state];
+          rows.push({ id: `plan:${p.name}`, raw: p.name, about: about({ name: p.name }), model, before: null, changed: false, state,
+            n: String(rows.length + 1).padStart(2, '0'), name: words(p.name.replace(/^cut_/, '')), ratio: '', chips: '',
+            detail: () => `<p class="note">${esc(why)}</p>` });
+          return;
+        }
+        // The stop's solid: what the step itself left, or a folded step that went through with its own cuts
+        const root = (x) => { while (t.steps.get(x.parent)) x = t.steps.get(x.parent); return x; };
+        const counts = (x) => x === s || (root(x) !== s && root(x).status === 'ok');
+        const stage = steps.filter(counts).flatMap((x) => x.artifacts.filter((a) => a.role === 'stage' && isStep(a.name))).pop();
         const before = stage ? model : null;  // only a step that left a new solid removed something
         if (stage) model = { url: `${base}/${stage.path}` };
-        const m = s.metrics || {}, time = duration((s.end || (running ? now : t.last)) - s.start);
+        const m = s.metrics || {}, end = Math.max(...steps.map((x) => x.end || (running ? now : t.last)));
+        const time = duration(end - s.start);
         const ratio = truth && m.volume_cm3 != null ? m.volume_cm3 * 1000 / truth : null;
+        const was = volumeWas;
+        if (ratio != null) volumeWas = `×${ratio.toFixed(ratio < 10 ? 2 : 1)}`;
+        const open = steps.some((x) => !x.end);
         rows.push({
+          was,
           id: s.id, raw: s.name, about: about(s), model, before, changed: Boolean(stage),
-          state: s.end ? s.status : running ? 'running' : 'interrupted',
+          state: !open ? s.status : running ? 'running' : 'interrupted',
           n: String(rows.length + 1).padStart(2, '0'), name: words(s.name.replace(/^cut_/, '')),
           ratio: ratio == null ? '' : `×${ratio.toFixed(ratio < 10 ? 2 : 1)}`,
           chips: [
             m.removed_cm3 ? `<i class="sw ghost"></i>removed ${num(m.removed_cm3)} cm³` : '',
             ratio != null ? `${num(ratio)} × true volume` : '',
           ].filter(Boolean).join(' · '),
-          detail: () => detailHTML(s, base, time),
+          detail: () => detailHTML(s, base, time) + steps.filter((x) => x !== s).map((x) =>
+            `<h3>${esc(words(x.name.replace(/^cut_/, '')))}</h3>${detailHTML(x, base, duration((x.end || (running ? now : t.last)) - x.start))}`).join(''),
         });
         lastRun = rows[rows.length - 1];
       });
-      for (; at < t.plan.length; at++) planned(t.plan[at], false);
       const last = lastRun;  // the exported file is the last step's solid, tidied
       if (last && output && !running && t.status === 'ok') Object.assign(last, { model: output, before: null });
-      if (!running) rows.forEach((r) => r.model && loadStep(r.model.url, r.model.key).catch(() => {}));  // warm up, so scrubbing is instant
     }
   } else if (!output) note = '<p class="note">No output yet. Run this case to see its steps.</p>';
   if (!rows.length && output) {
@@ -822,6 +1106,10 @@ function renderSteps(c) {
   const chosen = rows.find((r) => r.id === S.sel) || (running && [...rows].reverse().find((r) => r.changed)) || [...rows].reverse().find((r) => !r.id.startsWith('plan:')) || rows[rows.length - 1];
   live.rows = rows;
   live.chosen = chosen ? chosen.id : null;
+  if (run && !running) {  // warm up behind what is on screen, so scrubbing is instant: the nearest steps first
+    const at = rows.indexOf(chosen);
+    rows.forEach((r, i) => r.model && r !== chosen && loadStep(r.model.url, r.model.key, -Math.abs(i - at)).catch(() => {}));
+  }
   setHTML($('#steps-status'), status);
   const diff = S.diff && c.truth ? { url: c.truth.url, key: `${c.truth.url}?${c.truth.mtime}` } : null;
   const legend = '<i class="sw ours"></i>as the part · <i class="sw excess"></i>too much under this face · <i class="sw missing"></i>missing';
@@ -829,16 +1117,33 @@ function renderSteps(c) {
   setHTML($('#steps-note'), note);
   renderTimeline(rows, chosen);
   const detail = chosen ? chosen.detail() : '';
-  setHTML($('#step-detail'), detail);
-  setHTML($('#extracted summary span'), detail && chosen ? esc(chosen.name) : '');
+  setHTML($('#step-detail'), detail && `<h2>${esc(chosen.name)}</h2>${detail}`);
+  hydrateImages($('#step-detail'));
   measureOurs(c, chosen && chosen.model, chosen ? chosen.name : '');
   const first = rows.find((r) => r.model);
+  live.frame = run && first ? first.model : null;
   showModel($('#ours'), chosen && chosen.model && chosen.model.url, chosen && chosen.model && chosen.model.key, COLORS.ours,
     note ? '' : `<p class="note">${running ? 'Waiting for the first solid…' : 'No solid to show yet.'}</p>`,
-    { before: chosen && chosen.before, frame: run && first ? first.model : null, truth: diff });
+    { before: chosen && chosen.before, frame: live.frame, truth: diff, mark: 'ours' });
 }
 
-// One line on what each step does, shown under its stop. A step can bring its own with
+// The stops every case has, in order. A trace brings its own plan (hull_agent.planned); names it
+// lacks (runs traced before a step was planned, or before there was a plan) are put in from here,
+// so every case of every run shows the same stops.
+const STOPS = ['bounding_box', 'read_sources', 'cut_front_back', 'cut_right_left', 'cut_top_bottom', 'cut_iso', 'isometric_support', 'check_views',
+  'cut_holes', 'open_mouths', 'evidence', 'cut_rounds', 'cut_curved', 'level_faces', 'plane_faces', 'open_cavities', 'open_recesses', 'open_core', 'model_cuts', 'shading_depth', 'cut_pockets', 'hollow_shell',
+  'split_faces', 'export_step'];
+function fullPlan(given) {
+  const plan = given.slice();
+  STOPS.forEach((name, i) => {
+    if (plan.some((p) => p.name === name)) return;
+    const after = STOPS.slice(0, i).reverse().map((n) => plan.findIndex((p) => p.name === n)).find((k) => k >= 0);
+    plan.splice(after == null ? 0 : after + 1, 0, { name });
+  });
+  return plan;
+}
+
+// One line on what each step does, shown when the pointer is on its stop. A step can bring its own with
 // trace.step(..., description="..."); this list covers the steps the pipeline has today.
 const SIDES = { front_back: 'front and back', right_left: 'right and left', top_bottom: 'top and bottom', iso: 'isometric' };
 const ABOUT = [
@@ -847,11 +1152,21 @@ const ABOUT = [
   [/^retry_(.+)_first$/, (m) => `Cuts again, ${SIDES[m[1]] || words(m[1])} first`],
   [/^check_views$/, () => 'Compares the solid with the silhouettes'],
   [/^cut_holes$/, () => 'Cuts the cylindrical holes listed in facts.json'],
+  [/^open_mouths$/, () => 'Opens listed holes whose mouth a view draws under our surface'],
+  [/^isometric_support$/, () => 'Cuts with the isometric silhouette too, where the straight cuts left far too much'],
+  [/^read_sources$/, () => 'Reads the drawing of every view, and the faces and planes the isometric views give'],
+  [/^evidence$/, () => 'Numbers the areas of the views and what the solid has under each'],
+  [/^model_cuts$/, () => 'Cuts a model proposes, each kept only if the views fit better'],
   [/^cut_rounds$/, () => 'Makes square sections round along boss and bore axes'],
   [/^cut_curved$/, () => 'Carries a curved face on under a flat ring the side views left around an axis'],
   [/^cut_pockets$/, () => 'Cuts pockets whose outline the views draw under our surface'],
+  [/^hollow_shell$/, () => 'Hollows the solid if volume and surface say the part is a thin shell'],
   [/^split_faces$/, () => 'Splits a face where the views draw a line across it'],
   [/^level_faces$/, () => 'Cuts each flat face down to its lowest level'],
+  [/^plane_faces$/, () => 'Cuts flat faces down to the plane the isometric views give them'],
+  [/^open_cavities$/, () => 'Searches the depth of groups of faces a view shows inside a face our solid has flat'],
+  [/^open_recesses$/, () => 'Searches the depth of faces a view draws a step at where our solid is level'],
+  [/^open_core$/, () => 'Takes out the middle of a part our solid has in pieces along a listed axis'],
   [/^shading_depth$/, () => 'Takes pocket depths from the shading of the isometric views'],
   [/^export_step$/, () => 'Merges coplanar faces and writes the .stp'],
 ];
@@ -859,6 +1174,18 @@ function about(step) {
   if (step.meta && step.meta.description) return step.meta.description;
   for (const [pattern, text] of ABOUT) { const match = step.name.match(pattern); if (match) return text(match); }
   return '';
+}
+
+// The line of steps takes as many rows as it needs for every stop to keep a readable width. On one
+// row it is a slider that can be dragged; on several the stops are clicked (or the arrow keys used).
+const STOP_WIDTH = 74;
+function layoutTimeline() {
+  const track = $('#timeline .track');
+  if (!track) return;
+  const count = $$('.stop', track).length, fit = Math.max(1, Math.floor($('#timeline').clientWidth / STOP_WIDTH));
+  const lines = Math.ceil(count / fit), columns = Math.ceil(count / lines);
+  if (track.style.getPropertyValue('--n') !== String(columns)) track.style.setProperty('--n', columns);
+  track.classList.toggle('wrapped', lines > 1);
 }
 
 // The steps as a slider. It is rebuilt only when the steps change, so a drag is never interrupted.
@@ -870,14 +1197,14 @@ function renderTimeline(rows, chosen) {
     timeline.innerHTML = rows.length < 2 ? '' : `<div class="track" style="--n:${rows.length}">
       <div class="rail"><i></i></div>
       <input type="range" id="scrub" min="0" max="${rows.length - 1}" step="1" aria-label="Pipeline step">
-      ${rows.map((r) => `<button class="stop ${r.changed ? 'cut' : ''} ${r.state.replace(' ', '-')}" data-sel="${r.id}" title="${esc(r.name)}${r.ratio ? ` — ${r.ratio} the true volume` : ''}">
+      ${rows.map((r) => `<button class="stop ${r.changed ? 'cut' : ''} ${r.state.replace(' ', '-')}" data-sel="${r.id}">
         <i class="dot"></i><span class="name">${esc(r.name)}</span>
-        <span class="v ${r.state === 'ok' ? '' : `state ${r.state}`}">${r.state === 'ok' ? r.ratio : r.state === 'pending' ? '' : r.state}</span>
-        <span class="about">${esc(r.about)}</span></button>`).join('')}
+        <span class="v ${r.state === 'ok' ? '' : `state ${r.state}`}">${r.state === 'ok' ? r.ratio : r.state === 'pending' ? '' : r.state}</span></button>`).join('')}
     </div>`;
   }
   const scrub = $('#scrub');
   if (!scrub) return;
+  layoutTimeline();
   const at = Math.max(0, rows.indexOf(chosen));
   if (Number(scrub.value) !== at) scrub.value = at;
   scrub.setAttribute('aria-valuetext', chosen ? chosen.name : '');
@@ -888,14 +1215,59 @@ function renderTimeline(rows, chosen) {
   });
 }
 
-// A step that cuts along one view pair shows that view in the input window
+// With the pointer on a stop: what the step does, and the solid before and after it (what the step
+// removed is drawn over the second one). The two small views follow the camera of the big one.
+let tipFor = null;
+function hideTip() {
+  if (tipFor == null) return;
+  tipFor = null;
+  const tip = $('#tip');
+  $$('.stage', tip).forEach((stage) => stage.viewer && stage.viewer.dispose());
+  tip.hidden = true;
+  tip.innerHTML = '';
+}
+function showTip(row, stop) {
+  if (tipFor === row.id) return;
+  hideTip();
+  const pair = row.changed && row.before && row.model;
+  if (!row.about && !pair) return;
+  tipFor = row.id;
+  const tip = $('#tip'), mini = (id) => `<div class="viewport" id="${id}"><div class="stage"></div></div>`;
+  tip.innerHTML = `${row.about ? `<p>${esc(row.about)}</p>` : ''}${pair ? `<div class="pair">
+    <figure>${mini('tip-before')}<figcaption>Before <b>${row.was}</b></figcaption></figure>
+    <figure>${mini('tip-after')}<figcaption>After <b>${row.ratio}</b></figcaption></figure></div>` : ''}`;
+  tip.hidden = false;
+  const at = stop.getBoundingClientRect(), width = tip.offsetWidth;
+  tip.style.left = `${Math.max(10, Math.min(innerWidth - width - 10, at.left + at.width / 2 - width / 2))}px`;
+  tip.style.bottom = `${innerHeight - at.top + 10}px`;
+  if (!pair) return;
+  const options = { interactive: false, frame: live.frame };
+  showModel($('#tip-before'), row.before.url, row.before.key, COLORS.ours, '', options);
+  showModel($('#tip-after'), row.model.url, row.model.key, COLORS.ours, '', { ...options, before: row.before });
+}
+document.addEventListener('pointermove', (event) => {
+  const timeline = event.target.closest && event.target.closest('#timeline');
+  if (!timeline || event.pointerType === 'touch') return hideTip();
+  const stops = $$('.stop', timeline);
+  let stop = event.target.closest('.stop');
+  if (!stop && event.target.id === 'scrub' && stops.length) {  // the slider lies over the dots
+    const box = $('.track', timeline).getBoundingClientRect();
+    stop = stops[Math.max(0, Math.min(stops.length - 1, Math.floor((event.clientX - box.left) / box.width * stops.length)))];
+  }
+  const row = stop && live.rows.find((r) => r.id === stop.dataset.sel);
+  if (row) showTip(row, stop); else hideTip();
+});
+document.documentElement.addEventListener('pointerleave', hideTip);
+
+// A step that cuts along one view pair shows that view, if the right window is on a picture
 const STEP_VIEW = [[/front|back/, 'view_0_front'], [/right|left/, 'view_3_right'], [/top|bottom/, 'view_4_top'], [/iso/, 'view_6_iso_front_right_top']];
 function selectStep(id) {
   S.sel = id;
   renderSteps(currentCase());
   const row = live.rows.find((r) => r.id === id);
   const view = row && /^cut_|^retry_/.test(row.raw) && (STEP_VIEW.find(([pattern]) => pattern.test(row.raw)) || [])[1];
-  if (view && $(`[data-image="${view}"]`)) showImage(view, false);
+  const c = currentCase();
+  if (view && c && isPicture(sourceOf(c))) selectSource(view, false);
 }
 
 function moveStep(offset) {
@@ -915,7 +1287,7 @@ function openOverlay(src) {
 // -- events -------------------------------------------------------------------------------------
 
 // -- scores -------------------------------------------------------------------------------------
-// One panel over the input column: every case of the set that has a score, worst first, with the
+// One panel over the left of the big view: every case of the set that has a score, worst first, with the
 // score after each step as small bars. The case list itself stays in order of number.
 let scoresOpen = false;
 function toggleScores() {
@@ -957,17 +1329,50 @@ function renderScores() {
 }
 let shownFor = null;
 
+// -- running ------------------------------------------------------------------------------------
+// One panel over the right of the big view, there while anything runs, whoever started it: the cases
+// of the runs in progress with the step they are in and the time since they began; the finished ones
+// dimmed, with the time they took. A click goes to that case in that run.
+let activeShut = false;
+const working = () => S.runs.filter((r) => r.status === 'running').flatMap((r) => r.cases.filter((c) => c.status === 'running'));
+const stopwatch = (seconds) => (seconds == null || !isFinite(seconds) ? '' : `${Math.floor(Math.max(seconds, 0) / 60)}:${String(Math.floor(Math.max(seconds, 0) % 60)).padStart(2, '0')}`);
+function toggleActive() {
+  activeShut = !activeShut;
+  render();
+}
+function renderActive() {
+  const panel = $('#active');
+  const runs = S.runs.filter((r) => r.status === 'running' && r.cases.length);
+  panel.hidden = activeShut || !runs.length;
+  if (panel.hidden) return;
+  setHTML(panel, runs.map((r) => r.cases.map((c) => {
+    const on = c.status === 'running';
+    return `<button data-live="${esc(r.id)}/${esc(c.name)}" class="${on ? '' : 'done'}" aria-current="${r.id === S.runId && c.name === S.caseName}" title="${esc(clock(r.started_at))}">
+      <i class="${on ? 'dot' : ''}"></i><b>${c.name.replace(/^test_case_/, '')}</b><span>${esc(on ? words(c.current || 'waiting') : c.status === 'error' ? 'failed' : '')}</span><em>${stopwatch((on ? S.now : c.ended_at) - c.started_at)}</em></button>`;
+  }).join('')).join('<hr>'));
+}
+function gotoLive(runId, name) {
+  const run = S.runs.find((r) => r.id === runId);
+  if (!run) return;
+  if (run.dataset) S.dataset = run.dataset;
+  hideTip();
+  Object.assign(S, { caseName: name, runId, sel: null });
+  render();
+}
+
 function render() {
   normalise();
   writeHash();
   renderBar();
   renderScores();
+  renderActive();
   renderMenu();
   renderMain();
 }
 
 function selectCase(name, datasetId = S.dataset) {
   if (datasetId !== S.dataset) Object.assign(S, { dataset: datasetId, runId: null });
+  hideTip();
   Object.assign(S, { caseName: name, sel: null, runId: null });  // normalise() picks this case's newest run
   render();
 }
@@ -983,14 +1388,21 @@ document.addEventListener('click', async (event) => {
   if (!target) return;
   const d = target.dataset;
   if (d.move) return moveCase(Number(d.move));
-  if (d.image) return showImage(d.image);
+  if (d.source) return selectSource(d.source);
+  if (d.derived) return selectDerived(d.derived);
   if (d.zoom) return zoomBy(Number(d.zoom));
+  if (d.pic) return picTool(Number(d.pic));
   if (d.fit !== undefined) return fit();
   if (d.orbit !== undefined) return toggleOrbit();
   if (d.ghost !== undefined) return toggleGhost();
   if (d.faces !== undefined) return toggleFaces();
   if (d.cut !== undefined) return cycleSection();
+  if (d.mark !== undefined) return toggleMarking();
+  if (d.unmark) return picked('', { pin: marks[Number(d.unmark)] });
+  if (d.marks) return d.marks === 'send' ? sendMarks() : clearMarks();
   if (d.scores !== undefined) return toggleScores();
+  if (d.active !== undefined) return toggleActive();
+  if (d.live) return gotoLive(d.live.slice(0, d.live.lastIndexOf('/')), d.live.slice(d.live.lastIndexOf('/') + 1));
   if (d.menu) return openMenu(d.menu);
   if (d.pick !== undefined) return pick(d.pick);
   if (d.goto) return selectCase(d.goto);
@@ -1009,13 +1421,80 @@ document.addEventListener('click', async (event) => {
   if (d.action === 'stop') return api('/api/stop', { run: S.runId }).then(poll, (e) => toast(`Could not stop the run: ${e.message}`));
 });
 
-document.addEventListener('dblclick', (event) => {
-  if (event.target.id === 'big') openOverlay(event.target.src);
+// The picture in the left window: a click zooms in at the pointer, a right click (or shift-click) zooms out,
+// scroll or pinch zooms too, drag or a sideways scroll pans. It never opens full screen.
+const pan = { k: 1, x: 0, y: 0, drag: null };
+function placeBig() {
+  const img = $('#big');
+  if (!img) return;
+  img.style.transform = pan.k === 1 ? '' : `translate(${pan.x}px, ${pan.y}px) scale(${pan.k})`;
+  img.classList.toggle('zoomed', pan.k !== 1);
+}
+function resetBig() { Object.assign(pan, { k: 1, x: 0, y: 0, drag: null }); placeBig(); }
+function clampBig(img) {
+  const w = img.offsetWidth, h = img.offsetHeight;
+  pan.x = Math.min(0, Math.max(w - w * pan.k, pan.x));
+  pan.y = Math.min(0, Math.max(h - h * pan.k, pan.y));
+}
+function zoomBig(img, event, factor) {
+  const box = img.parentElement.getBoundingClientRect(), px = event.clientX - box.left, py = event.clientY - box.top;
+  const k = Math.min(40, Math.max(1, pan.k * factor));
+  pan.x = px - (px - pan.x) * k / pan.k;
+  pan.y = py - (py - pan.y) * k / pan.k;
+  pan.k = k;
+  clampBig(img);
+  placeBig();
+}
+function picTool(factor) {  // the buttons at the lower right: about the middle of the window
+  const img = $('#big');
+  if (!factor) return resetBig();
+  const box = img.parentElement.getBoundingClientRect();
+  zoomBig(img, { clientX: box.left + box.width / 2, clientY: box.top + box.height / 2 }, factor);
+}
+document.addEventListener('wheel', (event) => {
+  const img = event.target;
+  if (img.id !== 'big') return;
+  event.preventDefault();
+  if (!event.ctrlKey && (event.shiftKey || Math.abs(event.deltaX) > Math.abs(event.deltaY))) {  // sideways scroll pans
+    pan.x -= event.deltaX || event.deltaY;
+    clampBig(img);
+    return placeBig();
+  }
+  zoomBig(img, event, Math.exp(-event.deltaY * (event.ctrlKey ? 0.01 : 0.0025)));
+}, { passive: false });
+document.addEventListener('pointerdown', (event) => {
+  if (event.target.id !== 'big' || event.button !== 0) return;
+  event.preventDefault();
+  pan.drag = { x: event.clientX - pan.x, y: event.clientY - pan.y, x0: event.clientX, y0: event.clientY, moved: false };
+  event.target.setPointerCapture(event.pointerId);
+});
+document.addEventListener('pointermove', (event) => {
+  const drag = pan.drag;
+  if (!drag || event.target.id !== 'big') return;
+  if (!drag.moved && Math.hypot(event.clientX - drag.x0, event.clientY - drag.y0) < 4) return;
+  drag.moved = true;
+  pan.x = event.clientX - drag.x;
+  pan.y = event.clientY - drag.y;
+  clampBig(event.target);
+  placeBig();
+});
+document.addEventListener('pointerup', (event) => {
+  const drag = pan.drag;
+  pan.drag = null;
+  if (drag && !drag.moved && event.target.id === 'big') zoomBig(event.target, event, event.shiftKey || event.altKey ? 0.5 : 2);
+});
+document.addEventListener('pointercancel', () => { pan.drag = null; });
+document.addEventListener('contextmenu', (event) => {
+  if (event.target.id !== 'big') return;
+  event.preventDefault();
+  zoomBig(event.target, event, 0.5);
 });
 
 document.addEventListener('input', (event) => {
   if (event.target.id === 'menu-filter') { htmlCache.delete($('#menu .list')); return renderMenu(); }
+  if (event.target.dataset.note) { const m = marks[Number(event.target.dataset.note)]; if (m) m.note = event.target.value; return; }
   if (event.target.id === 'cut') return setSection(section().axis, Number(event.target.value));
+  if (event.target.id === 'source') { const c = currentCase(); return c && selectSource(sourcesOf(c)[event.target.value]); }
   if (event.target.id === 'scrub' && live.rows[event.target.value]) selectStep(live.rows[event.target.value].id);
 });
 
@@ -1030,18 +1509,24 @@ document.addEventListener('keydown', (event) => {
     if (act) { event.preventDefault(); act(); }
     return;
   }
+  if (event.target.dataset && event.target.dataset.note && event.key === 'Enter') { event.preventDefault(); return event.metaKey || event.ctrlKey ? sendMarks() : event.target.blur(); }
+  if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && marks.length) return sendMarks();
   if (event.key === 'Escape') { if (scoresOpen) toggleScores(); return closeOverlay(); }
   if (event.target.matches('select, textarea, input:not([type=range])') || event.metaKey || event.ctrlKey || event.altKey) return;
   if (event.target.matches('input[type=range]') && event.key.startsWith('Arrow')) return;  // the slider moves itself
   const act = {
     ArrowRight: () => moveStep(1), ArrowLeft: () => moveStep(-1), ']': () => moveStep(1), '[': () => moveStep(-1),
     ArrowDown: () => moveCase(1), ArrowUp: () => moveCase(-1),
-    '+': () => zoomBy(1.25), '=': () => zoomBy(1.25), '-': () => zoomBy(0.8), f: fit, 0: fit, t: toggleOrbit, g: toggleGhost, d: toggleDiff, c: toggleFaces, x: cycleSection, s: toggleScores,
-  }[event.key] || (/^[1-8]$/.test(event.key) && (() => showImage(VIEW_NAMES[Number(event.key) - 1])));
+    '+': () => zoomBy(1.25), '=': () => zoomBy(1.25), '-': () => zoomBy(0.8), f: fit, 0: fit, t: toggleOrbit, g: toggleGhost, d: toggleDiff, c: toggleFaces, x: cycleSection, m: toggleMarking, s: toggleScores, r: toggleActive,
+    v: () => moveDerived(1), V: () => moveDerived(-1), ' ': () => setPeek(true),
+  }[event.key] || (/^[1-8]$/.test(event.key) && (() => selectSource(VIEW_NAMES[Number(event.key) - 1])));
   if (!act) return;
   event.preventDefault();
   act();
 });
+
+document.addEventListener('keyup', (event) => { if (event.key === ' ') setPeek(false); });
+window.addEventListener('blur', () => setPeek(false));
 
 window.addEventListener('hashchange', async () => { readHash(); await ensureCases(); render(); });
 
@@ -1064,7 +1549,7 @@ async function poll() {
     if (run && S.caseName) {
       const entry = traces.get(`${run.id}/${S.caseName}`);
       const pending = entry && entry.loaded && !entry.events.length && runCase(run, S.caseName);
-      if (entry && (run.status === 'running' || pending || wasRunning.includes(run.id))) fetchTrace(run.id, S.caseName);
+      if (entry && (run.status === 'running' || pending || !entry.final)) fetchTrace(run.id, S.caseName, run.status !== 'running');
     }
     document.body.classList.remove('offline');
   } catch (error) {
