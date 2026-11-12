@@ -150,6 +150,11 @@ the entry and say what changed.
 
 ## Evaluation
 
+- **On Melike's computer only the 9 practice parts are run, and only the part a change is expected
+  to improve most** (2026-11-12, user). No full run of all parts from scratch after every change:
+  run the one part (`scripts/main.py --only test_case_<n> --output_dir <dir>`) where the change
+  should gain most, and compare it with that part's last result.
+
 - **A change is judged where it acts, not by the part's total** (2026-11-12, user). A whole-part
   number (volume ratio, verifier score, even IoU) can get worse through a change that brings the
   solid closer to the real part, because an error elsewhere was being cancelled: on practice 8 the
