@@ -320,3 +320,9 @@ Dashboard:
 - The section needs no cap geometry: clipped pixels showing the inside of the skin are the cut
   face. That needs outward winding; occt-import-js returns some solids wound inwards, so the
   worker flips a mesh with negative signed volume.
+
+- **The later steps stop for time only between their own attempts** (2026-11-12, `uzum`). Level
+  faces checked `agent.out_of_time()` once per view, not inside its one-cut-at-a-time loop, and
+  asked the verifier for the base solid's outline again on every attempt; on practice 7 after the
+  cavity cut it ran 1481 s alone. Both fixed. Shading and level faces have no clock of their own on
+  purpose (same solid on a slower machine); only the case's share of the run stops them.

@@ -16,8 +16,8 @@ reasons in `decisions.md`.
   model has ever been asked.
 - Latest whole-pipeline numbers: sampled IoU 0.8929 on the fixed 24 eval parts (simple 0.9943,
   medium 0.9260, complex 0.7584); practice parts 1, 2, 3, 4 within 3 % of the true volume, 8 at
-  1.06, 5 at 1.19 (with `bowls`), 9 at 1.2, 7 at 1.9, 6 at 2.8. The eval sample has not been run
-  with `bowls`.
+  1.06, 5 at 1.19 (with `bowls`), 9 at 1.2, 7 at 1.42 (with `cavities`), 6 at 2.8. The eval
+  sample has not been run with `bowls` or `cavities`, and no full practice run has timed them.
 
 ## Pipeline, in run order
 
@@ -29,6 +29,7 @@ reasons in `decisions.md`.
 | holes, blind spans, skins | `holes.py`, `spans.py` | `HULL_HOLE_SPANS=0` | holes: IoU 0.824 to 0.834, cut on 14 of 24, none worse. Spans and drill points act on practice 8 only; skins on practice 9, 5 and eval 123 |
 | mouths (`open_mouths`) | `mouths.py` | `HULL_MOUTHS=0`, `HULL_MOUTH_FACES=0` | practice 9 whole pipeline 1.727 to 1.205 times the true volume; eval 123 and 171: of 334 sampled points removed none is in the truth |
 | bowls (`cut_bowls`) | `bowls.py` | `HULL_BOWLS=0`, `HULL_SKIP=bowls` | practice 5 whole pipeline 1.225 to 1.191 (six port bowls round the d6.35 holes, cones 34.6 mm deep, verifier 0.724 to 0.753); finds nothing on the other 8 practice parts once the tone test is on (practice 6's flat top face round its blind bore was a false rim before it). Eval sample not run |
+| cavities (`cut_cavities`) | `cavities.py`, `views.py` (both from `nar`) | `HULL_SKIP=cavities` | practice 7 whole pipeline 1.943 to 1.416 (top cavity; 2.09 to 1.56 in the step, 49 s); practice 5: three bottom-view pockets proposed, all refused by the iso lines, bowls kept, 1.191 unchanged. Case time of practice 7 alone: 822 s (shading 516 s, level faces 105 s) against about 130 s on `main`: the cavity makes the later steps' verifier calls slower |
 | rounds (`cut_rounds`) | `rounds.py` | `HULL_SKIP=rounds`, `HULL_ROUNDS_DISC=0` | IoU 0.834 to 0.847 (simple 0.960 to 0.994); "disc": cuts 6 of 266 eval parts, none lower; practice 6 3.81 to 3.31 |
 | curved recesses (`cut_curved`) | `curved.py`, `tone.py`, `regions.py` | `HULL_SKIP=curved` | no cut on the 24; 5 of the 37 lathe-type eval parts, none worse (249: 0.725 to 0.981); practice 2 1.105 to 1.018 |
 | level faces (`level_faces`) | `depth.py` | `HULL_SKIP=depth`, `HULL_DEPTH_SUPPORT=0` | IoU 0.847 to 0.854; supported cuts 0.8668 to 0.8791 (38: 0.628 to 0.933; 99: 0.252 to 0.241, accepted); practice 6 3.31 to 2.77 |

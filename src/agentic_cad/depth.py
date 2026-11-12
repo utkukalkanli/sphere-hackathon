@@ -422,13 +422,13 @@ def apply(agent, solid: TopoDS_Shape, case_dir: Path | None, views: list[Path]) 
         if not straight:
             step.log("no straight view could be read")
             return solid
-        score = recall = None
+        score = recall = outline = None
         rater = judge.Judge(case_dir, dims, observed) if judge.local() else None
         levelled = 0
         facing = regions.facing_tone({name: regions._measure(observed[name])[1] for name in straight})
 
         def attempt(current, cuts):
-            nonlocal score, recall
+            nonlocal score, recall, outline
             carved = agent._guarded(step, current, target, lambda: agent.cutter.run(remove, current, cuts, TIMEOUT), quiet=True)
             if carved is None or vh.volume(carved) >= vh.volume(current) * (1 - 1e-6):
                 return None
@@ -438,23 +438,23 @@ def apply(agent, solid: TopoDS_Shape, case_dir: Path | None, views: list[Path]) 
                 if not verdict.accepted:
                     step.log(f"{verdict.reason} ({verdict}); not kept", level="warning")
                     return None
-                score = recall = None  # the verifier's rating is of another solid now
+                score = recall = outline = None  # the verifier's rating is of another solid now
                 return carved
             if score is None:
                 first = verify.check(current, case_dir, observed)
-                score, recall = first.score, first.mean("recall")
+                score, recall, outline = first.score, first.mean("recall"), first.mean("silhouette")
             report = verify.check(carved, case_dir, observed)
             after = report.score
             # A face cut down to the solid's own lowest point leaves walls where its neighbours are
             # still to be cut, and the verifier counts their edges against it. What such a cut must do
             # instead: make more of the views' lines boundaries of the solid, and leave the outline alone.
             supported = any(c.info.get("supported") for c in cuts) and report.mean("recall") >= recall + MIN_RECALL_GAIN \
-                and report.mean("silhouette") >= verify.check(current, case_dir, observed).mean("silhouette") - 1e-4
+                and report.mean("silhouette") >= outline - 1e-4
             judge.note(agent, "depth", current, carved, not (after < score - SCORE_SLACK and not supported))
             if after < score - SCORE_SLACK and not supported:
                 step.log(f"the verifier rates the result lower ({score:.3f} to {after:.3f}); not kept", level="warning")
                 return None
-            score, recall = after, report.mean("recall")
+            score, recall, outline = after, report.mean("recall"), report.mean("silhouette")
             return carved
 
         for name in straight:
@@ -474,6 +474,9 @@ def apply(agent, solid: TopoDS_Shape, case_dir: Path | None, views: list[Path]) 
                 solid, levelled = carved, levelled + len(cuts)
             elif len(cuts) > 1:
                 for cut in sorted(cuts, key=lambda c: -c.info["pixels"])[:MAX_SINGLE]:
+                    if agent.out_of_time():
+                        step.log("out of time for this case; the remaining faces are not tried", level="warning")
+                        break
                     carved = attempt(solid, [cut])
                     if carved is not None:
                         solid, levelled = carved, levelled + 1
