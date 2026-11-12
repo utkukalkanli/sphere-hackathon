@@ -1,5 +1,8 @@
-// Dashboard front end: case list, expected-vs-ours comparison, step trace. No build step, no framework.
-import { createViewer, VIEWS, COLORS } from '/static/viewer.js';
+// Dashboard front end. One large 3D view of the solid after the chosen pipeline step, with what that
+// step removed drawn over it; a slider of the steps underneath; everything about the input on the
+// left; the ground truth, as large as its panel, on the right, with two
+// panels under it: how the chosen step's solid differs from the truth, and what the step extracted. Both side panels can be dragged wider. No build step, no framework.
+import { createViewer, setView, fit, zoomBy, trackball, setTrackball, ghost, setGhost, faces, setFaces, VIEWS, COLORS } from '/static/viewer.js';
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -7,27 +10,42 @@ const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => (
   { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 const VIEW_NAMES = Object.keys(VIEWS);
-const VIEW_LABEL = (name) => name.replace(/^view_\d+_/, '').replaceAll('_', ' ');
+const DEFAULT_VIEW = 'view_6_iso_front_right_top';
+const viewLabel = (name) => name.replace(/^view_\d+_/, '').replaceAll('_', ' ');
+
+const icon = (path) => `<svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${path}</svg>`;
+const ICON = {
+  prev: icon('<path d="M10 3.5 5.5 8l4.5 4.5"/>'),
+  next: icon('<path d="M6 3.5 10.5 8 6 12.5"/>'),
+  minus: icon('<path d="M3.5 8h9"/>'),
+  plus: icon('<path d="M3.5 8h9M8 3.5v9"/>'),
+  fit: icon('<path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10"/>'),
+  orbit: icon('<circle cx="8" cy="8" r="5.5"/><ellipse cx="8" cy="8" rx="5.5" ry="2.2"/><ellipse cx="8" cy="8" rx="2.2" ry="5.5"/>'),
+  diff: icon('<rect x="2.5" y="2.5" width="8" height="8" rx="1"/><rect x="5.5" y="5.5" width="8" height="8" rx="1" stroke-dasharray="2 1.7"/>'),
+  faces: icon('<path d="M8 2.5 13 5v6l-5 2.5L3 11V5z"/><path d="M3 5l5 2.5L13 5M8 7.5v6"/>'),
+  ghost: icon('<path d="M3 5.5 8 3l5 2.5v5L8 13l-5-2.5z" stroke-dasharray="2 1.7"/>'),
+  play: icon('<path d="M5 3.5v9l7-4.5z" fill="currentColor"/>'),
+  stop: icon('<rect x="4" y="4" width="8" height="8" rx="1" fill="currentColor"/>'),
+};
 
 const S = {
   datasets: [], runs: [], cases: {}, now: 0,
   dataset: null, caseName: null, runId: null,  // runId '' = committed outputs / no run
-  view: 'view_6_iso_front_right_top', follow: true,
+  image: DEFAULT_VIEW,
+  sel: null,  // the step whose solid is shown; null = follow the latest
+  diff: false,  // the big view shows the difference to the ground truth instead of the solid
 };
-const open = new Set();        // expanded steps: "<run>/<case>/<step id>"
-const traces = new Map();      // "<run>/<case>" -> { events, loading }
-const textCache = new Map();   // artifact url -> text
-const openText = new Set();    // artifact urls shown inline
-let live = { id: 0, viewers: [] };
+const traces = new Map();  // "<run>/<case>" -> { events, loading, loaded, failed }
+let live = { id: 0, rows: [] };  // rows: the steps on the slider  // bumped whenever another case or run comes on screen
+let started = null;  // a run just launched here that /api/state may not list yet
 
 // -- helpers ------------------------------------------------------------------------------------
 
 const htmlCache = new WeakMap();
-function setHTML(element, html) {  // skip identical updates: keeps focus, open menus and scroll intact
-  if (!element || htmlCache.get(element) === html) return false;
+function setHTML(element, html) {  // skip identical updates: keeps focus, scroll and open <details> intact
+  if (!element || htmlCache.get(element) === html) return;
   htmlCache.set(element, html);
   element.innerHTML = html;
-  return true;
 }
 
 async function api(path, body) {
@@ -39,9 +57,10 @@ async function api(path, body) {
   return data;
 }
 
-function toast(message, bad = false) {
+function toast(message) {
   const node = document.createElement('div');
-  node.className = 'toast' + (bad ? ' bad' : '');
+  node.className = 'toast';
+  node.setAttribute('role', 'alert');
   node.textContent = message;
   document.body.append(node);
   setTimeout(() => node.remove(), 5000);
@@ -55,14 +74,11 @@ function duration(seconds) {
   if (seconds < 60) return `${seconds.toFixed(1)} s`;
   return `${Math.floor(seconds / 60)} m ${Math.round(seconds % 60)} s`;
 }
-function size(bytes) {
-  if (bytes == null) return '';
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} kB`;
-  return `${(bytes / 1048576).toFixed(1)} MB`;
-}
 const clock = (ts) => (ts ? new Date(ts * 1000).toLocaleString('en-GB', {
-  month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '');
+  month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '');
+const words = (name) => String(name).replaceAll('_', ' ');
+const isImage = (name) => /\.(png|jpe?g|gif|webp|svg)$/i.test(name);
+const isStep = (name) => /\.(stp|step)$/i.test(name);
 
 const dataset = () => S.datasets.find((d) => d.id === S.dataset);
 const cases = () => S.cases[S.dataset] || [];
@@ -71,24 +87,64 @@ const currentRun = () => S.runs.find((r) => r.id === S.runId);
 const datasetRuns = () => S.runs.filter((r) => !r.dataset || r.dataset === S.dataset);
 const runCase = (run, name) => run && run.cases.find((c) => c.name === name);
 
-function envelope(c) {
-  const b = c.facts && c.facts.bounding_box_mm;
-  return b ? `${num(b.x, 1)} × ${num(b.y, 1)} × ${num(b.z, 1)} mm` : '';
-}
-
-// Our output for the current case: from the selected run, else the committed file
-function oursFor(c) {
+// The .stp we are judged on for this case: from the selected run, else the committed file
+function outputOf(c) {
   const run = currentRun();
   if (run) {
     const rc = runCase(run, c.name);
-    if (rc && rc.output) {
-      const url = `/files/runs/${run.id}/${c.name}/${rc.output}`;
-      return { url, key: url, label: `run ${run.id}` };
-    }
-    return { missing: rc ? (rc.status === 'running' ? 'running' : 'no-output') : 'not-run' };
+    return rc && rc.output ? { url: `/files/runs/${run.id}/${c.name}/${rc.output}` } : null;
   }
-  if (c.output) return { url: c.output.url, key: `${c.output.url}?${c.output.mtime}`, label: 'artifacts/outputs' };
-  return { missing: dataset() && dataset().committed ? 'no-committed' : 'no-run' };
+  return c.output ? { url: c.output.url, key: `${c.output.url}?${c.output.mtime}` } : null;
+}
+
+// -- reference renders --------------------------------------------------------------------------
+
+// The renders come on a white sheet. Cut the sheet away (flood from the border) so the part sits
+// on the dark interface instead of in a glaring white square.
+const cutouts = new Map();
+function cutout(src) {
+  if (!cutouts.has(src)) {
+    cutouts.set(src, (async () => {
+      const bitmap = await createImageBitmap(await (await fetch(src)).blob());
+      const scale = Math.min(1, 768 / Math.max(bitmap.width, bitmap.height));
+      const w = Math.round(bitmap.width * scale), h = Math.round(bitmap.height * scale);
+      const canvas = Object.assign(document.createElement('canvas'), { width: w, height: h });
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(bitmap, 0, 0, w, h);
+      const image = ctx.getImageData(0, 0, w, h), px = image.data;
+      const light = (i) => Math.min(px[i * 4], px[i * 4 + 1], px[i * 4 + 2]);
+      const gone = new Uint8Array(w * h), stack = [];
+      const visit = (i) => { if (!gone[i] && light(i) >= 236) { gone[i] = 1; stack.push(i); } };
+      for (let x = 0; x < w; x++) { visit(x); visit((h - 1) * w + x); }
+      for (let y = 0; y < h; y++) { visit(y * w); visit(y * w + w - 1); }
+      while (stack.length) {
+        const i = stack.pop(), x = i % w;
+        if (x > 0) visit(i - 1);
+        if (x < w - 1) visit(i + 1);
+        if (i >= w) visit(i - w);
+        if (i < w * (h - 1)) visit(i + w);
+      }
+      for (let i = 0; i < w * h; i++) if (light(i) >= 250) gone[i] = 1;  // sheet enclosed by the part
+      for (let i = 0; i < w * h; i++) {
+        if (gone[i]) { px[i * 4 + 3] = 0; continue; }
+        const x = i % w;  // soften the antialiased rim that touched the sheet
+        const rim = (x > 0 && gone[i - 1]) || (x < w - 1 && gone[i + 1]) || (i >= w && gone[i - w]) || (i < w * (h - 1) && gone[i + w]);
+        if (rim && light(i) > 180) px[i * 4 + 3] = Math.round(255 * (236 - Math.min(light(i), 236)) / 56);
+      }
+      ctx.putImageData(image, 0, 0);
+      return URL.createObjectURL(await new Promise((resolve) => canvas.toBlob(resolve)));
+    })().catch(() => src));
+  }
+  return cutouts.get(src);
+}
+
+function hydrateImages(root = document) {
+  $$('img[data-cut]', root).forEach(async (img) => {
+    const src = img.dataset.cut;
+    if (img.dataset.done === src) return;
+    const url = await cutout(src);
+    if (img.dataset.cut === src) { img.src = url; img.dataset.done = src; }
+  });
 }
 
 // -- STEP loading -------------------------------------------------------------------------------
@@ -102,7 +158,7 @@ function loadStep(url, key = url) {
     if (!response.ok) throw new Error(`could not load file (${response.status})`);
     const buffer = await response.arrayBuffer();
     const head = new TextDecoder().decode(buffer.slice(0, 64)).trimStart();
-    if (!head.startsWith('ISO-10303-21')) throw new Error('not a STEP file (no ISO-10303-21 header)');
+    if (!head.startsWith('ISO-10303-21')) throw new Error('not a STEP file');
     if (!worker) {
       worker = new Worker('/static/step-worker.js');
       worker.onmessage = ({ data }) => {
@@ -114,13 +170,95 @@ function loadStep(url, key = url) {
     return new Promise((resolve, reject) => {
       const id = ++jobId;
       jobs.set(id, { resolve, reject });
-      worker.postMessage({ id, buffer }, [buffer]);
+      worker.postMessage({ id, buffer });
     });
   })();
   stepCache.set(key, promise);
-  promise.catch(() => {});
-  if (stepCache.size > 8) stepCache.delete(stepCache.keys().next().value);
+  promise.catch(() => stepCache.delete(key));
+  if (stepCache.size > 32) stepCache.delete(stepCache.keys().next().value);
   return promise;
+}
+
+// Show a .stp in a viewport. The previous solid stays up until the next one is ready, so stepping
+// through the pipeline swaps the part in place without a flash.
+// options.before: the solid of the step before, drawn as what was removed. options.frame: a solid
+// whose bounding box is framed instead (the first stage), so the part does not jump between steps.
+// options.truth: the ground truth; the view then shows what the solid has too much and what it lacks.
+async function showModel(viewport, url, key, color, empty = '', { before = null, frame = null, truth = null, ...options } = {}) {
+  const stage = $('.stage', viewport);
+  const id = url ? `${key || url}|${before ? before.url : ''}|${truth ? 'diff' : ''}` : '';
+  if (stage.dataset.url === id) return;
+  stage.dataset.url = id;
+  const fresh = () => stage.isConnected && stage.dataset.url === id;
+  const clear = (html) => {
+    if (stage.viewer) stage.viewer.dispose();
+    stage.viewer = null;
+    stage.innerHTML = html;
+    viewport.classList.remove('live');
+  };
+  if (!url) return clear(empty);
+  if (!stage.viewer) stage.innerHTML = '<p class="note pulse">Loading…</p>';
+  try {
+    const optional = (model) => (model ? loadStep(model.url, model.key).catch(() => null) : null);
+    const [solid, old, box, real] = await Promise.all([loadStep(url, key), optional(before), optional(frame), optional(truth)]);
+    if (!fresh()) return;
+    const viewer = await createViewer(stage, solid.meshes, color, {
+      ...options, ghost: old && old.meshes, frame: box && box.measured,
+      diff: real && { meshes: real.meshes, shift: solid.measured.min.map((v, i) => v - real.measured.min[i]) } });
+    if (!fresh()) return viewer.dispose();
+    if (stage.viewer) stage.viewer.dispose();
+    stage.viewer = viewer;
+    stage.replaceChildren(viewer.canvas);
+    viewport.classList.add('live');
+  } catch (error) {
+    if (fresh()) clear(`<p class="note bad" title="${esc(error.message)}">Unreadable .stp</p>`);
+  }
+}
+
+const viewportHTML = (id, label, tools = true) => `<div class="viewport" id="${id}">
+  <div class="stage" role="img" aria-label="${label}"></div>
+  ${tools ? `<div class="tools">
+    <button data-diff aria-pressed="${S.diff}" title="Show what is too much and what is missing against the ground truth (D)" aria-label="Show the difference to the ground truth">${ICON.diff}</button>
+    <button data-ghost aria-pressed="${ghost()}" title="Show what the step removed (G)" aria-label="Show what the step removed">${ICON.ghost}</button>
+    <button data-faces aria-pressed="${faces()}" title="Every face in its own colour (C)" aria-label="Every face in its own colour">${ICON.faces}</button>
+    <button data-orbit aria-pressed="${trackball()}" title="Free rotation (T)" aria-label="Free rotation">${ICON.orbit}</button>
+    <button data-zoom="0.8" title="Zoom out (−)" aria-label="Zoom out">${ICON.minus}</button>
+    <button data-zoom="1.25" title="Zoom in (+)" aria-label="Zoom in">${ICON.plus}</button>
+    <button data-fit title="Fit the part (F, or double-click)" aria-label="Fit the part">${ICON.fit}</button>
+  </div>` : ''}</div>`;
+
+// A panel that folds away under its title. Whether it is open is remembered.
+function dropHTML(id, title, body) {
+  let open = true;
+  try { open = localStorage.getItem(`drop-${id}`) !== 'closed'; } catch { /* private mode */ }
+  return `<details class="drop" id="${id}" ${open ? 'open' : ''}><summary>${title}<span></span></summary>${body}</details>`;
+}
+document.addEventListener('toggle', (event) => {
+  if (!event.target.matches || !event.target.matches('details.drop')) return;
+  try { localStorage.setItem(`drop-${event.target.id}`, event.target.open ? 'open' : 'closed'); } catch { /* private mode */ }
+}, true);
+
+function toggleOrbit() {
+  setTrackball(!trackball());
+  $$('[data-orbit]').forEach((button) => button.setAttribute('aria-pressed', trackball()));
+}
+function toggleDiff() {
+  const c = currentCase();
+  if (!c || !c.truth) return;
+  S.diff = !S.diff;
+  try { localStorage.setItem('diff', S.diff ? 'on' : 'off'); } catch { /* private mode */ }
+  $$('[data-diff]').forEach((button) => button.setAttribute('aria-pressed', S.diff));
+  renderSteps(c);
+}
+try { S.diff = localStorage.getItem('diff') === 'on'; } catch { /* private mode */ }
+
+function toggleFaces() {
+  setFaces(!faces());
+  $$('[data-faces]').forEach((button) => button.setAttribute('aria-pressed', faces()));
+}
+function toggleGhost() {
+  setGhost(!ghost());
+  $$('[data-ghost]').forEach((button) => button.setAttribute('aria-pressed', ghost()));
 }
 
 // -- routing ------------------------------------------------------------------------------------
@@ -148,7 +286,12 @@ async function ensureCases(force = false) {
 function normalise() {
   if (!S.datasets.some((d) => d.id === S.dataset)) S.dataset = S.datasets[0] && S.datasets[0].id;
   const runs = datasetRuns();
-  if (S.runId == null || (S.runId && !runs.some((r) => r.id === S.runId))) S.runId = runs[0] ? runs[0].id : '';
+  if (runs.some((r) => r.id === started)) started = null;
+  if (S.runId && S.runId !== started && !runs.some((r) => r.id === S.runId)) S.runId = null;
+  if (S.runId == null) {  // the newest run that has this case; without a case, the newest run
+    const run = S.caseName ? runs.find((r) => runCase(r, S.caseName)) : runs[0];
+    S.runId = run ? run.id : '';
+  }
   if (cases().length && !currentCase()) {
     const run = currentRun();
     const first = run && run.cases[0] && cases().find((c) => c.name === run.cases[0].name);
@@ -158,229 +301,319 @@ function normalise() {
 
 // -- top bar ------------------------------------------------------------------------------------
 
-function runLabel(run) {
-  const done = run.cases.filter((c) => c.status !== 'running').length;
-  return `${clock(run.started_at)} · ${done} case${done === 1 ? '' : 's'} · ${run.status}`;
-}
+const envelope = (c) => {
+  const b = c.facts && c.facts.bounding_box_mm;
+  return b ? `${num(b.x, 1)} × ${num(b.y, 1)} × ${num(b.z, 1)} mm` : '';
+};
+const generic = (c) => !c.title || /^mechanical part$/i.test(c.title) || c.title === c.name;
 
-function caseLabel(c) {
-  const generic = !c.title || /^mechanical part$/i.test(c.title) || c.title === c.name;
-  return `#${c.number} · ${generic ? envelope(c) || c.name : c.title}${c.tier ? ` · ${c.tier}` : ''}`;
-}
-
-function renderTop() {
-  const ds = dataset(), run = currentRun(), runs = datasetRuns();
+function renderBar() {
+  const ds = dataset(), run = currentRun();
   const inRun = new Set(run ? run.cases.map((c) => c.name) : []);
+  const running = run && run.status === 'running';
   setHTML($('#bar'), `
-    <select id="case-select" aria-label="Test case">
-      ${S.datasets.map((d) => `<optgroup label="${esc(d.label)} (${d.count})">
-        ${(S.cases[d.id] || []).map((c) => `<option value="${d.id}/${c.name}" ${d.id === S.dataset && c.name === S.caseName ? 'selected' : ''}>
-          ${esc(caseLabel(c))}${d.id === S.dataset && inRun.has(c.name) ? ' ●' : ''}</option>`).join('')}</optgroup>`).join('')}
-    </select>
-    <button class="btn" data-move="-1" title="Previous case (k)" aria-label="Previous case">‹</button>
-    <button class="btn" data-move="1" title="Next case (j)" aria-label="Next case">›</button>
-    <label class="field">Run
+    <div class="group">
+      <button class="icon" data-move="-1" title="Previous case (↑)" aria-label="Previous case">${ICON.prev}</button>
+      <select id="case-select" aria-label="Test case">
+        ${S.datasets.map((d) => `<optgroup label="${esc(d.label)} (${d.count})">
+          ${(S.cases[d.id] || []).map((c) => `<option value="${d.id}/${c.name}" ${d.id === S.dataset && c.name === S.caseName ? 'selected' : ''}>
+            ${esc(`${c.number} · ${generic(c) ? envelope(c) || c.name : c.title}${c.tier ? ` · ${c.tier}` : ''}`)}${d.id === S.dataset && inRun.has(c.name) ? ' •' : ''}</option>`).join('')}</optgroup>`).join('')}
+      </select>
+      <button class="icon" data-move="1" title="Next case (↓)" aria-label="Next case">${ICON.next}</button>
+    </div>
+    <label class="field"><span>Run</span>
       <select id="run-select">
-        <option value="">${ds && ds.committed ? 'Committed outputs' : 'No run'}</option>
-        ${runs.map((r) => `<option value="${esc(r.id)}" ${r.id === S.runId ? 'selected' : ''}>${esc(runLabel(r))}</option>`).join('')}
+        <option value="">${ds && ds.committed ? 'Committed outputs' : 'None'}</option>
+        ${datasetRuns().map((r) => `<option value="${esc(r.id)}" ${r.id === S.runId ? 'selected' : ''}>
+          ${esc(`${clock(r.started_at)} · ${r.cases.length} case${r.cases.length === 1 ? '' : 's'} · ${r.status}`)}</option>`).join('')}
       </select>
     </label>
     <span class="spacer"></span>
-    ${run && run.status === 'running' && run.launched_by === 'ui' ? '<button class="btn" data-action="stop">Stop</button>' : ''}
-    <button class="btn primary" data-action="run" title="Run scripts/main.py on this case with tracing">Run this case</button>`);
+    <span class="offline-note">Dashboard server is not responding</span>
+    ${running && run.launched_by === 'ui' ? `<button data-action="stop">${ICON.stop}Stop</button>` : ''}
+    <button class="primary" data-action="run" title="Run scripts/main.py on this case with tracing">${ICON.play}Run this case</button>`);
 }
 
-// -- main ---------------------------------------------------------------------------------------
+// -- columns ------------------------------------------------------------------------------------
 
-function caseStatusHTML(c) {
-  const run = currentRun(), rc = runCase(run, c.name);
-  if (!run || !rc) return '';
-  const end = rc.ended_at || (rc.status === 'running' ? S.now : rc.last_ts);
-  return `<span class="st st-${rc.status}">${esc(rc.status)}</span>
-    <span class="muted">${rc.steps} step${rc.steps === 1 ? '' : 's'}${rc.errors ? `, ${rc.errors} failed` : ''} · ${duration(end - rc.started_at)}</span>`;
-}
-
-function renderMain(force = false) {
+function renderMain() {
   const main = $('#main'), c = currentCase();
-  if (!c) {
-    setHTML(main, `<p class="empty">${S.datasets.length ? 'Loading cases…' : 'No datasets found.'}</p>`);
-    return;
-  }
-  const ours = oursFor(c);
-  const key = [S.dataset, c.name, S.runId, ours.key || ours.missing].join('|');
-  if (force || main.dataset.key !== key) {
+  if (!c) return setHTML(main, `<p class="note center">${S.datasets.length ? 'Loading cases…' : 'No datasets found under artifacts/inputs or datasets/eval.'}</p>`);
+  const key = [S.dataset, c.name, S.runId].join('|');
+  if (main.dataset.key !== key) {
     main.dataset.key = key;
-    live.viewers.forEach((v) => v.dispose());
-    live = { id: live.id + 1, viewers: [] };
+    $$('.stage', main).forEach((stage) => stage.viewer && stage.viewer.dispose());
+    live = { id: live.id + 1, rows: [] };
     htmlCache.delete(main);
-    renderCompare(c, ours);
-    main.scrollTop = 0;
+    main.innerHTML = `
+      <aside class="side" id="input" aria-label="Input"></aside>
+      <section id="centre" class="${c.truth ? '' : 'no-truth'}" aria-label="The solid after the chosen step">
+        ${viewportHTML('ours', 'Our solid after the chosen step. Drag to rotate, shift-drag to pan, scroll to zoom.')}
+        <div class="hud"><div id="stage-label"></div><div id="steps-note"></div></div>
+        <div class="hud end" id="steps-status"></div>
+        <div class="grip" data-side="left" role="separator" aria-orientation="vertical" title="Drag to resize, double-click to reset"></div>
+        <div class="grip" data-side="right" role="separator" aria-orientation="vertical" title="Drag to resize, double-click to reset"></div>
+      </section>
+      <aside id="result" aria-label="Ground truth">
+        <div class="view">${viewportHTML('out', 'Ground truth', false)}<div class="hud" id="result-head"></div></div>
+        <div id="info">
+          ${dropHTML('diff', 'Diff', '<div id="metrics"></div>')}
+          ${dropHTML('extracted', 'Extracted', '<div id="step-detail"></div>')}
+        </div>
+      </aside>
+      <footer id="timeline"></footer>`;
+    renderInput(c);
+    startMeasuring(c);
   }
+  renderResult(c);
   renderSteps(c);
-  setHTML($('#case-status'), caseStatusHTML(c));
 }
 
-// -- compare ------------------------------------------------------------------------------------
+// -- left: input --------------------------------------------------------------------------------
 
-const MISSING = {
-  running: ['Still running', 'The output appears here as soon as this case finishes.'],
-  'no-output': ['No output file', 'This case ran but recorded no .stp. A missing file scores 0.'],
-  'not-run': ['Not part of this run', 'Pick another run, or run this case from “Run pipeline”.'],
-  'no-committed': ['No committed output', 'artifacts/outputs has no .stp for this case yet. Select a run or run the pipeline.'],
-  'no-run': ['No run selected', 'Run the pipeline on this dataset to see your output next to the expected part.'],
-};
+function fmt(value) {
+  if (value == null) return '–';
+  if (typeof value === 'number') return num(value);
+  if (typeof value !== 'object') return esc(value);
+  if (Array.isArray(value)) {
+    return value.map((v) => (Array.isArray(v) ? `(${v.map(fmt).join(', ')})` : fmt(v))).join(Array.isArray(value[0]) ? '<br>' : ', ') || '–';
+  }
+  return Object.entries(value).map(([k, v]) => `${fmt(v)} ${esc(words(k).toLowerCase())}`).join(' · ') || '–';
+}
 
-function renderCompare(c, ours) {
-  const ds = dataset(), base = `${ds.inputs_url}/${c.name}`;
+// A list of records as a table; anything else on one line
+function tableHTML(value) {
+  if (!Array.isArray(value) || typeof value[0] !== 'object' || value[0] == null) return `<p class="mono">${fmt(value)}</p>`;
+  const columns = [...new Set(value.flatMap((item) => Object.keys(item)))];
+  return `<div class="wide"><table class="grid"><thead><tr>${columns.map((k) => `<th>${esc(words(k))}</th>`).join('')}</tr></thead>
+    <tbody>${value.map((item) => `<tr>${columns.map((k) => `<td>${fmt(item[k])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+}
+
+function factsHTML(facts) {
+  if (!facts) return '<p class="note">This case has no facts.json.</p>';
+  const box = facts.bounding_box_mm;
+  const spec = [
+    ['Envelope', box && `${num(box.x)} × ${num(box.y)} × ${num(box.z)} <small>mm</small>`],
+    ['Volume', facts.volume_mm3 != null && `${num(facts.volume_mm3 / 1000)} <small>cm³</small>`],
+    ['Surface', facts.surface_area_mm2 != null && `${num(facts.surface_area_mm2 / 100)} <small>cm²</small>`],
+    ['Solids', facts.solids],
+    ['Through holes', facts.through_holes_genus],
+    ['Faces · edges', facts.faces != null && `${num(facts.faces)} · ${num(facts.edges)}`],
+    ['Face types', facts.face_types && fmt(facts.face_types)],
+  ].filter(([, v]) => v != null && v !== false);
+  const shown = new Set(['bounding_box_mm', 'volume_mm3', 'surface_area_mm2', 'solids', 'through_holes_genus', 'faces', 'edges', 'face_types']);
+  const rest = Object.entries(facts).filter(([k, v]) => !shown.has(k) && !k.startsWith('_')
+    && v != null && (typeof v !== 'object' || Object.keys(v).length));
+  const feature = ([key, value]) => `<h3>${esc(words(key))}</h3>${tableHTML(value)}`;
+  return `<dl class="spec">${spec.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>
+    ${rest.map(feature).join('')}`;
+}
+
+// The description is the prompt our pipeline reads. Dimensions are lifted out of the prose so the
+// numbers can be found without reading every sentence.
+function markdown(text) {
+  const inline = (line) => line.split(/(\b\d+(?:\.\d+)?(?:\s?(?:mm|cm\^?[23]|°|%))?(?![\w.]*\d))/)
+    .map((part, i) => (i % 2 ? `<span class="q">${esc(part)}</span>` : esc(part))).join('')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/`([^`]+)`/g, '<code>$1</code>');
+  let html = '', list = false;
+  for (const line of text.split('\n')) {
+    const item = line.match(/^\s*[-*]\s+(.*)/), heading = line.match(/^(#{1,4})\s+(.*)/);
+    if (list && !item) { html += '</ul>'; list = false; }
+    if (item) { html += `${list ? '' : '<ul>'}<li>${inline(item[1])}</li>`; list = true; }
+    else if (heading) html += heading[1].length === 1 ? '' : `<h3>${inline(heading[2])}</h3>`;  // the title is the column heading
+    else if (line.trim()) html += `<p>${inline(line)}</p>`;
+  }
+  return html + (list ? '</ul>' : '');
+}
+
+const imageSrc = (c, name) => `${dataset().inputs_url}/${c.name}/${name === 'context' ? 'context.png' : `images/${name}.png`}`;
+
+function renderInput(c) {
   const images = [...c.views.map((file) => file.replace(/\.png$/, '')), ...(c.context ? ['context'] : [])];
-  if (!images.includes(S.view) || S.view === 'context') S.view = 'view_6_iso_front_right_top';
-  $('#main').innerHTML = `
-    <div class="layout">
-      <section class="images">
-        <div class="col-head"><span>Input images</span><span class="muted">click one to turn the 3D views to it</span></div>
-        <div class="img-grid">
-          ${images.map((name) => `<button data-view="${name}" aria-pressed="${name === S.view}">
-            <img loading="lazy" alt="${VIEW_LABEL(name)} view" src="${base}/${name === 'context' ? 'context.png' : `images/${name}.png`}">
-            <span>${VIEW_LABEL(name)}</span></button>`).join('')}
-        </div>
-      </section>
-      <figure class="pane">
-        <figcaption><span><i class="sw sw-ours"></i>Our output</span><span class="muted">${esc(ours.label || '')}</span></figcaption>
-        <div class="stage" id="stage-ours"></div>
-      </figure>
-      <figure class="pane">
-        <figcaption><span><i class="sw sw-expected"></i>Ground truth</span><span class="muted">${c.truth ? size(c.truth.size) : ''}</span></figcaption>
-        <div class="stage" id="stage-truth">${c.truth ? '' : `<div class="stage-msg"><strong>No ground truth file</strong>
-          <span>The practice set ships no expected .stp. Compare against the images and the numbers below.</span></div>`}</div>
-      </figure>
-    </div>
-    <div id="metrics"></div>
-    <section class="steps-section"><h2>Steps</h2><div id="steps"></div></section>
-    <details class="brief"><summary>Design brief</summary><article class="prose" id="brief-text"></article></details>`;
-  loadCompare(c, ours);
+  if (!images.includes(S.image)) S.image = images.includes(DEFAULT_VIEW) ? DEFAULT_VIEW : images[0];
+  const ds = dataset();
+  $('#input').innerHTML = `
+    <header class="part">
+      <h1>${esc(generic(c) ? `Case ${c.number}` : c.title)}</h1>
+      <p>${esc([generic(c) ? '' : `Case ${c.number}`, ds.label, c.tier, envelope(c)].filter(Boolean).join(' · '))}</p>
+    </header>
+    ${images.length ? `<figure class="ref"><img id="big" alt="Reference render, ${esc(viewLabel(S.image))}" src="${imageSrc(c, S.image)}" data-cut="${imageSrc(c, S.image)}">
+      <figcaption id="big-label">${esc(viewLabel(S.image))}</figcaption></figure>
+    <div class="thumbs">${images.map((name, i) => `<button data-image="${name}" aria-pressed="${name === S.image}"
+      title="${viewLabel(name)}${VIEWS[name] ? ` — turns the 3D views to this side (${i + 1})` : ''}">
+      <img alt="${viewLabel(name)}" src="${imageSrc(c, name)}" data-cut="${imageSrc(c, name)}"></button>`).join('')}</div>` : '<p class="note">This case has no reference renders.</p>'}
+    <h2>Brief</h2><article class="prose" id="brief"></article>
+    <h2>Facts</h2>${factsHTML(c.facts)}`;
+  hydrateImages($('#input'));
   const id = live.id;
   fetch(`/api/description?dataset=${S.dataset}&case=${c.name}`).then((r) => r.text()).then((text) => {
-    if (id === live.id && $('#brief-text')) $('#brief-text').innerHTML = markdown(text);
+    if (id === live.id) $('#brief').innerHTML = markdown(text);
   });
 }
 
-function applyView() {
-  $$('.img-grid button').forEach((b) => b.setAttribute('aria-pressed', b.dataset.view === S.view));
-  if (S.view !== 'context') live.viewers.forEach((v) => v.setView(S.view));
+function showImage(name, turn = true) {
+  const c = currentCase();
+  if (!c || !$('#big')) return;
+  S.image = name;
+  $$('.thumbs button').forEach((b) => b.setAttribute('aria-pressed', b.dataset.image === name));
+  $('#big').dataset.cut = imageSrc(c, name);
+  $('#big-label').textContent = viewLabel(name);
+  renderResult(c);
+  hydrateImages();
+  if (turn && VIEWS[name]) setView(name);
 }
 
-function stageMessage(stage, title, detail, bad = false) {
-  if (stage) stage.innerHTML = `<div class="stage-msg ${bad ? 'bad' : ''}"><strong>${esc(title)}</strong><span>${esc(detail)}</span></div>`;
-}
+// -- right: ground truth and the diff ------------------------------------------------------------------------------
 
-async function loadCompare(c, ours) {
-  const id = live.id;
-  const stale = () => id !== live.id;
-  const oursStage = $('#stage-ours'), truthStage = $('#stage-truth');
-  const loading = '<div class="stage-msg"><span class="spin"></span><span>Loading STEP…</span></div>';
-  const state = { ours: undefined, truth: undefined };
-  const settle = (promise) => promise.then((value) => ({ value }), (error) => ({ error }));
-  const mount = async (stage, meshes, color) => {
-    const viewer = await createViewer(stage, [{ meshes, color }]);
-    if (stale()) return viewer.dispose();
-    live.viewers.push(viewer);
-    viewer.setView(S.view);
-    return viewer;
-  };
-  const link = () => {  // rotating one view rotates the other
-    const [a, b] = [state.oursViewer, state.truthViewer];
-    if (!a || !b) return;
-    a.onChange((pose) => b.setPose(pose));
-    b.onChange((pose) => a.setPose(pose));
-  };
-
-  if (!ours.url) {
-    state.ours = null;
-    stageMessage(oursStage, ...MISSING[ours.missing]);
-  } else {
-    oursStage.innerHTML = loading;
-    settle(loadStep(ours.url, ours.key)).then(async (result) => {
-      if (stale()) return;
-      state.ours = result;
-      renderMetrics(c, ours, state);
-      if (result.error) return stageMessage(oursStage, 'Not a readable STEP solid', `${result.error.message}. This would score 0.`, true);
-      state.oursViewer = await mount(oursStage, result.value.meshes, COLORS.ours)
-        .catch((e) => stageMessage(oursStage, 'Could not render', e.message, true));
-      link();
-    });
-  }
+function startMeasuring(c) {
+  const id = live.id, state = live.state = { truth: c.truth ? undefined : null, ours: null };
   if (c.truth) {
-    truthStage.innerHTML = loading;
-    settle(loadStep(c.truth.url, `${c.truth.url}?${c.truth.mtime}`)).then(async (result) => {
-      if (stale()) return;
-      state.truth = result;
-      renderMetrics(c, ours, state);
-      if (result.error) return stageMessage(truthStage, 'Could not read the ground truth .stp', result.error.message, true);
-      state.truthViewer = await mount(truthStage, result.value.meshes, COLORS.expected)
-        .catch((e) => stageMessage(truthStage, 'Could not render', e.message, true));
-      link();
-    });
+    settle(loadStep(c.truth.url, `${c.truth.url}?${c.truth.mtime}`)).then((m) => { state.truth = m; if (id === live.id) renderMetrics(c, state); });
   }
-  renderMetrics(c, ours, state);
+}
+
+// The ground truth. The practice set has no ground-truth solid: there the window shows the
+// organisers' render of the real part, in the view chosen on the left. Never our own output.
+function renderResult(c) {
+  setHTML($('#result-head'), `<h2><i class="sw truth"></i>Ground truth</h2>${c.truth ? '' : '<span id="truth-label"></span>'}`);
+  if (c.truth) return showModel($('#out'), c.truth.url, `${c.truth.url}?${c.truth.mtime}`, COLORS.truth);
+  const stage = $('#out .stage');
+  if (!$('img.ref', stage)) {
+    stage.innerHTML = c.views.length ? '<img class="ref" alt="Render of the real part">' : '<p class="note">No ground truth</p>';
+  }
+  const img = $('img.ref', stage);
+  if (img && img.dataset.cut !== imageSrc(c, S.image)) { img.dataset.cut = imageSrc(c, S.image); hydrateImages(stage); }
+  if ($('#truth-label')) $('#truth-label').textContent = `render, ${viewLabel(S.image)}`;
+}
+
+// -- side panels: drag the edge to resize ----------------------------------------------------------
+
+const WIDTHS = { left: 330, right: 310 };
+function setWidth(side, width) {
+  const value = Math.round(Math.max(220, Math.min(innerWidth * 0.45, width)));
+  $('#main').style.setProperty(`--${side}`, `${value}px`);
+  try { localStorage.setItem(`panel-${side}`, value); } catch { /* private mode */ }
+}
+for (const side of Object.keys(WIDTHS)) {
+  let saved = null;
+  try { saved = Number(localStorage.getItem(`panel-${side}`)); } catch { /* private mode */ }
+  if (saved) $('#main').style.setProperty(`--${side}`, `${saved}px`);
+}
+document.addEventListener('pointerdown', (event) => {
+  const grip = event.target.closest('.grip');
+  if (!grip) return;
+  event.preventDefault();
+  grip.setPointerCapture(event.pointerId);
+  grip.classList.add('on');
+  const side = grip.dataset.side, box = $('#main').getBoundingClientRect();
+  const move = (e) => setWidth(side, side === 'left' ? e.clientX - box.left : box.right - e.clientX);
+  const done = () => { grip.classList.remove('on'); grip.removeEventListener('pointermove', move); };
+  grip.addEventListener('pointermove', move);
+  grip.addEventListener('pointerup', done, { once: true });
+  grip.addEventListener('pointercancel', done, { once: true });
+});
+document.addEventListener('dblclick', (event) => {
+  const grip = event.target.closest('.grip');
+  if (grip) setWidth(grip.dataset.side, WIDTHS[grip.dataset.side]);
+});
+
+const settle = (promise) => promise.then((data) => data.measured, () => null);
+
+// Called on every render with the solid on screen: measures it again whenever it changes, so the
+// diff follows the slider. With a ground-truth solid the two are also laid on each other.
+function measureOurs(c, model, name = '') {
+  const shown = live, state = live.state;
+  const key = model ? model.key || model.url : '';
+  if (!state) return;
+  if (shown.out === key) {  // the same solid under another step's name
+    if (state.name !== name) { state.name = name; renderMetrics(c, state); }
+    return;
+  }
+  shown.out = key;
+  Object.assign(state, { ours: model ? undefined : null, overlap: null, name });
+  if (model) {
+    const current = () => live === shown && shown.out === key;
+    loadStep(model.url, model.key).then(async (ours) => {
+      if (!current()) return;
+      state.ours = ours.measured;
+      renderMetrics(c, state);
+      if (!c.truth) return;
+      const truth = await loadStep(c.truth.url, `${c.truth.url}?${c.truth.mtime}`);
+      const result = await compare(key, ours, truth);
+      if (current()) { state.overlap = result; renderMetrics(c, state); }
+    }).catch(() => { if (current()) { state.ours = state.ours || null; renderMetrics(c, state); } });
+  }
+  renderMetrics(c, state);
+}
+
+const overlaps = new Map();
+function compare(key, ours, truth) {
+  if (!overlaps.has(key)) {
+    const solid = ({ meshes, measured }) => ({ meshes: meshes.map(({ position, index }) => ({ position, index })), min: measured.min, max: measured.max });
+    overlaps.set(key, new Promise((resolve, reject) => {
+      const id = ++jobId;
+      jobs.set(id, { resolve, reject });
+      worker.postMessage({ id, compare: { a: solid(ours), b: solid(truth) } });
+    }).then((data) => data.overlap));
+    if (overlaps.size > 64) overlaps.delete(overlaps.keys().next().value);
+  }
+  return overlaps.get(key);
 }
 
 function delta(expected, actual) {
-  if (expected == null || actual == null || !isFinite(expected) || !isFinite(actual) || !expected) return '<td class="num muted">–</td>';
-  const pct = (actual - expected) / expected * 100;
-  const level = Math.abs(pct) <= 1 ? 'good' : Math.abs(pct) <= 5 ? 'warn' : 'bad';
-  const mark = { good: '✓', warn: '~', bad: '✗' }[level];
-  const text = Math.abs(pct).toFixed(Math.abs(pct) < 10 ? 2 : 0);
-  return `<td class="num d-${level}">${mark} ${Number(text) === 0 ? '' : pct > 0 ? '+' : '−'}${text} %</td>`;
+  if (expected == null || actual == null || !isFinite(expected) || !isFinite(actual) || !expected) return '<td></td>';
+  const pct = (actual - expected) / expected * 100, abs = Math.abs(pct);
+  const text = abs.toFixed(abs < 10 ? 1 : 0);
+  return `<td class="${abs <= 1 ? 'good' : abs <= 5 ? 'warn' : 'bad'}">${Number(text) === 0 ? '±' : pct > 0 ? '+' : '−'}${text} %</td>`;
 }
 
-function renderMetrics(c, ours, state) {
-  const facts = c.facts || {}, box = facts.bounding_box_mm;
-  const truth = state.truth && state.truth.value && state.truth.value.measured;
-  const mine = state.ours && state.ours.value && state.ours.value.measured;
-  const sorted = (dims) => (dims ? [...dims].sort((a, b) => b - a) : [null, null, null]);
-  const expectedBox = sorted(box ? [box.x, box.y, box.z] : truth && truth.bbox);
-  const mineBox = sorted(mine && mine.bbox);
+function renderMetrics(c, state) {
+  const facts = c.facts || {}, box = facts.bounding_box_mm, ours = state.ours, truth = state.truth;
+  const size = box ? [box.x, box.y, box.z] : (truth && truth.bbox) || [];
+  const volume = facts.volume_mm3 ?? (truth && truth.volume);
   const rows = [
-    ['Longest side', 'mm', expectedBox[0], mineBox[0]],
-    ['Middle side', 'mm', expectedBox[1], mineBox[1]],
-    ['Shortest side', 'mm', expectedBox[2], mineBox[2]],
-    ['Volume', 'cm³', (facts.volume_mm3 ?? (truth && truth.volume)) / 1000, mine && mine.volume / 1000],
-    ['Surface area', 'cm²', (facts.surface_area_mm2 ?? (truth && truth.area)) / 100, mine && mine.area / 100],
+    ...['X', 'Y', 'Z'].map((axis, i) => [`Size ${axis}`, 'mm', size[i], ours && ours.bbox[i]]),
+    ['Volume', 'cm³', volume / 1000, ours && ours.volume / 1000],
+    ['Surface', 'cm²', (facts.surface_area_mm2 ?? (truth && truth.area)) / 100, ours && ours.area / 100],
+    ['Faces', '', facts.faces ?? (truth && truth.faces), ours && ours.faces],
   ];
-  const pending = ours.url && state.ours === undefined;
-  const invalid = state.ours && state.ours.error;
-  const note = pending ? 'measuring…' : invalid ? 'unreadable .stp' : !ours.url ? MISSING[ours.missing][0].toLowerCase() : '';
-  setHTML($('#metrics'), `
-    <div class="metrics">
-      <table>
-        <caption>Size check <span class="muted">— sides sorted by length; ours measured from the mesh (about ±0.5 %)</span></caption>
-        <thead><tr><th></th><th class="num">Ground truth</th><th class="num">Ours</th><th class="num">Difference</th></tr></thead>
-        <tbody>${rows.map(([label, unit, expected, actual]) => `<tr>
-          <th>${label}</th><td class="num">${num(expected)} <small>${unit}</small></td>
-          <td class="num">${actual == null ? `<span class="muted">${note || '–'}</span>` : `${num(actual)} <small>${unit}</small>`}</td>
-          ${delta(expected, actual)}</tr>`).join('')}</tbody>
-      </table>
-    </div>`);
+  // one number for how close the solid is: what the local score uses, and the real overlap
+  const share = (part) => (volume ? ` <small>· ${num(part / volume * 100, 1)} %</small>` : '');
+  const o = state.overlap;
+  const scores = [
+    ours && volume ? ['Volume score', num(Math.min(ours.volume, volume) / Math.max(ours.volume, volume), 3), 'min / max of the two volumes: what tools/eval_hull.py reports'] : null,
+    o ? ['Overlap (IoU)', num(o.iou, 3), `sampled with ${num(o.points)} points`] : null,
+    o ? ['Excess', `${num(o.onlyA / 1000)} <small>cm³</small>${share(o.onlyA)}`, 'in our solid, not in the part; the percentage is of the part\'s volume'] : null,
+    o ? ['Missing', `${num(o.onlyB / 1000)} <small>cm³</small>${share(o.onlyB)}`, 'in the part, not in our solid; the percentage is of the part\'s volume'] : null,
+  ].filter(Boolean);
+  const cell = (value) => (value == null || !isFinite(value) ? '<td class="none">–</td>' : `<td>${num(value)}</td>`);
+  const note = ours === undefined || (ours && c.truth && !o) ? '<p class="note pulse">Measuring…</p>' : '';
+  setHTML($('#diff summary span'), state.name ? `after ${esc(state.name)}` : '');
+  setHTML($('#metrics'), `${scores.length ? `<dl class="kv scores">${scores.map(([label, value, hint]) => `<dt title="${esc(hint)}">${label}</dt><dd>${value}</dd>`).join('')}</dl>` : ''}
+  <table class="metrics">
+    <thead><tr><th></th><th><i class="sw truth"></i>Truth</th><th><i class="sw ours"></i>Ours</th><th>Diff</th></tr></thead>
+    <tbody>${rows.map(([label, unit, expected, actual]) => `<tr><th>${label} <small>${unit}</small></th>${cell(expected)}${cell(actual)}${delta(expected, actual)}</tr>`).join('')}</tbody>
+  </table>${note}`);
 }
 
-// -- steps --------------------------------------------------------------------------------------
+// -- middle: steps ------------------------------------------------------------------------------
 
 function buildTrace(events) {
-  const t = { steps: new Map(), roots: [], logs: [], artifacts: [], start: null, end: null, status: 'running', error: null, last: null };
+  const t = { steps: new Map(), list: [], start: null, end: null, status: 'running', error: null, last: null };
   for (const e of events) {
     if (t.start == null) t.start = e.ts;
     t.last = e.ts;
-    if (e.t === 'case_start') t.start = e.ts;
-    else if (e.t === 'case_end') Object.assign(t, { end: e.ts, status: e.status, error: e.error });
+    if (e.t === 'case_end') Object.assign(t, { end: e.ts, status: e.status, error: e.error });
     else if (e.t === 'step_start') {
-      const step = { ...e, start: e.ts, end: null, status: 'running', children: [], logs: [], artifacts: [] };
+      const parent = t.steps.get(e.parent);
+      const step = { ...e, start: e.ts, end: null, status: 'running', depth: parent ? parent.depth + 1 : 0, logs: [], artifacts: [] };
       t.steps.set(e.id, step);
-      (t.steps.get(e.parent) ? t.steps.get(e.parent).children : t.roots).push(step);
+      t.list.push(step);
     } else if (e.t === 'step_end') {
       const step = t.steps.get(e.id);
       if (step) Object.assign(step, { end: e.ts, status: e.status, output: e.output, metrics: e.metrics, error: e.error });
-    } else if (e.t === 'log') (t.steps.get(e.step) || t).logs.push(e);
-    else if (e.t === 'artifact') (t.steps.get(e.step) || t).artifacts.push(e);
+    } else if (e.t === 'log' && t.steps.get(e.step)) t.steps.get(e.step).logs.push(e);
+    else if (e.t === 'artifact' && e.role !== 'output' && t.steps.get(e.step)) t.steps.get(e.step).artifacts.push(e);
   }
   return t;
 }
@@ -393,170 +626,195 @@ async function fetchTrace(run, name) {
   entry.loading = true;
   try {
     const data = await api(`/api/events?run=${encodeURIComponent(run)}&case=${encodeURIComponent(name)}&after=${entry.events.length}`);
-    if (data.events.length || !entry.loaded) {
-      entry.events.push(...data.events);
-      entry.loaded = true;
-      if (S.runId === run && S.caseName === name) renderSteps(currentCase());
-    }
+    entry.events.push(...data.events);
+    entry.loaded = true;
+    entry.failed = null;
   } catch (error) { entry.failed = error.message; } finally { entry.loading = false; }
+  if (S.runId === run && S.caseName === name) renderSteps(currentCase());
 }
 
-function valueHTML(value, top = true) {
-  if (value == null) return '<span class="muted">none</span>';
-  if (typeof value === 'string') return `<pre>${esc(value)}</pre>`;
-  if (typeof value !== 'object') return `<code>${esc(value)}</code>`;
-  if (top && !Array.isArray(value) && Object.keys(value).length <= 16) {
-    return `<dl class="kv">${Object.entries(value).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${valueHTML(v, false)}</dd>`).join('')}</dl>`;
+const raw = (value) => `<pre>${esc(typeof value === 'string' ? value : JSON.stringify(value, null, 2))}</pre>`;
+const unitOf = (key) => (key.match(/_(cm3|mm3|mm2|mm|deg|px)$/) || [])[1];
+const pretty = (unit) => ({ cm3: 'cm³', mm3: 'mm³', mm2: 'mm²', deg: '°' }[unit] || unit);
+function pairHTML([key, value]) {
+  const unit = unitOf(key);
+  return `<dt>${esc(words(unit ? key.slice(0, -unit.length - 1) : key))}</dt>
+    <dd>${typeof value === 'number' ? num(value, 3) : fmt(value)}${unit ? ` <small>${pretty(unit)}</small>` : ''}</dd>`;
+}
+
+// The .json files a step attached (holes, rounds, pockets): fetched once, drawn as tables
+const attached = new Map();
+function attachedJSON(url) {
+  if (!attached.has(url)) {
+    attached.set(url, undefined);
+    fetch(url).then((r) => r.json()).then((data) => attached.set(url, data), () => attached.set(url, null))
+      .then(() => renderSteps(currentCase()));
   }
-  return `<pre>${esc(JSON.stringify(value, null, 2))}</pre>`;
+  return attached.get(url);
 }
 
-function artifactsHTML(list, base) {
-  if (!list.length) return '';
-  const item = (a) => {
-    const url = `${base}/${a.path}`;
-    if (/\.(png|jpe?g|gif|webp|svg)$/i.test(a.name)) {
-      return `<button class="art art-img" data-image="${esc(url)}" title="${esc(a.name)}"><img loading="lazy" src="${esc(url)}" alt=""><span>${esc(a.name)}</span></button>`;
-    }
-    const meta = `<span class="muted">${size(a.size)}</span>${a.role === 'output' ? '<span class="tag">final output</span>' : ''}`;
-    if (/\.(stp|step)$/i.test(a.name)) {
-      return `<div class="art art-file"><span class="art-name">${esc(a.name)}</span>${meta}
-        <button class="link" data-step3d="${esc(url)}" data-name="${esc(a.name)}">View 3D</button><a class="link" href="${esc(url)}" target="_blank">Open</a></div>`;
-    }
-    const shown = openText.has(url);
-    return `<div class="art art-file"><span class="art-name">${esc(a.name)}</span>${meta}
-      <button class="link" data-text="${esc(url)}">${shown ? 'Hide' : 'Show'}</button><a class="link" href="${esc(url)}" target="_blank">Open</a>
-      ${shown ? `<pre>${esc(textCache.get(url) ?? 'Loading…')}</pre>` : ''}</div>`;
-  };
-  const images = list.filter((a) => /\.(png|jpe?g|gif|webp|svg)$/i.test(a.name));
-  const others = list.filter((a) => !images.includes(a));
-  return `<h4>Artifacts</h4>${images.length ? `<div class="art-grid">${images.map(item).join('')}</div>` : ''}${others.map(item).join('')}`;
-}
-
-function logsHTML(logs, start) {
-  if (!logs.length) return '';
-  return `<h4>Log</h4><div class="logs">${logs.map((l) => `<div class="log log-${esc(l.level)}">
-    <time>+${duration(l.ts - start)}</time><span>${esc(l.msg)}</span></div>`).join('')}</div>`;
+// What the chosen step took from the inputs: its pictures, its lists, its numbers and what it said
+function detailHTML(s, base, time) {
+  const images = s.artifacts.filter((a) => isImage(a.name));
+  const lists = s.artifacts.filter((a) => /\.json$/i.test(a.name));
+  // the same number is often both in the output (mm3) and in the metrics (cm3): keep the metric
+  const stem = (key) => (unitOf(key) ? key.slice(0, -unitOf(key).length - 1) : key);
+  const named = new Set(Object.keys(s.metrics || {}).map(stem));
+  const pairs = [...Object.entries(s.output && typeof s.output === 'object' ? s.output : {}).filter(([key]) => !named.has(stem(key))),
+    ...Object.entries(s.metrics || {})];
+  const data = [s.input !== undefined ? `<h4>Input</h4>${raw(s.input)}` : '', s.output != null ? `<h4>Output</h4>${raw(s.output)}` : ''].join('');
+  return [
+    s.error ? `<pre class="bad">${esc(s.error)}</pre>` : '',
+    ...images.map((a) => `<button class="art" data-lightbox="${esc(`${base}/${a.path}`)}" title="${esc(a.name)}">
+      <img alt="${esc(a.name)}" src="${esc(`${base}/${a.path}`)}"></button>`),
+    ...lists.map((a) => {
+      const value = attachedJSON(`${base}/${a.path}`);
+      return value == null ? '' : `<h3>${esc(words(a.name.replace(/\.json$/i, '')))}${Array.isArray(value) ? ` <small>${value.length}</small>` : ''}</h3>${tableHTML(value)}`;
+    }),
+    s.logs.length ? `<ul class="said">${s.logs.map((l) => `<li class="${l.level === 'info' ? '' : 'warn'}">${esc(l.msg)}</li>`).join('')}</ul>` : '',
+    `<dl class="kv">${pairs.map(pairHTML).join('')}<dt>Time</dt><dd>${time}</dd></dl>`,
+    data ? `<details class="fold"><summary>Raw</summary>${data}</details>` : '',
+  ].join('');
 }
 
 function renderSteps(c) {
-  const tab = $('#steps'), run = currentRun();
-  if (!tab) return;
-  if (!run) {
-    setHTML(tab, `<p class="muted">No run selected. Press <strong>Run this case</strong>; every <code>trace.step(...)</code>
-      in the agent then shows up here live, with its input, output, logs and files.</p>`);
-    return;
-  }
-  const key = `${run.id}/${c.name}`, entry = traces.get(key);
-  if (!entry || !entry.loaded) {
-    setHTML(tab, entry && entry.failed ? `<p class="empty">Could not load the trace: ${esc(entry.failed)}</p>` : '<p class="empty">Loading trace…</p>');
+  if (!$('#timeline') || !c) return;
+  const run = currentRun(), output = outputOf(c);
+  const truth = c.facts && c.facts.volume_mm3;
+  const rows = [];
+  let note = '', status = '', running = false;
+  if (run) {
+    const key = `${run.id}/${c.name}`, entry = traces.get(key);
     if (!entry) fetchTrace(run.id, c.name);
-    return;
-  }
-  if (!entry.events.length) {
-    setHTML(tab, '<p class="muted">This case is not in the selected run. Pick another run, or press <strong>Run this case</strong>.</p>');
-    return;
-  }
-  const t = buildTrace(entry.events);
-  const running = run.status === 'running' && t.status === 'running';
-  if (!running && t.status === 'running') t.status = 'error';  // the process died mid-case
-  const now = Date.now() / 1000;
-  const end = t.end || (running ? now : t.last);
-  const total = Math.max(end - t.start, 1e-6);
-  const base = `/files/runs/${run.id}/${c.name}`;
-  const all = [...t.steps.values()];
-  if (running && S.follow) {
-    const active = all.filter((s) => !s.end).pop();
-    if (active) open.add(`${key}/${active.id}`);
-  }
-
-  const stepHTML = (s, depth) => {
-    const isOpen = open.has(`${key}/${s.id}`);
-    const status = s.end ? s.status : running ? 'running' : 'interrupted';
-    const stop = s.end || (running ? now : t.last);
-    const left = Math.min((s.start - t.start) / total * 100, 99.5), width = Math.max((stop - s.start) / total * 100, 0.6);
-    const chips = Object.entries(s.metrics || {}).map(([k, v]) => `<span class="chip-m">${esc(k)} <b>${esc(typeof v === 'number' ? num(v, 3) : v)}</b></span>`).join('');
-    const count = s.artifacts.length ? `<span class="chip-m">${s.artifacts.length} file${s.artifacts.length === 1 ? '' : 's'}</span>` : '';
-    let body = '';
-    if (isOpen) {
-      const parts = [
-        s.error ? `<h4>Error</h4><pre class="error">${esc(s.error)}</pre>` : '',
-        s.input !== undefined ? `<h4>Input</h4>${valueHTML(s.input)}` : '',
-        s.end && s.output !== undefined ? `<h4>Output</h4>${valueHTML(s.output)}` : '',
-        s.meta ? `<h4>Meta</h4>${valueHTML(s.meta)}` : '',
-        logsHTML(s.logs, s.start),
-        artifactsHTML(s.artifacts, base),
-      ].join('');
-      body = `<div class="step-body" style="margin-left:${depth * 20 + 30}px">${parts || '<span class="muted">Nothing recorded for this step.</span>'}</div>`;
+    if (!entry || !entry.loaded) note = entry && entry.failed ? `<p class="note bad">Could not load the trace: ${esc(entry.failed)}</p>` : '<p class="note pulse">Loading the trace…</p>';
+    else if (!entry.events.length) note = '<p class="note">Not part of this run.</p>';
+    else {
+      const t = buildTrace(entry.events), base = `/files/runs/${run.id}/${c.name}`;
+      running = run.status === 'running' && t.status === 'running';
+      const now = Date.now() / 1000;
+      const state = running ? 'running' : t.status === 'running' ? 'interrupted' : t.status;
+      status = `<span class="state ${state}">${state}</span> ${duration((t.end || (running ? now : t.last)) - t.start)}`;
+      if (t.error) note = `<pre class="bad">${esc(t.error)}</pre>`;
+      let model = null;
+      t.list.forEach((s, index) => {
+        const stage = s.artifacts.filter((a) => a.role === 'stage' && isStep(a.name)).pop();
+        const before = stage ? model : null;  // only a step that left a new solid removed something
+        if (stage) model = { url: `${base}/${stage.path}` };
+        const m = s.metrics || {}, time = duration((s.end || (running ? now : t.last)) - s.start);
+        const ratio = truth && m.volume_cm3 != null ? m.volume_cm3 * 1000 / truth : null;
+        rows.push({
+          id: s.id, raw: s.name, about: about(s), model, before, changed: Boolean(stage),
+          state: s.end ? s.status : running ? 'running' : 'interrupted',
+          n: String(index + 1).padStart(2, '0'), name: words(s.name.replace(/^cut_/, '')),
+          ratio: ratio == null ? '' : `×${ratio.toFixed(ratio < 10 ? 2 : 1)}`,
+          chips: [
+            m.removed_cm3 ? `<i class="sw ghost"></i>removed ${num(m.removed_cm3)} cm³` : '',
+            ratio != null ? `${num(ratio)} × true volume` : '',
+          ].filter(Boolean).join(' · '),
+          detail: () => detailHTML(s, base, time),
+        });
+      });
+      const last = rows[rows.length - 1];  // the exported file is the last step's solid, tidied
+      if (last && output && !running && t.status === 'ok') Object.assign(last, { model: output, before: null });
+      if (!running) rows.forEach((r) => r.model && loadStep(r.model.url, r.model.key).catch(() => {}));  // warm up, so scrubbing is instant
     }
-    return `<div class="step">
-      <button class="step-row" data-step="${esc(s.id)}" aria-expanded="${isOpen}" style="padding-left:${depth * 20 + 8}px">
-        <span class="caret"></span><span class="kind kind-${esc(s.kind)}">${esc(s.kind)}</span>
-        <span class="step-name">${esc(s.name)}</span><span class="chips">${chips}${count}</span>
-        <span class="wf"><i class="wf-${status}" style="left:${left}%;width:${Math.min(width, 100 - left)}%"></i></span>
-        <span class="dur">${duration(stop - s.start)}</span><span class="st st-${status}">${status}</span>
-      </button>${body}${s.children.map((child) => stepHTML(child, depth + 1)).join('')}</div>`;
-  };
-
-  const failed = all.filter((s) => s.status === 'error').length;
-  setHTML(tab, `
-    <div class="steps-bar">
-      <span class="st st-${t.status}">${esc(t.status)}</span>
-      <span><b>${all.length}</b> step${all.length === 1 ? '' : 's'}</span>
-      ${failed ? `<span class="d-bad"><b>${failed}</b> failed</span>` : ''}
-      <span>total <b>${duration(end - t.start)}</b></span>
-      <span class="muted">started ${clock(t.start)}</span>
-      <span class="spacer"></span>
-      ${running ? `<label class="check"><input type="checkbox" id="follow" ${S.follow ? 'checked' : ''}> Follow live</label>` : ''}
-      <button class="link" data-steps="open">Expand all</button><button class="link" data-steps="close">Collapse all</button>
-    </div>
-    ${t.error ? `<pre class="error">${esc(t.error)}</pre>` : ''}
-    <div class="steps">${t.roots.map((s) => stepHTML(s, 0)).join('') || '<p class="empty">No steps recorded yet.</p>'}</div>
-    ${t.logs.length || t.artifacts.length ? `<div class="case-level"><h3>Outside any step</h3>
-      ${logsHTML(t.logs, t.start)}${artifactsHTML(t.artifacts, base)}</div>` : ''}`);
-}
-
-// -- brief --------------------------------------------------------------------------------------
-
-function markdown(text) {
-  const inline = (line) => esc(line).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/`([^`]+)`/g, '<code>$1</code>');
-  let html = '', list = false;
-  for (const line of text.split('\n')) {
-    const item = line.match(/^\s*[-*]\s+(.*)/), heading = line.match(/^(#{1,4})\s+(.*)/);
-    if (list && !item) { html += '</ul>'; list = false; }
-    if (item) { html += `${list ? '' : '<ul>'}<li>${inline(item[1])}</li>`; list = true; }
-    else if (heading) html += `<h${heading[1].length + 1}>${inline(heading[2])}</h${heading[1].length + 1}>`;
-    else if (line.trim()) html += `<p>${inline(line)}</p>`;
+  } else if (!output) note = '<p class="note">No output yet. Run this case to see its steps.</p>';
+  if (!rows.length && output) {
+    rows.push({ id: 'output', raw: '', about: '', model: output, before: null, changed: true, state: 'ok', n: '', name: 'Output', ratio: '', chips: '',
+      detail: () => (run ? '' : '<p class="note">Run this case to see its steps.</p>') });
   }
-  return html + (list ? '</ul>' : '');
+  if (running && !rows.length) note = '<p class="note pulse">Running…</p>';
+
+  // Which solid is on screen: the chosen step; else the final result, or while the run is still
+  // going the newest step that left a solid
+  const chosen = rows.find((r) => r.id === S.sel) || (running && [...rows].reverse().find((r) => r.changed)) || rows[rows.length - 1];
+  live.rows = rows;
+  live.chosen = chosen ? chosen.id : null;
+  setHTML($('#steps-status'), status);
+  const diff = S.diff && c.truth ? { url: c.truth.url, key: `${c.truth.url}?${c.truth.mtime}` } : null;
+  const legend = '<i class="sw ours"></i>as the part · <i class="sw excess"></i>too much under this face · <i class="sw missing"></i>missing';
+  setHTML($('#stage-label'), chosen ? `<span class="n">${chosen.n}</span><b>${esc(chosen.name)}</b><span class="chips">${diff ? legend : chosen.chips}</span>` : '');
+  setHTML($('#steps-note'), note);
+  renderTimeline(rows, chosen);
+  const detail = chosen ? chosen.detail() : '';
+  setHTML($('#step-detail'), detail);
+  setHTML($('#extracted summary span'), detail && chosen ? esc(chosen.name) : '');
+  measureOurs(c, chosen && chosen.model, chosen ? chosen.name : '');
+  const first = rows.find((r) => r.model);
+  showModel($('#ours'), chosen && chosen.model && chosen.model.url, chosen && chosen.model && chosen.model.key, COLORS.ours,
+    note ? '' : `<p class="note">${running ? 'Waiting for the first solid…' : 'No solid to show yet.'}</p>`,
+    { before: chosen && chosen.before, frame: run && first ? first.model : null, truth: diff });
 }
 
-// -- overlay (image lightbox, 3D preview, test results) -------------------------------------------
-
-let overlayViewer = null;
-function closeOverlay() {
-  if (overlayViewer) overlayViewer.dispose();
-  overlayViewer = null;
-  $('#overlay').className = '';
-  $('#overlay').innerHTML = '';
+// One line on what each step does, shown under its stop. A step can bring its own with
+// trace.step(..., description="..."); this list covers the steps the pipeline has today.
+const SIDES = { front_back: 'front and back', right_left: 'right and left', top_bottom: 'top and bottom', iso: 'isometric' };
+const ABOUT = [
+  [/^bounding_box$/, () => 'A box with the facts.json dimensions'],
+  [/^cut_(front_back|right_left|top_bottom|iso)$/, (m) => `Cuts away what the ${SIDES[m[1]]} views show as empty`],
+  [/^retry_(.+)_first$/, (m) => `Cuts again, ${SIDES[m[1]] || words(m[1])} first`],
+  [/^check_views$/, () => 'Compares the solid with the silhouettes'],
+  [/^cut_holes$/, () => 'Cuts the cylindrical holes listed in facts.json'],
+  [/^cut_rounds$/, () => 'Makes square sections round along boss and bore axes'],
+  [/^level_faces$/, () => 'Cuts each flat face down to its lowest level'],
+  [/^shading_depth$/, () => 'Takes pocket depths from the shading of the isometric views'],
+  [/^export_step$/, () => 'Merges coplanar faces and writes the .stp'],
+];
+function about(step) {
+  if (step.meta && step.meta.description) return step.meta.description;
+  for (const [pattern, text] of ABOUT) { const match = step.name.match(pattern); if (match) return text(match); }
+  return '';
 }
-function openOverlay(html) {
-  closeOverlay();
+
+// The steps as a slider. It is rebuilt only when the steps change, so a drag is never interrupted.
+function renderTimeline(rows, chosen) {
+  const timeline = $('#timeline');
+  const signature = JSON.stringify(rows.map((r) => [r.id, r.name, r.state, r.ratio, r.changed, r.about]));
+  if (timeline.dataset.rows !== signature) {
+    timeline.dataset.rows = signature;
+    timeline.innerHTML = rows.length < 2 ? '' : `<div class="track" style="--n:${rows.length}">
+      <div class="rail"><i></i></div>
+      <input type="range" id="scrub" min="0" max="${rows.length - 1}" step="1" aria-label="Pipeline step">
+      ${rows.map((r) => `<button class="stop ${r.changed ? 'cut' : ''}" data-sel="${r.id}" title="${esc(r.name)}${r.ratio ? ` — ${r.ratio} the true volume` : ''}">
+        <i class="dot"></i><span class="name">${esc(r.name)}</span>
+        <span class="v ${r.state === 'ok' ? '' : `state ${r.state}`}">${r.state === 'ok' ? r.ratio : r.state}</span>
+        <span class="about">${esc(r.about)}</span></button>`).join('')}
+    </div>`;
+  }
+  const scrub = $('#scrub');
+  if (!scrub) return;
+  const at = Math.max(0, rows.indexOf(chosen));
+  if (Number(scrub.value) !== at) scrub.value = at;
+  scrub.setAttribute('aria-valuetext', chosen ? chosen.name : '');
+  $('.rail i', timeline).style.width = `${at / (rows.length - 1) * 100}%`;
+  $$('.stop', timeline).forEach((stop, i) => {
+    stop.setAttribute('aria-current', i === at);
+    stop.classList.toggle('done', i <= at);
+  });
+}
+
+// A step that cuts along one view pair shows that view in the input window
+const STEP_VIEW = [[/front|back/, 'view_0_front'], [/right|left/, 'view_3_right'], [/top|bottom/, 'view_4_top'], [/iso/, 'view_6_iso_front_right_top']];
+function selectStep(id) {
+  S.sel = id;
+  renderSteps(currentCase());
+  const row = live.rows.find((r) => r.id === id);
+  const view = row && /^cut_|^retry_/.test(row.raw) && (STEP_VIEW.find(([pattern]) => pattern.test(row.raw)) || [])[1];
+  if (view && $(`[data-image="${view}"]`)) showImage(view, false);
+}
+
+function moveStep(offset) {
+  const index = live.rows.findIndex((r) => r.id === live.chosen);
+  const next = live.rows[Math.max(0, Math.min(live.rows.length - 1, index + offset))];
+  if (next) selectStep(next.id);
+}
+
+// -- overlay ------------------------------------------------------------------------------------
+
+function closeOverlay() { $('#overlay').className = ''; $('#overlay').innerHTML = ''; }
+function openOverlay(src) {
   $('#overlay').className = 'open';
-  $('#overlay').innerHTML = `<div class="dialog" role="dialog" aria-modal="true"><button class="close" data-close aria-label="Close">×</button>${html}</div>`;
-}
-
-async function openStep3D(url, name) {
-  openOverlay(`<h2>${esc(name)}</h2><div class="stage big" id="stage-dialog"><div class="stage-msg"><span class="spin"></span><span>Loading STEP…</span></div></div><p id="dialog-info" class="muted"></p>`);
-  try {
-    const { meshes, measured } = await loadStep(url);
-    const stage = $('#stage-dialog');
-    if (!stage) return;
-    const viewer = await createViewer(stage, [{ meshes, color: COLORS.ours }]);
-    if (!stage.isConnected) return viewer.dispose();
-    overlayViewer = viewer;
-    $('#dialog-info').textContent = `${[...measured.bbox].map((v) => num(v)).join(' × ')} mm · volume ${num(measured.volume / 1000)} cm³ · area ${num(measured.area / 100)} cm² · ${num(measured.triangles, 0)} triangles`;
-  } catch (error) { stageMessage($('#stage-dialog'), 'Not a readable STEP solid', error.message, true); }
+  $('#overlay').innerHTML = `<img src="${esc(src)}" alt="">`;
 }
 
 // -- events -------------------------------------------------------------------------------------
@@ -564,15 +822,14 @@ async function openStep3D(url, name) {
 function render() {
   normalise();
   writeHash();
-  renderTop();
+  renderBar();
   renderMain();
 }
 
 function selectCase(name, datasetId = S.dataset) {
   if (datasetId !== S.dataset) Object.assign(S, { dataset: datasetId, runId: null });
-  S.caseName = name;
+  Object.assign(S, { caseName: name, sel: null, runId: null });  // normalise() picks this case's newest run
   render();
-  if (S.runId) fetchTrace(S.runId, name);
 }
 
 function moveCase(offset) {
@@ -581,92 +838,93 @@ function moveCase(offset) {
 }
 
 document.addEventListener('click', async (event) => {
-  const target = event.target.closest('button, [data-close], a');
-  if (event.target.id === 'overlay' || (target && target.dataset.close !== undefined)) return closeOverlay();
-  if (!target || target.tagName === 'A') return;
+  if (event.target.closest('#overlay')) return closeOverlay();
+  const target = event.target.closest('button');
+  if (!target) return;
   const d = target.dataset;
   if (d.move) return moveCase(Number(d.move));
-  if (d.view) { S.view = d.view; return applyView(); }
-  if (d.image) return openOverlay(`<img class="lightbox" src="${esc(d.image)}" alt="">`);
-  if (d.step3d) return openStep3D(d.step3d, d.name || 'STEP');
-  if (d.step) {
-    const key = `${S.runId}/${S.caseName}/${d.step}`;
-    if (open.has(key)) { open.delete(key); S.follow = false; } else open.add(key);
-    return renderSteps(currentCase());
-  }
-  if (d.steps) {
-    const entry = traces.get(`${S.runId}/${S.caseName}`);
-    const prefix = `${S.runId}/${S.caseName}/`;
-    [...open].filter((k) => k.startsWith(prefix)).forEach((k) => open.delete(k));
-    if (d.steps === 'open' && entry) entry.events.filter((e) => e.t === 'step_start').forEach((e) => open.add(prefix + e.id));
-    else S.follow = false;
-    return renderSteps(currentCase());
-  }
-  if (d.text) {
-    if (openText.has(d.text)) openText.delete(d.text);
-    else {
-      openText.add(d.text);
-      if (!textCache.has(d.text)) {
-        fetch(d.text).then((r) => r.text()).then((text) => {
-          textCache.set(d.text, text.length > 300000 ? `${text.slice(0, 300000)}\n… clipped` : text);
-          renderSteps(currentCase());
-        });
-      }
-    }
-    return renderSteps(currentCase());
-  }
+  if (d.image) return showImage(d.image);
+  if (d.zoom) return zoomBy(Number(d.zoom));
+  if (d.fit !== undefined) return fit();
+  if (d.orbit !== undefined) return toggleOrbit();
+  if (d.ghost !== undefined) return toggleGhost();
+  if (d.faces !== undefined) return toggleFaces();
+  if (d.diff !== undefined) return toggleDiff();
+  if (d.lightbox) return openOverlay(d.lightbox);
+  if (d.sel) return selectStep(d.sel);
   if (d.action === 'run') {
     try {
       const { id } = await api('/api/run', { dataset: S.dataset, only: [S.caseName], target: 'run' });
-      S.runId = id;
-      toast(`Started run ${id}`);
+      started = id;
+      Object.assign(S, { runId: id, sel: null });
       await poll();
-    } catch (error) { toast(error.message, true); }
+    } catch (error) { toast(`Could not start the run: ${error.message}`); }
     return;
   }
-  if (d.action === 'stop') return api('/api/stop', { run: S.runId }).then(poll, (e) => toast(e.message, true));
+  if (d.action === 'stop') return api('/api/stop', { run: S.runId }).then(poll, (e) => toast(`Could not stop the run: ${e.message}`));
+});
+
+document.addEventListener('dblclick', (event) => {
+  if (event.target.id === 'big') openOverlay(event.target.src);
+});
+
+document.addEventListener('input', (event) => {
+  if (event.target.id === 'scrub' && live.rows[event.target.value]) selectStep(live.rows[event.target.value].id);
 });
 
 document.addEventListener('change', (event) => {
   const el = event.target;
   if (el.id === 'case-select') { const [ds, name] = el.value.split('/'); selectCase(name, ds); }
-  else if (el.id === 'run-select') { S.runId = el.value; render(); if (S.runId) fetchTrace(S.runId, S.caseName); }
-  else if (el.id === 'follow') S.follow = el.checked;
+  else if (el.id === 'run-select') {
+    Object.assign(S, { runId: el.value, sel: null });
+    const run = currentRun();  // a run of other cases: go to its first case
+    if (run && run.cases.length && !runCase(run, S.caseName)) S.caseName = run.cases[0].name;
+    render();
+  }
 });
 
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') return closeOverlay();
-  if (event.target.matches('input, select, textarea') || event.metaKey || event.ctrlKey || event.altKey) return;
-  if (event.key === 'j' || event.key === 'ArrowRight') moveCase(1);
-  else if (event.key === 'k' || event.key === 'ArrowLeft') moveCase(-1);
-  else if (/^[1-8]$/.test(event.key)) { S.view = VIEW_NAMES[Number(event.key) - 1]; applyView(); }
+  if (event.target.matches('select, textarea, input:not([type=range])') || event.metaKey || event.ctrlKey || event.altKey) return;
+  if (event.target.matches('input[type=range]') && event.key.startsWith('Arrow')) return;  // the slider moves itself
+  const act = {
+    ArrowRight: () => moveStep(1), ArrowLeft: () => moveStep(-1), ']': () => moveStep(1), '[': () => moveStep(-1),
+    ArrowDown: () => moveCase(1), ArrowUp: () => moveCase(-1),
+    '+': () => zoomBy(1.25), '=': () => zoomBy(1.25), '-': () => zoomBy(0.8), f: fit, 0: fit, t: toggleOrbit, g: toggleGhost, d: toggleDiff, c: toggleFaces,
+  }[event.key] || (/^[1-8]$/.test(event.key) && (() => showImage(VIEW_NAMES[Number(event.key) - 1])));
+  if (!act) return;
+  event.preventDefault();
+  act();
 });
 
 window.addEventListener('hashchange', async () => { readHash(); await ensureCases(); render(); });
 
 // -- polling ------------------------------------------------------------------------------------
 
-let polling = false;
+let polling = false, again = false;
 async function poll() {
-  if (polling) return;
+  if (polling) { again = true; return; }  // the answer on its way may be older than what was just done
   polling = true;
   try {
     const state = await api('/api/state');
-    const finished = S.runs.filter((r) => r.status === 'running').map((r) => r.id);
+    const wasRunning = S.runs.filter((r) => r.status === 'running').map((r) => r.id);
     Object.assign(S, { datasets: state.datasets, runs: state.runs, now: state.now });
     normalise();
-    await ensureCases(finished.some((id) => (S.runs.find((r) => r.id === id) || {}).status !== 'running'));
+    await ensureCases(wasRunning.some((id) => (S.runs.find((r) => r.id === id) || {}).status !== 'running'));
     render();
     const run = currentRun();
     if (run && S.caseName) {
       const entry = traces.get(`${run.id}/${S.caseName}`);
-      const rc = runCase(run, S.caseName);
-      if (!entry || run.status === 'running' || (rc && entry.loaded && !entry.events.length)) fetchTrace(run.id, S.caseName);
+      const pending = entry && entry.loaded && !entry.events.length && runCase(run, S.caseName);
+      if (entry && (run.status === 'running' || pending || wasRunning.includes(run.id))) fetchTrace(run.id, S.caseName);
     }
     document.body.classList.remove('offline');
   } catch (error) {
     document.body.classList.add('offline');
-  } finally { polling = false; }
+  } finally {
+    polling = false;
+    if (again) { again = false; poll(); }
+  }
 }
 
 readHash();
