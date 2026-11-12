@@ -9,7 +9,7 @@ Everything so far is deterministic. No model is called anywhere yet.
 | step | file | status |
 | --- | --- | --- |
 | 1. Visual hull: a box with the `facts.json` dimensions, cut through wherever a view is white (front/back, right/left, top/bottom). Before cutting, each traced outline is rebuilt from straight lines and circular arcs (`outline_fit.py`). A fourth cut along the isometric views is implemented but off since 2026-11-11 | `src/agentic_cad/visual_hull.py`, `src/agentic_cad/outline_fit.py` | committed on `feat/visual-hull` |
-| 2. Holes: every cylindrical hole listed in `facts.json` is cut as a cylinder; a thinner coaxial boss inside a bore is kept | `src/agentic_cad/holes.py` | committed on `feat/visual-hull`, measured (below) |
+| 2. Holes: every cylindrical hole listed in `facts.json` is cut as a cylinder; a thinner coaxial boss inside a bore is kept. A listed hole along x, y or z that both views along its axis show closed, and that as listed would open a line of sight through the solid, is two opposite blind holes given as one span: it is cut as a blind hole from each end, half of the way to where it would break through its wall or meet the other one, the same depth for all holes of the entry (`spans.py`, `HULL_HOLE_SPANS=0` switches it off; committed on `feat/phase0-safe-runs`, measured below) | `src/agentic_cad/holes.py` | committed on `feat/visual-hull`, measured (below) |
 | 3. Rounds: along every boss or bore axis of `facts.json`, where both side views show one strip of the same width centred on the axis, the square the silhouettes left is cut to the circle (revolved fitted outline). Only where `facts.json` lists a boss of that radius there, or the part is a disc seen along the axis and has only lathe faces | `src/agentic_cad/rounds.py` | committed on `feat/visual-hull`, measured (below) |
 | Curved recesses around an axis (runs after step 3, before step 4): seen along a boss or bore axis of `facts.json`, a ring that is flat in our solid but whose tones change in the view is a curved face the side views could not show. If the solid has the start of that face next to the ring, it is fitted (line or circle, the radius snapped to a torus radius of `facts.json`) and carried on under the ring; if not, a cone of each half angle and a torus of each radius listed in `facts.json` are tried and the one the verifier rates highest is kept. A candidate is dropped if its tones, by the renderer's tone table, are more than 10 levels off the view or fit worse than the flat face, or if it would reach through the box (`HULL_SKIP=curved` switches the step off) | `src/agentic_cad/curved.py`, `tone.py`, `tone_tables.npz`, `regions.py` | committed on `feat/visual-hull` (818d5f4), measured (below) |
 | 4. Level faces: in each straight view, an area between the dark lines with the flat tone of a face looking at the camera is one face at one depth. Where it covers several flat levels of our solid, the whole area is cut down to the lowest (if that level covers at least 5 % of the area) | `src/agentic_cad/depth.py` | committed on `feat/visual-hull`, measured (below) |
@@ -266,6 +266,20 @@ Curved recesses (`curved.py`), 2026-11-12:
   The difference is in the complex tier from the top/bottom cut on (0.6935 to 0.7219), which this
   work did not touch; another session was running at the same time, so a cut that timed out in one
   run may have finished in the other. Not looked into.
+
+Blind holes listed as one span (`spans.py`, 2026-11-12):
+
+- Practice 8, hull + holes, as listed against blind, judged at the holes only: inside the discs of
+  the 12 holes in the views along their axes, the pixels where our solid and the view disagree
+  (hole open against material) go from 27508 of 27508 to 0. The whole-part numbers go the other
+  way: volume 1.008 to 1.075 times the true one, verifier 0.718 to 0.694. The through holes had
+  been cancelling excess of the hull (`decisions.md`, Evaluation).
+- Practice 8 through `scripts/main.py`, off against on: 1.002 to 1.067 times the true volume, 275
+  to 333 faces (the part has 306), both files one valid solid.
+- It replaces 12 of the 19 holes of practice 8 and no hole of the other 8 practice parts (78
+  listed holes) or of the 24 eval parts (57 listed holes, cached hulls). The eval set cannot hold
+  such a case (`knowledge.md`), so nothing measures the chosen depth against a ground truth.
+- `artifacts/outputs/test_case_8.stp` is still the old solid.
 
 Verifier on the same 24 parts, 2026-11-11: the ground truth scores 0.96 on average (0.91 to 0.99),
 our steps 1 + 2 solid 0.71, the bounding box 0.24; the ground truth scores at least as high as our

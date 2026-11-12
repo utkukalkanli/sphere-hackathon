@@ -93,10 +93,13 @@ Remove a question when it is answered, and record the answer in `decisions.md` o
   judging ends.
 - **`context.png` is not used.** Is there anything in it worth using? It is absent for some parts.
 - **How deep is a blind hole that `facts.json` lists only as a span?** (2026-11-12, practice 8,
-  `knowledge.md`.) The hole step cuts opposite blind holes as one through hole. Detecting it is
-  clear: the cut opens a line of sight that both views along the axis show closed. Open is what to
-  cut instead: nothing, a blind hole from each end with a guessed depth, or a depth read from the
-  isometric view (it sees the bottom of a hole shallower than about 0.7 diameters). Not built.
+  `knowledge.md`.) `spans.py` cuts a blind hole from each end to half of the room it has (5.05 mm
+  for the d7 holes, 5.94 mm for the d4.2 ones); that is a guess. Known bounds on practice 8: deeper
+  than about 0.7 diameters (the isometric view shows no bottom), and the d7 holes at x 16 and 64
+  have 10.1 mm before they would reach the main bore. Unused: that lower bound, the drill-point
+  cone (59 degrees in `facts.json`), and whether the true volume can fix the depth once the rest
+  of the part is right. The hull's excess on practice 8 (about 7 % of the volume), which the
+  through holes had hidden, is now in the open and not located.
 - **Pockets from lines under our surface: what is left to gain?** (2026-11-12) Lines under our
   surface exist on 7 of the 24 eval parts. Taken now: closed figures and figures that end on
   another line of the view (eval 236, 171). Not pockets at all: the seams of a curved surface our

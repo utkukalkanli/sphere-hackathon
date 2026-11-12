@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 
 from agentic_cad import holes as hl
+from agentic_cad import spans
 from agentic_cad import iso_support
 from agentic_cad import outline_fit as of
 from agentic_cad import pockets
@@ -441,6 +442,15 @@ class VisualHullAgent:
             if not holes:
                 step.log("facts.json lists no cylindrical holes")
                 return solid
+            # a listed span the views show closed is two blind holes, not one through hole
+            try:
+                holes, blind = spans.resolve(solid, holes, case_dir)
+            except Exception as error:
+                blind = []
+                step.log(f"spans.resolve raised {error!r}; the holes are cut as listed")
+            if blind:
+                step.metric(spans_made_blind=len(blind))
+                step.attach("blind_holes.json", blind)
             step.attach("holes.json", [{"diameter": 2 * h.radius, "length": h.length, "centre": h.centre,
                                         "axis": h.axis, "bosses_kept_inside": len(h.keep)} for h in holes])
             # All of them in one operation; if that takes real material away, one facts.json entry at a time

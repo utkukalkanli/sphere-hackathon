@@ -27,12 +27,15 @@ truth. What it holds:
   other. The 8 holes of diameter 7 along Z are listed as 40.2 long, the full height, and the top
   and the bottom view both show a drilled cone bottom there, not white. The 4 holes of diameter
   4.2 along X are listed as 66 long (x 7 to 73, pad face to pad face); the right and left views
-  show a bottom, and the isometric view shows it less than about 3 mm in. The bore of diameter
+  show a bottom. The isometric view shows no bottom in either group, only the wall and its seam
+  (a straight line along the axis, easily taken for the bottom's edge), so the holes are deeper
+  than about 0.7 diameters and nothing says how deep. The bore of diameter
   20 on the same span is two openings into the window, and white in both views. The depth of
   each blind hole is nowhere in `facts.json` or the brief; the brief calls all of them "through".
   Our eval tool (`tools/dataset/part_worker.py`) keeps every stretch of an axis as its own entry,
-  so the eval set has no such case. `holes.py` cuts the whole span: on practice 8 that makes
+  so the eval set has no such case. `holes.py` alone cuts the whole span: on practice 8 that makes
   through holes of all 12, about 12 cm3 of the 121 cm3 part for the 8 large ones alone.
+  `spans.py` now replaces such a span (see `state.md`).
 - **A listed hole that is not white in the views along its axis is not by itself wrong**: on the
   practice set that holds for 12 hole groups (blind bores of 5, 6, 7 among them). The cut is
   wrong where it opens a line of sight through the part that both views along the axis show
