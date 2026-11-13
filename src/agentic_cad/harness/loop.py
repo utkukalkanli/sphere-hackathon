@@ -53,7 +53,8 @@ You have {minutes:.0f} minutes. `./check` prints the time left on every call.
 
 What is here:
 - description.md: the design brief. facts.json: numbers measured from the true part (bounding box, volume, surface area, number of through-holes, every cylindrical hole and boss with its diameter, axis and centre).
-- views/: the eight renders of the true part at full size, 1024 px each (view_0_front.png to view_7_iso_back_left_bottom.png). Read them with read_image at full size: thin walls, small holes and the lines inside the outline show only there. views.png is a small overview of all eight (512 px a view).
+- views.png: the eight renders of the true part on one sheet, 512 px a view. Look at it first.
+- views/: the same eight renders at full size, 1024 px each (view_0_front.png to view_7_iso_back_left_bottom.png). Open one with read_image when you need its detail (thin walls, small holes, lines inside the outline), one or two at a time: every picture you open stays in your context and slows every later step.
 {base_files}
 - ./check <script.py>: runs your script, measures the solid against facts.json and the eight views, prints a report, writes compare.png (every view of the part beside your solid from the same camera, 512 px a view) and compare/<view>.png (one view at full size, the part on the left, your solid on the right) and records the candidate. ./cqpy <file.py> runs any Python file with CadQuery, for experiments.
 {sections}
@@ -334,7 +335,9 @@ class Case:
         task = TASK.format(minutes=max(self.deadline - 20 - time.time(), 60) / 60, **(WITH_BASE if USE_BASE else WITHOUT_BASE))
         if again:
             task += ("\nYou worked on this before and were interrupted. Your scripts are still here; best_part.py is the "
-                     "best checked one so far (if any). Go on from there.\n")
+                     "best checked one so far (if any). Go on from there: run ./check best_part.py and look at "
+                     "compare.png, and open a full-size view only where you need its detail; do not read all "
+                     "the views again.\n")
         log = (self.work / f"agent_{again}.jsonl").open("w")
         errors = (self.work / f"agent_{again}.err").open("w")
         process = subprocess.Popen(
@@ -402,6 +405,7 @@ class Case:
                     break
                 if process.returncode == 0 and max(self.best_score(), self.base_score or 0.0) >= GOOD_ENOUGH:
                     break   # it stopped by itself on a part that leaves next to nothing to gain
+                self.publish()   # the best candidate so far is in the output file before anything starts again
                 time.sleep(min(5.0 * starts, 30.0))
                 process = self.start_agent(starts)
                 starts += 1

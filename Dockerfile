@@ -46,7 +46,7 @@ ENV TRACE=0 \
 # the answer. A pipeline solid with an enclosed void (hidden_void.py) is kept whatever the agent scores: no local
 # score can see a void (practice 6 in e6a6720, parallel without this rule: 0.756 against 0.996).
 # HARNESS_IDLE_SECONDS: an agent silent this long is taken for hung and started again; a step after reading
-# several full-size views can take terra over four minutes.
+# several full-size views took terra over four minutes.
 # HARNESS_GOOD_ENOUGH: an agent that ends with a local score below this is started again, until the time is up.
 ENV HARNESS_EFFORT=medium \
     HARNESS_GOOD_ENOUGH=0.995 \
@@ -54,7 +54,7 @@ ENV HARNESS_EFFORT=medium \
     HARNESS_PERMISSION=danger-full-access \
     HARNESS_SECONDS=2700 \
     HARNESS_IDLE_SECONDS=600
-ENV OPENAI_MODEL=gpt-6.1-terra
+ENV OPENAI_MODEL=gpt-6.1-sol
 # With ANTHROPIC_API_KEY set and no OpenAI key, the agents use Claude with this model:
 ENV ANTHROPIC_MODEL=claude-opus-5-5
 
