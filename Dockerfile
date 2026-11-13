@@ -43,13 +43,13 @@ ENV TRACE=0 \
 # Messages API. In the container the agent's shell is not sandboxed a second time (HARNESS_PERMISSION).
 # HARNESS_PARALLEL=0: the pipeline first, then each case's agent improves the pipeline's solid (base.step). Parallel
 # mode (1) let the agent model from scratch and lost practice 6's inner void (leaderboard 0.756 against 0.996).
-# HARNESS_GOOD_ENOUGH: an agent that ends with a local score below this is started again, until the time is up.
+# HARNESS_GOOD_ENOUGH: at this local score a case's agent is stopped; below it an agent that ends is started again.
 ENV HARNESS_EFFORT=medium \
-    HARNESS_GOOD_ENOUGH=0.995 \
+    HARNESS_GOOD_ENOUGH=0.99 \
     HARNESS_PARALLEL=0 \
     HARNESS_PERMISSION=danger-full-access \
     HARNESS_SECONDS=3000
-ENV OPENAI_MODEL=gpt-6.1-terra
+ENV OPENAI_MODEL=gpt-6.1-sol
 # With ANTHROPIC_API_KEY set and no OpenAI key, the agents use Claude with this model:
 ENV ANTHROPIC_MODEL=claude-opus-5-5
 

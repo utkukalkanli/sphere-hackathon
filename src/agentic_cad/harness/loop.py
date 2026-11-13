@@ -39,7 +39,7 @@ BASH_TIMEOUT_MS = 240000
 MAX_STARTS = int(os.environ.get("HARNESS_MAX_STARTS", 30))   # of one case's agent
 # An agent whose event log has not grown for this long is waiting on a model request that will not
 # come back (five of nine did, for 8 to 13 minutes, in the first full run): it is stopped and started again.
-GOOD_ENOUGH = float(os.environ.get("HARNESS_GOOD_ENOUGH", 0.98))   # local score at which an agent that ends is not restarted
+GOOD_ENOUGH = float(os.environ.get("HARNESS_GOOD_ENOUGH", 0.98))   # local score at which the agent is stopped and not restarted
 # A case whose best local score has not risen for this long is finished: the agent is stopped and the
 # run can end before its deadline. 0 switches this off, and it is off: replayed on the first two runs
 # (practice 55 min, six eval parts 25 min) a plateau of 8 minutes ends the longest agent after 31 and 14
@@ -372,6 +372,11 @@ class Case:
             while time.time() < self.deadline - 10:
                 time.sleep(2.0)
                 self.publish()
+                reached = max(self.best_score(), self.base_score or 0.0)
+                if reached >= GOOD_ENOUGH:
+                    # good enough: the agent is stopped at once, the rest of its time is not spent
+                    self.log(event="good_enough", score=reached, threshold=GOOD_ENOUGH)
+                    break
                 if self.best_score() > best + 0.002:
                     best, risen = self.best_score(), time.time()
                 elif PLATEAU_SECONDS and best > 0 and time.time() - risen > PLATEAU_SECONDS:
