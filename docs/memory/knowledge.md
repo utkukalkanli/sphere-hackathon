@@ -239,6 +239,27 @@ Tiers by our rule (up to 30 faces simple, up to 200 medium): parts 1 to 3, 4 to 
 - `--iou` samples 1500 points. A boolean with the ground truth is exact but fails on some
   complex parts (eval 3, 171).
 
+## Which model drives the agents (2026-11-13, practice set, for the slides)
+
+All runs: the image run exactly as the organisers run it (`--user`, inputs read-only, `team-d.env`), this
+16-core GCP box, local score of `measure.py` (from f0f67de: with edge agreement; earlier runs used the old
+score, which reads higher, so compare only within one score).
+
+| model | mode, budget | result |
+| --- | --- | --- |
+| none (pipeline only) | parallel, 50 min | 945 s: OpenAI credit gone, every agent failed 30 times; mean 0.906 (1 0.988, 2 0.971, 3 0.986, 4 0.910, 5 0.913, 6 0.859, 7 0.773, 8 0.887, 9 0.863). The run stays valid and ends early. |
+| gpt-6.1-terra | pipeline first, 30 min | old score, mean 0.980 |
+| gpt-6-astra | pipeline first, 30 min | old score, mean 0.987; its outputs were committed (leaderboard: see `state.md`) |
+| claude-sonnet-5-5 | parallel, stopped at 13 min | agents beat the pipeline on no part (mean 0.906). It ends its session after about 45 s ("Already good (0.856); I'll stop here … I made no changes"), is restarted, ends again: 14 to 16 starts in 13 minutes on parts 1 to 5. |
+| claude-opus-5-5 | parallel, 50 min, plus the rule "do not end the session early" (2c048aa) | at 13 min mean 0.940, agent's solid on all 9 (4 0.955, 5 0.969, 6 0.958, 8 0.928, 9 0.882); one session each on the hard parts; ends sessions only on parts 1 and 3, saying the part matches the brief exactly. Final numbers: `state.md`. |
+
+- The Claude route (`feat/claude-agents`): `OPENAI_BASE_URL=https://api.anthropic.com` with a Claude key in
+  `OPENAI_API_KEY` and the model in `OPENAI_MODEL`, or `ANTHROPIC_API_KEY`; the harness's `anthropic-messages`
+  route. Anthropic accepts the harness's thinking settings for Sonnet 5.5 and Opus 5.5.
+- How persistent a model is matters more than how fast it is: the harness restarts an agent that ends below
+  `HARNESS_GOOD_ENOUGH`, but at most 30 times a case, so a model that quits early burns its starts and leaves
+  the pipeline's file.
+
 ## Where the loss is, and what did not work
 
 Research round of 2026-11-12: scratch prototypes on cached solids, in
