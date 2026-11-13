@@ -27,8 +27,10 @@ reasons in `decisions.md`.
   2 1.000, 3 1.000, 4 0.990, 5 0.947, 6 0.756, 7 0.830, 8 0.984, 9 0.958), below `e4e4475`'s 0.962: practice 6 alone
   (0.756 against 0.996) costs 0.027 of the mean.
   The OpenAI account is out of credit (2026-11-13 03:45): OpenAI models cannot run now.
-- **Handover file: `team-d.env`** (repo root, git-ignored): `OPENAI_BASE_URL=https://api.anthropic.com`, Claude key, `OPENAI_MODEL=claude-opus-5-5`,
-  `HARNESS_EFFORT=medium`, `HARNESS_SECONDS=3000`, `HARNESS_GOOD_ENOUGH=0.995`. Send it to the organisers by hand at code freeze; CI does not.
+- **Handover file: `team-d.env`** (repo root, git-ignored), since 2026-11-13 05:25: `OPENAI_BASE_URL=` (OpenAI), the new
+  OpenAI key (the old one ran out of credit; the Claude key was overwritten), `OPENAI_MODEL=gpt-6.1-terra`,
+  `HARNESS_PARALLEL=0` (pipeline first), `HARNESS_SECONDS=3000`, `HARNESS_GOOD_ENOUGH=0.995`; the image's defaults
+  match. OpenAI comes first in the code (2512e3b). Send it to the organisers by hand at code freeze; CI does not.
 - **First submission: `fdcc8c6` on `main`** (2026-11-12), this pipeline without `bowls`.
 - Work is on `uzum` (2026-11-12, cut from `main` at fdcc8c6, no upstream; see `decisions.md`). It
   adds the `bowls` step. `nar` and `ananas` score higher by volume on the practice set but are

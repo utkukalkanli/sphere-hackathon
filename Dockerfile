@@ -39,19 +39,18 @@ ENV TRACE=0 \
 # Agent settings, frozen with your commit (README: Configuration). After code freeze, the values in
 # your handed-over <team>.env replace these.
 # The agents are off without OPENAI_API_KEY, which is not in the image: it comes with <team>.env.
-# OPENAI_BASE_URL https://api.anthropic.com: the agents use Claude through Anthropic's Messages API (unset: OpenAI). In the container the agent's shell is not
-# sandboxed a second time (HARNESS_PERMISSION).
-# HARNESS_PARALLEL: every case is modelled by its agent from the brief, facts.json and the views, while the
-# deterministic pipeline works on the same case as a fallback; the solid that scores higher locally is the answer.
+# OPENAI_BASE_URL unset means OpenAI's own endpoint; https://api.anthropic.com means Claude through Anthropic's
+# Messages API. In the container the agent's shell is not sandboxed a second time (HARNESS_PERMISSION).
+# HARNESS_PARALLEL=0: the pipeline first, then each case's agent improves the pipeline's solid (base.step). Parallel
+# mode (1) let the agent model from scratch and lost practice 6's inner void (leaderboard 0.756 against 0.996).
 # HARNESS_GOOD_ENOUGH: an agent that ends with a local score below this is started again, until the time is up.
 ENV HARNESS_EFFORT=medium \
     HARNESS_GOOD_ENOUGH=0.995 \
-    HARNESS_PARALLEL=1 \
+    HARNESS_PARALLEL=0 \
     HARNESS_PERMISSION=danger-full-access \
     HARNESS_SECONDS=3000
-ENV OPENAI_BASE_URL=https://api.anthropic.com \
-    OPENAI_MODEL=claude-opus-5-5
-# With ANTHROPIC_API_KEY set instead, the agents use Claude with this model:
+ENV OPENAI_MODEL=gpt-6.1-terra
+# With ANTHROPIC_API_KEY set and no OpenAI key, the agents use Claude with this model:
 ENV ANTHROPIC_MODEL=claude-opus-5-5
 
 CMD ["python", "scripts/main.py"]
