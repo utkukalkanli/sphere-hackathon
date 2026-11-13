@@ -251,7 +251,7 @@ score, which reads higher, so compare only within one score).
 | gpt-6.1-terra | pipeline first, 30 min | old score, mean 0.980 |
 | gpt-6-astra | pipeline first, 30 min | old score, mean 0.987; its outputs were committed (leaderboard: see `state.md`) |
 | claude-sonnet-5-5 | parallel, stopped at 13 min | agents beat the pipeline on no part (mean 0.906). It ends its session after about 45 s ("Already good (0.856); I'll stop here … I made no changes"), is restarted, ends again: 14 to 16 starts in 13 minutes on parts 1 to 5. |
-| claude-opus-5-5 | parallel, 50 min, plus the rule "do not end the session early" (2c048aa) | at 13 min mean 0.940, agent's solid on all 9 (4 0.955, 5 0.969, 6 0.958, 8 0.928, 9 0.882); one session each on the hard parts; ends sessions only on parts 1 and 3, saying the part matches the brief exactly. Final numbers: `state.md`. |
+| claude-opus-5-5 | parallel, 50 min, plus the rule "do not end the session early" (2c048aa) | 2969 s, exit 0, agent's solid on all 9; mean **0.960** (1 0.993, 2 0.986, 3 0.989, 4 0.970, 5 0.979, 6 0.967, 7 0.849, 8 0.965, 9 0.943); 78 to 132 checks a part; the hard parts used 3 to 8 sessions, parts 1 and 3 hit the 30 starts (they end sessions saying the part matches the brief exactly). At 13 min 0.940, 25 min 0.953, 39 min 0.958. These outputs were committed and submitted (state.md). |
 
 - The Claude route (`feat/claude-agents`): `OPENAI_BASE_URL=https://api.anthropic.com` with a Claude key in
   `OPENAI_API_KEY` and the model in `OPENAI_MODEL`, or `ANTHROPIC_API_KEY`; the harness's `anthropic-messages`
