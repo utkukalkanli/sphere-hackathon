@@ -5,13 +5,6 @@ Remove a question when it is answered and record the answer in `decisions.md`, `
 
 ## Submission (the user decides)
 
-- **When do we make the first submission?** Nothing is on the leaderboard. It takes fresh
-  outputs from the amd64 image and a merge to `main`.
-- **What does the organisers' score measure, and how does it treat an enclosed void?** We assume
-  volume overlap. If it is surface based or counts faces, polygonal outlines and extra faces cost
-  more than we think. A first submission with a score per part would show it: practice 6 near 0.3
-  means volume, 0.55 or more a surface or composite score. Carving the core of a shell and the
-  value of the split step both wait on this.
 - **How fast is the organisers' machine?** Every case has a file whatever happens, but a cut
   that times out or a case that runs out of its share there gives another solid than here. The
   image has not been run since phase 0, and it already differed from the laptop on practice 6, 7
@@ -24,9 +17,6 @@ Remove a question when it is answered and record the answer in `decisions.md`, `
 
 ## The model
 
-- **Which model, and is the endpoint public and up until judging ends?** A teammate serves one
-  on the Brev GPU (branch `feat/llm-cad-agent`). `OPENAI_BASE_URL`, `OPENAI_API_KEY` and
-  `OPENAI_MODEL` are set nowhere. Unmeasured: the time of one request.
 - **Does a served model's proposal raise the overlap?** Needs the endpoint, a hard set with
   ground truth (`tools/find_hard.py`: hull and holes on all 266 parts, needs the user's go), and
   the test: mean IoU up, no part down by more than 0.01, with and without telling the model the

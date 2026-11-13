@@ -14,6 +14,12 @@ Longer accounts of each finding: `git show bda2104:docs/memory/knowledge.md`.
 - After code freeze the organisers run the image on the practice inputs and compare with the
   committed outputs (a mismatch is reviewed by hand), then on the hidden parts. They need
   `<team>.env` with every variable the agent reads.
+- **Run limits, from the organisers (2026-11-12 22:03, Lorenz Plank)**: one hour for the 9 parts
+  together, no limit per part; network access is allowed and hosted LLMs may be called. This
+  overrides the README's 20 minutes. Code freeze is Friday 2026-11-13 08:00.
+- The scoring (kickoff slides): 0.30 volume overlap + 0.30 surface match (at 0.5 to 10 % of part
+  size) + 0.20 dimensions (2 % off loses 10 %, 20 % off loses all) + 0.20 through-holes counted
+  exactly from topology, after a rigid alignment. Each team's best commit counts on the leaderboard.
 
 ## `facts.json`
 
