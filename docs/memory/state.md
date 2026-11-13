@@ -40,17 +40,20 @@ reasons in `decisions.md`.
   `KILL_AFTER` s, image `IMAGE`); runs in `~/runs/index.txt`; dashboard in tmux `ui`, seen via
   `ssh -N -L 8766:localhost:8765 forge-gpu`. No open-weight model has beaten the pipeline on any part
   (`knowledge.md`); the box bills while it is up.
-- **`main` = `62f5742` (2026-11-13 06:26 UTC, branch `feat/terra-parallel`, this session), the code at freeze**:
-  gpt-6.1-sol, parallel mode, `HARNESS_PREFER_AGENT=1` (the agent's best checked candidate always the answer, pipeline
-  only when the agent has none; the user's rule for submissions; unset, the clearly higher local score wins), `outlines.json`/`outlines.py` in each workspace (the straight views' outlines in mm and a
-  CadQuery extrude helper), views.png first and full-size views one or two at a time, a restarted agent resumes from
-  best_part.py, 30 s wait after a rate-limit exit, `HARNESS_IDLE_SECONDS=600`, `HARNESS_SECONDS=2700`.
-  Practice outputs (49759b9): per part the best agent candidate of rehearsals sim4 (sol, 27 min: 1, 3, 5, 9) and sim6
-  (astra, 10 min: 2, 4, 6, 7, 8), local 0.993, 0.987, 0.987, 0.978, 0.972, 0.968, 0.842, 0.941, 0.966.
-  Submissions of this session: 7711dd3 (terra), fbe5fc4 (sol), 49759b9 (best of sol and astra), c165268 (code).
-  Leaderboard: not yet known. `team-d.env` on the CPU box set to match (backup `team-d.env.bak-0611`).
-  The OpenAI org hits its tokens-per-minute limit for gpt-6.1-sol with nine agents (6 of 9 in five minutes).
-  Utku's local `main` on the CPU box (sol, pipeline first, not pushed) is behind.
+- **`main` = `6a07a5f` (2026-11-13 06:32 UTC, branch `feat/terra-parallel`, this session), the code at freeze**:
+  `gpt-6-astra`, parallel mode, `HARNESS_PREFER_AGENT=1` (the agent's best checked candidate always the answer,
+  pipeline only when the agent has none; the user's rule for submissions; unset, the clearly higher local score
+  wins), `HARNESS_STOP_AT_GOOD_ENOUGH=1` with `HARNESS_GOOD_ENOUGH=0.985` (an agent stops once its published candidate
+  reaches it, leaving the rate limit to the others), `HARNESS_SECONDS=1800` (the user: 30 minutes at most),
+  `outlines.json`/`outlines.py` in each workspace (the straight views' outlines in mm and a CadQuery extrude helper),
+  views.png first and full-size views one or two at a time, a restarted agent resumes from best_part.py, 30 s wait
+  after a rate-limit exit, `HARNESS_IDLE_SECONDS=600`. Practice outputs: per part astra's best checked candidate of
+  rehearsal sim6 (10 min), local 0.992, 0.987, 0.987, 0.978, 0.934, 0.968, 0.842, 0.941, 0.964.
+  Why astra: at 10 minutes its mean local score was 0.955 against sol's 0.944 (sol 0.953 at 27), and sol's agents
+  ended on OpenAI's tokens-per-minute limit 5 to 8 times a case (astra 0 to 2); one run each, and the astra run also
+  had the outlines helper. Submissions of this session: 7711dd3 (terra), fbe5fc4 (sol), 49759b9 (best of sol and
+  astra), c165268, 62f5742, 464d93d, 48c2088 (astra), 6a07a5f. Leaderboard: not yet known. `team-d.env` on the CPU
+  box matches the image (backups `team-d.env.bak-*`). Utku's local `main` on the CPU box is behind.
 - **First submission: `fdcc8c6` on `main`** (2026-11-12), this pipeline without `bowls`.
 - Work is on `uzum` (2026-11-12, cut from `main` at fdcc8c6, no upstream; see `decisions.md`). It
   adds the `bowls` step. `nar` and `ananas` score higher by volume on the practice set but are
