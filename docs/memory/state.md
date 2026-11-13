@@ -19,6 +19,13 @@ reasons in `decisions.md`.
   (`HARNESS_ONLY=1 HARNESS_BASE=0`, no pipeline) 0.990. The pipeline gave no measurable benefit there.
 - Mean local score of the nine practice parts against time, pipeline + agents: 0.943 at the start, 0.962 at
   15 minutes, 0.979 at 30, 0.984 at 55. The image's budget is 30 minutes (`HARNESS_SECONDS`).
+- **Agents with the self-hosted Gemma 4 31B FP8 instead of `gpt-6.1-terra`** (2026-11-13 01:04 UTC, pipeline +
+  agents, 9 practice parts, 30 minute budget, 29 min 48 s, image on the 16-core CPU instance, model on the H100
+  with tool calling and 65K context, local score, one run): mean 0.943 to 0.947 (`gpt-6.1-terra`: 0.979 at 30
+  minutes). Only practice 8 was replaced (0.938 to 0.974); 99 checks in all, 35 of them without a valid solid.
+  Best candidates elsewhere: 7 0.872 against the pipeline's 0.842 but 11 holes for 10, so refused; 9 0.910
+  (0.909); 3 0.994 (0.993); 2 0.802; 1 0.593; 6 0.424; 4 none valid. The server takes about 2 full-length
+  requests at once, so 9 agents queue.
 - **First submission: `fdcc8c6` on `main`** (2026-11-12), this pipeline without `bowls`.
 - Work is on `uzum` (2026-11-12, cut from `main` at fdcc8c6, no upstream; see `decisions.md`). It
   adds the `bowls` step. `nar` and `ananas` score higher by volume on the practice set but are
