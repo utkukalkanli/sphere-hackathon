@@ -43,7 +43,9 @@ ENV TRACE=0 \
 # sandboxed a second time (HARNESS_PERMISSION).
 # HARNESS_PARALLEL: every case is modelled by its agent from the brief, facts.json and the views, while the
 # deterministic pipeline works on the same case as a fallback; the solid that scores higher locally is the answer.
+# HARNESS_GOOD_ENOUGH=1: an agent that ends is started again whatever its score, until the time is up.
 ENV HARNESS_EFFORT=medium \
+    HARNESS_GOOD_ENOUGH=1 \
     HARNESS_PARALLEL=1 \
     HARNESS_PERMISSION=danger-full-access \
     HARNESS_SECONDS=3000
