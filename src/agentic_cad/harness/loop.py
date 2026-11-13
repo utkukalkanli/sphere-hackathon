@@ -60,7 +60,7 @@ What is here:
 
 Work in small steps and do not plan at length: a short script checked early teaches more than a long deliberation.
 
-The work: write a CadQuery 2 script, check it, read the report and look at compare.png, improve it, check again; repeat until the time is nearly up. Every checked candidate is recorded and the best one is handed in automatically: there is nothing to submit, and a script that was never checked counts for nothing. Make the first check within three minutes and then check after every change.
+The work: write a CadQuery 2 script, check it, read the report and look at compare.png, improve it, check again; repeat until the time is nearly up. Do not end the session early: an earlier candidate that scores well is no reason to stop, the time is there to beat it. When a change does not help, try another approach (another feature, another way to build the part) instead of stopping. Every checked candidate is recorded and the best one is handed in automatically: there is nothing to submit, and a script that was never checked counts for nothing. Make the first check within three minutes and then check after every change.
 
 The script:
 - `import cadquery as cq`; assign the finished part to `result`, a cq.Workplane holding exactly one solid.{base_script}
