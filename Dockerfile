@@ -42,8 +42,8 @@ ENV TRACE=0 \
 # OPENAI_BASE_URL unset means OpenAI's own endpoint; https://api.anthropic.com means Claude through Anthropic's
 # Messages API. In the container the agent's shell is not sandboxed a second time (HARNESS_PERMISSION).
 # HARNESS_PARALLEL=1: every case's agent starts at once and models the part from the brief, facts.json and the
-# views; the pipeline works on the same case beside it as a fallback, and the solid that scores higher locally is
-# the answer.
+# views; the pipeline works on the same case beside it as a fallback. The agent's best checked candidate is the
+# answer whenever there is one; the pipeline's solid only for a case whose agent has none.
 # HARNESS_IDLE_SECONDS: an agent silent this long is taken for hung and started again; a step after reading
 # several full-size views took terra over four minutes.
 # HARNESS_GOOD_ENOUGH: an agent that ends with a local score below this is started again, until the time is up.

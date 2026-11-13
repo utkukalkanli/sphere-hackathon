@@ -295,9 +295,9 @@ class Case:
             return
         measurement = ms.measure(shape, self.case_dir, verify.observe(self.case_dir))
         self.log(event="pipeline", measurement=ms.summary(measurement))
-        # the agent's solid stays unless the pipeline's is clearly better: the local score is closest to
-        # the real one for a part modelled from the brief
-        if self.source == "agent" and measurement["score"] <= (self.published or 0.0) + MARGIN:
+        # The agent's solid always stays (the user, 2026-11-13: the answer is the agent's output whenever it
+        # has one); the pipeline's is the answer only for a case whose agent has no checked candidate.
+        if self.source == "agent":
             return
         export.publish(copy, self.output_path)
         self.published, self.source, self.base_terms = measurement["score"], "pipeline", measurement["terms"]
@@ -314,17 +314,25 @@ class Case:
             best = json.loads((self.state / "best.json").read_text())
         except Exception:
             return
-        if self.published is None:
-            floor = (self.base_score or 0.0) + MARGIN
-        else:   # its own earlier candidate, or the pipeline's finished solid, which it has to beat clearly
-            floor = self.published + (MARGIN if self.source == "pipeline" else 0.0)
-        if best["score"] <= floor or not export.file_valid(Path(best["path"])):
-            return
-        # the two terms that are measured exactly must not get worse: a wrong hole count or size costs
-        # for certain, what the candidate gains in volume and surface is an estimate
-        terms = best.get("terms") or {}
-        if any(terms.get(name, 0.0) < self.base_terms.get(name, 0.0) - 0.005 for name in ("holes", "dimensions")):
-            return
+        if PARALLEL:
+            # the agent's best checked candidate replaces anything that is not the agent's own (box, pipeline);
+            # after that only a better candidate of its own replaces it
+            if self.source == "agent" and best["score"] <= (self.published or 0.0):
+                return
+            if not export.file_valid(Path(best["path"])):
+                return
+        else:
+            if self.published is None:
+                floor = (self.base_score or 0.0) + MARGIN
+            else:   # its own earlier candidate, or the pipeline's finished solid, which it has to beat clearly
+                floor = self.published + (MARGIN if self.source == "pipeline" else 0.0)
+            if best["score"] <= floor or not export.file_valid(Path(best["path"])):
+                return
+            # the two terms that are measured exactly must not get worse: a wrong hole count or size costs
+            # for certain, what the candidate gains in volume and surface is an estimate
+            terms = best.get("terms") or {}
+            if any(terms.get(name, 0.0) < self.base_terms.get(name, 0.0) - 0.005 for name in ("holes", "dimensions")):
+                return
         export.publish(Path(best["path"]), self.output_path)
         self.published, self.source = best["score"], "agent"
         self.claim()
