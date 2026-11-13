@@ -12,3 +12,6 @@ datasets
 ui
 runs
 .venv-cq
+
+# Extra practice inputs: not needed by the agent
+artifacts/extended-practice
