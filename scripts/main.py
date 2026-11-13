@@ -33,8 +33,8 @@ MIN_CASE_SECONDS = 5.0
 # The agents (src/agentic_cad/harness, one per case, only with OPENAI_API_KEY and OPENAI_MODEL) start on a
 # case when the pipeline is done with it and work until this many seconds after the start of the run.
 # Their best candidate replaces a case's file while they work, so a run stopped earlier keeps what it has.
-# The organisers allow one hour for the nine parts together (2026-11-12); the image sets 50 minutes, ten
-# left for a slower machine (practice, mean local score 0.979 at 30 minutes, 0.984 at 55).
+# The organisers allow one hour for the nine parts together (2026-11-12); the image sets 30 minutes
+# (practice with gpt-6.1-terra, mean local score 0.979 at 30 minutes, 0.984 at 55).
 HARNESS_SECONDS = float(os.environ.get("HARNESS_SECONDS", 19 * 60))
 # HARNESS_ONLY=1: no pipeline at all. Every case keeps its bounding box and its agent starts at once
 # (with HARNESS_BASE=0 it is not shown the box either): the agents on their own.
