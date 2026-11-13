@@ -53,9 +53,9 @@ You have {minutes:.0f} minutes. `./check` prints the time left on every call.
 
 What is here:
 - description.md: the design brief. facts.json: numbers measured from the true part (bounding box, volume, surface area, number of through-holes, every cylindrical hole and boss with its diameter, axis and centre).
-- views/: eight renders of the true part; views.png shows all eight in one picture. Look at it first.
+- views/: the eight renders of the true part at full size, 1024 px each (view_0_front.png to view_7_iso_back_left_bottom.png). Read them with read_image at full size: thin walls, small holes and the lines inside the outline show only there. views.png is a small overview of all eight (512 px a view).
 {base_files}
-- ./check <script.py>: runs your script, measures the solid against facts.json and the eight views, prints a report, writes compare.png (every view of the part beside your solid from the same camera) and records the candidate. ./cqpy <file.py> runs any Python file with CadQuery, for experiments.
+- ./check <script.py>: runs your script, measures the solid against facts.json and the eight views, prints a report, writes compare.png (every view of the part beside your solid from the same camera, 512 px a view) and compare/<view>.png (one view at full size, the part on the left, your solid on the right) and records the candidate. ./cqpy <file.py> runs any Python file with CadQuery, for experiments.
 {sections}
 
 Work in small steps and do not plan at length: a short script checked early teaches more than a long deliberation.

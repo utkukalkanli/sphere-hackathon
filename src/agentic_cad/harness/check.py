@@ -121,6 +121,9 @@ def main() -> int:
     measurement = ms.measure(shape, case_dir, observed)
     try:
         (workspace / "compare.png").write_bytes(ms.compare_sheet(measurement, observed))
+        (workspace / "compare").mkdir(exist_ok=True)
+        for name, picture in ms.compare_views(measurement, observed).items():
+            (workspace / "compare" / f"{name}.png").write_bytes(picture)
     except Exception:
         pass
     record = {"index": index, "score": measurement["score"], "path": str(final), "measurement": ms.summary(measurement)}
@@ -134,7 +137,8 @@ def main() -> int:
         verdict = f"Not better than check {best['index']} ({best['score']:.3f}); that one stays your best (best_part.py)."
     print(ms.feedback(measurement))
     print(verdict + " compare.png shows every view of the part beside your solid from the same camera "
-          "(red: your material outside the part's outline, blue: outline you do not fill)." + tail)
+          "(red: your material outside the part's outline, blue: outline you do not fill); compare/<view>.png "
+              "shows one view at full size." + tail)
     return 0
 
 

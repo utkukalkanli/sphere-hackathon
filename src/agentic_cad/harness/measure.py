@@ -29,7 +29,7 @@ from agentic_cad import verify
 from agentic_cad.hole_count import genus, pinches
 
 AXES = "xyz"
-TILE = 384   # px of one view in a sheet sent to the model
+TILE = 512   # px of one view in a sheet sent to the model
 
 
 def load(path: Path) -> tuple[TopoDS_Shape | None, str]:
@@ -275,3 +275,13 @@ def compare_sheet(m: dict, observed: dict) -> bytes:
             row.append(np.full((TILE, TILE, 3), 255, np.uint8))
         rows.append(np.hstack(row))
     return _png(np.vstack(rows))
+
+
+def compare_views(m: dict, observed: dict) -> dict[str, bytes]:
+    """Each view at full size, the part on the left and the candidate on the right, for a closer look."""
+    out = {}
+    for name, view in observed.items():
+        if name in m["drawings"]:
+            out[name] = _png(np.hstack([_label(view.image[:, :, :3].copy(), f"{name}: the part"),
+                                        _label(_render(m["drawings"][name], view), f"{name}: yours")]))
+    return out

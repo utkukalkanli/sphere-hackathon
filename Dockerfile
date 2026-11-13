@@ -50,7 +50,7 @@ ENV HARNESS_EFFORT=medium \
     HARNESS_GOOD_ENOUGH=0.995 \
     HARNESS_PARALLEL=1 \
     HARNESS_PERMISSION=danger-full-access \
-    HARNESS_SECONDS=3000
+    HARNESS_SECONDS=2700
 ENV OPENAI_MODEL=gpt-6.1-terra
 # With ANTHROPIC_API_KEY set and no OpenAI key, the agents use Claude with this model:
 ENV ANTHROPIC_MODEL=claude-opus-5-5
