@@ -379,12 +379,52 @@ Dashboard:
   Without the wall, depth and nesting conditions the same rule cut into the part on eval 9 (a groove around a boss:
   73 to 96 % of the cut was material), 33 and 189 (chamfers) (`tools/seen_mouths/find.py` prints the share against
   the ground truth).
+- **The harness's local score of the pipeline's solid tells which parts need no agent** (fixed 24 eval parts, pipeline
+  alone of `main` 017b8a1, against `tools/score_truth.py` run with `datasets/.venv`, which has CadQuery). With the
+  local score on `main` at e6a6720 (Utku's `edges` term, the square root of the views' mean `lines`, 2026-11-13):
+  every part at 0.968 or more (10 of 24) scores 0.986 to 0.999 against the truth, with no part between 0.964 and
+  0.972; at 0.95 or more 12 of 24, truth 0.969 to 0.999 (212: 0.964, truth 0.969); under 0.95 come 110 (0.946, truth
+  0.903) and 38 (0.944, 0.938). At 0.985 only 4 of 24 are gated (truth 0.995 to 0.998). The calibration has to be
+  redone whenever `measure.py` changes how it scores (it was 0.98 with the score before e6a6720).
 - **A pretrained single-image depth model does not know the depths we get wrong** (Depth Anything V2 Large, 24 eval
   parts, six straight views, `tools/depth_spike/`): fitted to our own solid its error on the pixels where we are
   more than 2 % off is 19.7 % of the part's mean extent against our 19.0 %, fitted to the truth 12.6 %; on the
   pixels where we are right it adds 5 %. 144 views take 16 s.
 - **The served model's step as it is on `main`** (Gemma 4 31B, 24 eval parts, four-term local score): 0.911 to
   0.913, 313 s to 694 s; 171 +0.035, 74 +0.026, 110 -0.010, 38 -0.005.
+- **Open-weight models for the agents: quality is the limit, not the GPU** (2026-11-13). Qwen3.5-9B agents alone on
+  the six eval parts: truth 0.677, the box 0.667 (10 to 44 tracebacks a case); vLLM KV 9 %, prefix hit 96 %, about
+  100 tok/s with 6 agents, which mostly wait on `./check`. Independent CAD benchmarks agree that mid-size open models
+  write invalid CadQuery: CADBench (arXiv 2605.10873, one shot from images) valid solids Qwen3.5-27B 0.34, 9B 0.10,
+  Kimi K2.6 0.62, Claude Opus 4.7 0.80; P3D-Bench errors about 55 % wrong numbers, 24 % kernel failures, 16 %
+  undefined CadQuery names. No CAD benchmark covers a model that fits 96 GB of the 2026-08+ generation. CAD
+  specialists (CADEvolve, Cadrille, CAD-Recode, Zero-to-CAD) cannot call tools and fall to IoU 0.04 to 0.10 on
+  renders not their own. Shortlist that fits one card, sizes from the HF API: `Qwen/Qwen3.8-27B` (55.6 GB BF16,
+  vision, Apache), `nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4` (75.0 GB), `meta-models/Muse-Glimmer-30B`
+  (59.6 GB). Out: gpt-oss (text only), Qwen3.5-122B NVFP4 (83.5 GB, no KV room), Qwen3.8-Flash-Next (NVFP4 132.7 GB,
+  only with its n-gram table in host RAM), GLM-4.6V, Gemma 4 31B (vLLM tool-call bugs, CadQueryEval 24 %).
+  Qwen3.5-27B-FP8 agents alone on the same six: 0.714.
+- **Open-model agents look at pictures rarely** (2026-11-13, forge-gpu runs of the 9B and 27B): every case opened a
+  PNG, but 1 to 7 times in 50 to 100 tool calls (dsh `read_image`; `read` on a PNG is an error). `./check` does not
+  hand `compare.png` to the model; the model must ask. Harnesses that do pass images from tools to an
+  OpenAI-compatible endpoint (as a following user message): Qwen Code (`modalities.image=true`), pi, a custom loop;
+  OpenCode does not reliably. Harness choice moves open-model scores by 10 to 25 points in published comparisons;
+  dropping `reasoning_content` between turns cost Qwen3.8-27B about 7 (secondary sources).
+  The pictures the agents are pointed at are downscaled: `views.png` puts the eight 1024 px views at 512 px on one
+  sheet and TASK says to look at it first; `compare.png` uses 384 px a view (`measure.TILE`). The full views are in
+  `views/` and rarely opened. No reason is recorded (from 0619dcb). Eight views at 1024 px cost Qwen about 10k tokens.
+- **Too many agents on one GPU kill them through `HARNESS_IDLE_SECONDS`** (2026-11-13, forge-gpu, vLLM v0.33.0).
+  With 12 agents per GPU, Qwen3.8-27B (BF16, MTP) and Nemotron-3.5-Super-VL NVFP4 gave about 140 tok/s in total each,
+  about 12 an agent (single request: 45 and 67 tok/s). dsh writes nothing until a step ends; after a `read_image` the
+  model thinks longer than 240 s and loop.py kills it as hung (72 kills in 24 agents, 18 agents without one check).
+  vLLM answered every request (no errors). Those runs scored exactly the box alone and exactly the pipeline with the
+  pipeline: they measure the load, not the models. Per-agent speed under the final run's load (9 cases on one
+  endpoint) is what to measure.
+- **dsh keeps every image in the context**: with vLLM's `--limit-mm-per-prompt image=8` an agent's 9th image makes
+  every later request a 400 and the agent dies (Nemotron, 2026-11-13). Serve with a high limit (64).
+- **Qwen3.8-27B does not finish a step after an image** under dsh (vLLM v0.33.0, MTP on, 2026-11-13): one agent
+  alone on the GPU generated for 6 to 12 minutes without ending the step, with thinking on and off (15 to 20 tok/s
+  as the sequence grew). Dropped; Nemotron-3.5-Super-VL NVFP4 ends its steps (about 1400 tokens a step).
 
 - **The later steps stop for time only between their own attempts** (2026-11-12, `uzum`). Level
   faces checked `agent.out_of_time()` once per view, not inside its one-cut-at-a-time loop, and

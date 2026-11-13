@@ -29,6 +29,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import agents  # noqa: E402  (ui/agents.py: what the agents of a harness run are doing)
+
 ROOT = Path(__file__).resolve().parents[1]
 STATIC = Path(__file__).resolve().parent / "static"
 ARTIFACTS = ROOT / "artifacts"
@@ -140,20 +143,26 @@ def eval_scores() -> dict[str, dict]:
         except Exception:
             continue
         if steps and (row["name"] not in best or rank > best[row["name"]][0]):
-            best[row["name"]] = (rank, {"score": row.get("iou", steps[-1]), "steps": steps, "iou": "iou" in row})
+            best[row["name"]] = (rank, {"score": row.get("iou", steps[-1]), "steps": steps, "iou": "iou" in row,
+                                        "at": path.stat().st_mtime, "by": "pipeline"})
     return {name: score for name, (_, score) in best.items()}
 
 
 def run_scores(dataset: str) -> dict[str, dict]:
-    """Volume score after each step of the newest traced run of every case."""
+    """Volume score after each step of the newest traced run of every case, and the newest agent run's result."""
     scores: dict[str, dict] = {}
     for run in list_runs():  # newest first
-        if run.get("dataset") != dataset:
-            continue
         for case in run["cases"]:
+            if case["name"] in scores or (case.get("dataset") or run.get("dataset")) != dataset:
+                continue
+            if run.get("agents"):
+                if case.get("score") is not None:
+                    scores[case["name"]] = {"agent": case["score"], "by": case["by"], "at": run.get("started_at") or 0,
+                                            "hollow": case.get("hollow", False)}
+                continue
             volumes = [s["volume_cm3"] for s in case.get("stages", []) if s.get("volume_cm3")]
-            if volumes and case["name"] not in scores:
-                scores[case["name"]] = {"cm3": volumes}
+            if volumes:
+                scores[case["name"]] = {"cm3": volumes, "at": run.get("started_at") or 0}
     return scores
 
 
@@ -161,12 +170,17 @@ def add_scores(dataset: str, cases: list[dict]) -> list[dict]:
     """`score` per case: 1 is the part itself. The eval cache where it has the case, else the traces."""
     cached = eval_scores() if DATASETS[dataset]["truth"] else {}
     traced = run_scores(dataset)
-    for case in cases:
+    for case in cases:   # the newest result: the eval cache, a traced run or an agent run
         score = cached.get(case["name"])
         true = ((case.get("facts") or {}).get("volume_mm3") or 0) / 1000
-        if score is None and true and case["name"] in traced:
-            steps = [round(min(v, true) / max(v, true), 4) for v in traced[case["name"]]["cm3"]]
-            score = {"score": steps[-1], "steps": steps, "iou": False}
+        found = traced.get(case["name"])
+        if found and (score is None or found["at"] >= score.get("at", 0)):
+            if "agent" in found:
+                score = {"score": found["agent"], "steps": [found["agent"]], "iou": False, "by": found["by"],
+                         "kind": "local", "at": found["at"], "hollow": found.get("hollow", False)}
+            elif true:
+                steps = [round(min(v, true) / max(v, true), 4) for v in found["cm3"]]
+                score = {"score": steps[-1], "steps": steps, "iou": False, "by": "pipeline", "at": found["at"]}
         case["score"] = score
     return cases
 
@@ -275,6 +289,13 @@ def pid_alive(pid) -> bool:
         return False
 
 
+def recently_written(run_dir: Path, seconds: float = 120) -> bool:
+    try:
+        return any(time.time() - p.stat().st_mtime < seconds for p in run_dir.glob("*/events.jsonl"))
+    except OSError:
+        return False
+
+
 def run_summary(run_dir: Path) -> dict | None:
     try:
         info = json.loads((run_dir / "run.json").read_text())
@@ -289,8 +310,8 @@ def run_summary(run_dir: Path) -> dict | None:
             if code is not None:
                 info["status"] = "stopped" if code < 0 else "crashed"
                 info["exit_code"] = code
-        elif not pid_alive(info.get("pid")):
-            info["status"] = "crashed"
+        elif not pid_alive(info.get("pid")) and not recently_written(run_dir):
+            info["status"] = "crashed"   # a run in a container has a pid this machine does not know: its writes tell
     cases = [case_summary(d) for d in run_dir.iterdir() if d.is_dir() and (d / "events.jsonl").is_file()]
     cases.sort(key=lambda c: case_number(c["name"]))
     if info["status"] != "running":
@@ -304,10 +325,124 @@ def run_summary(run_dir: Path) -> dict | None:
 
 
 def list_runs() -> list[dict]:
-    if not RUNS.is_dir():
-        return []
-    runs = [summary for d in RUNS.iterdir() if d.is_dir() and (summary := run_summary(d))]
+    runs = [summary for d in RUNS.iterdir() if d.is_dir() and (summary := run_summary(d))] if RUNS.is_dir() else []
+    linked = set()
+    for run in agent_runs(runs):
+        if run.get("linked"):
+            linked.add(run["linked"])
+        runs.append(run)
+    # a traced run is shown inside the agent run that continued it; one that died before any case is left out
+    runs = [r for r in runs if r["id"] not in linked and (r["cases"] or r["status"] == "running")]
     return sorted(runs, key=lambda r: r.get("started_at") or 0, reverse=True)
+
+
+# -- agent runs (ui/agents.py): listed and read like traced runs ------------------------------------
+
+_facts_index: dict[str, dict[bytes, str]] = {}
+
+
+def case_dataset(unit: Path, case: str) -> str | None:
+    """The set a case of an agent run came from: the one whose facts.json the agent was given."""
+    try:
+        given = (unit / "ws" / "facts.json").read_bytes()
+    except OSError:
+        return None
+    for key, ds in DATASETS.items():
+        try:
+            if (ds["inputs"] / case / "facts.json").read_bytes() == given:
+                return key
+        except OSError:
+            continue
+    return None
+
+
+def true_volume(dataset: str | None, case: str) -> float | None:
+    try:
+        return float(json.loads((DATASETS[dataset]["inputs"] / case / "facts.json").read_text())["volume_mm3"])
+    except Exception:
+        return None
+
+
+def agent_runs(traced: list[dict]) -> list[dict]:
+    result, taken = [], set()   # a traced run continues in one agent run at most
+    for name, folder in agents.run_dirs().items():
+        units = agents.units(folder)
+        if not units:
+            continue
+        now = time.time()
+        cases, datasets, first = [], set(), None
+        for unit in units:
+            if unit.parent != folder:   # several agents on one case: only the first is shown here
+                if any(c["name"] == unit.parent.name for c in cases):
+                    continue
+            a = agents.unit_summary(folder, unit, now)
+            t0 = agents.started_at(unit)
+            first = min(first or t0 or now, t0 or now)
+            dataset = case_dataset(unit, a["case"])
+            datasets.add(dataset)
+            live = a["state"] in agents.LIVE or a["state"] == "waiting"
+            cases.append({"name": a["case"], "unit": unit.relative_to(folder).as_posix(), "dataset": dataset,
+                          "status": "running" if live else "error" if a["state"] == "failed" else "stopped" if a["state"] == "stopped" else "ok",
+                          "current": ("agent: " + (a["doing"]["text"] if a.get("doing") else a["state"])) if live else None,
+                          "started_at": t0, "ended_at": a["ended"], "last_ts": a["ended"] or now,
+                          "score": a["published"] if a["published"] is not None else a["base"],
+                          "by": ("agent" if a["source"] == "agent" else "pipeline") if a["published"] is not None
+                          else "pipeline" if (unit / "ws" / "base.step").is_file() else "box",
+                          "hollow": "void" in (a.get("source") or ""), "stages": []})
+        cases.sort(key=lambda c: case_number(c["name"]))
+        live = any(c["status"] == "running" for c in cases)
+        # the traced run that started the agents: named in the work dir (scripts/main.py), else the only traced run
+        # of the same cases that began up to 15 minutes before them
+        named = (folder / "trace_run").read_text().strip() if (folder / "trace_run").is_file() else None
+        if named:
+            linked = next((r for r in traced if r["id"] == Path(named).name), None)
+        else:   # main.py names both folders by the clock at the start of the run, a moment apart
+            def stamp(name: str) -> float | None:
+                try:
+                    return datetime.strptime(name[:15], "%Y%m%d-%H%M%S").timestamp()
+                except ValueError:
+                    return None
+            ours = stamp(folder.name)
+            near = [r for r in traced if ours is not None and stamp(r["id"]) is not None and 0 <= ours - stamp(r["id"]) <= 1
+                    and r["id"] not in taken and {c["name"] for c in r["cases"]} >= {c["name"] for c in cases}]
+            linked = min(near, key=lambda r: ours - stamp(r["id"])) if near else None
+        if linked:
+            taken.add(linked["id"])
+        known = [d for d in datasets if d]
+        result.append({"id": agents.PREFIX + name, "agents": True, "status": "running" if live else "ok",
+                       "started_at": linked["started_at"] if linked else first,
+                       "ended_at": None if live else max((c["last_ts"] or 0 for c in cases), default=first),
+                       "dataset": known[0] if len(set(known)) == 1 else (linked or {}).get("dataset"),
+                       "linked": linked["id"] if linked else None, "cases": cases, "has_log": False,
+                       "launched_by": "agents",
+                       # stoppable from the dashboard: the container forge_run.sh started for this run
+                       "container": agents.container_of(folder) if live and agents.container_of(folder) in (agents.containers() or set()) else None,
+                       "stopped": any(c["status"] == "stopped" for c in cases)})
+    return result
+
+
+def agent_unit(run_id: str, case: str) -> tuple[Path, dict] | None:
+    folder = agents.run_dirs().get(run_id[len(agents.PREFIX):])
+    run = next((r for r in agent_runs([]) if r["id"] == run_id), None) if folder else None
+    entry = next((c for c in (run or {}).get("cases", []) if c["name"] == case), None)
+    return (folder / entry["unit"], run) if entry else None
+
+
+def agent_events(run_id: str, case: str) -> list[dict]:
+    found = agent_unit(run_id, case)
+    if not found:
+        return []
+    unit, _ = found
+    run = next((r for r in list_runs() if r["id"] == run_id), None) or {}
+    pipeline = None
+    if run.get("linked"):
+        pipeline = read_events(RUNS / run["linked"] / case / "events.jsonl")
+        # the traced run's files, reached from this run's folder
+        for event in pipeline:
+            if event.get("path") and event.get("t") == "artifact":
+                event["path"] = f"../../{run['linked']}/{case}/{event['path']}"
+    dataset = next((c["dataset"] for c in run.get("cases", []) if c["name"] == case), None) or run.get("dataset")
+    return agents.case_events(unit, true_volume(dataset, case), pipeline)
 
 
 def load_dotenv() -> dict[str, str]:
@@ -576,10 +711,24 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_file(safe_join(STATIC, path[len("/static/"):]))
             if path.startswith("/files/"):
                 root, _, rest = path[len("/files/"):].partition("/")
+                if root == "agents":   # a file of an agent's work directory
+                    run, _, rest = rest.partition("/")
+                    return self.send_file(agents.file(run, rest))
+                if root == "runs" and rest.startswith(agents.PREFIX):   # a file of an agent run
+                    run, _, rest = rest.partition("/")
+                    case, _, rest = rest.partition("/")
+                    found = agent_unit(run, case) if NAME_RE.match(case) else None
+                    return self.send_file(agents.file(run[len(agents.PREFIX):], f"{found[0].relative_to(agents.run_dirs()[run[len(agents.PREFIX):]]).as_posix()}/{rest}")
+                                          if found else None)
                 if root not in FILE_ROOTS:
                     return self.send_json({"error": "not found"}, 404)
                 return self.send_file(safe_join(FILE_ROOTS[root], rest),
                                       cache="/inputs/" in path or "/ground_truth/" in path)
+            if path == "/api/agents":
+                return self.send_json(agents.list_runs())
+            if path == "/api/agent":
+                found = agents.detail(query["run"][0], query["agent"][0])
+                return self.send_json(found if found else {"error": "not found"}, 200 if found else 404)
             if path == "/api/state":
                 return self.send_json({"datasets": list_datasets(), "runs": list_runs(), "root": str(ROOT),
                                        "now": time.time()})
@@ -600,6 +749,9 @@ class Handler(BaseHTTPRequestHandler):
                 run, case = query["run"][0], query["case"][0]
                 if not (NAME_RE.match(run) and NAME_RE.match(case)):
                     return self.send_json({"error": "bad name"}, 400)
+                if run.startswith(agents.PREFIX):   # made up anew on every request: stops can come in between
+                    events = agent_events(run, case)
+                    return self.send_json({"events": events, "total": len(events), "replace": True})
                 events = read_events(RUNS / run / case / "events.jsonl")
                 after = int(query.get("after", ["0"])[0])
                 return self.send_json({"events": events[after:], "total": len(events)})
@@ -651,6 +803,9 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send_json({"error": "unknown dataset"}, 400)
                 return self.send_json(start_run(only, body.get("target", "run"), dataset))
             if path == "/api/stop":
+                if run.startswith(agents.PREFIX):   # an agent run: its container
+                    folder = agents.run_dirs().get(run[len(agents.PREFIX):])
+                    return self.send_json({"ok": True, "result": agents.stop_run(folder)} if folder else {"error": "no such run"})
                 proc = PROCS.get(run)
                 if proc and proc.poll() is None:
                     proc.terminate()

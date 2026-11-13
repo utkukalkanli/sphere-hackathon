@@ -196,6 +196,8 @@ def start_harness(args, started: float, names: list[str]):
             return None
         work = HARNESS_DIR / time.strftime("%Y%m%d-%H%M%S")
         work.mkdir(parents=True, exist_ok=True)
+        if os.environ.get("TRACE_RUN_DIR"):   # for the dashboard: which traced run these agents continue
+            (work / "trace_run").write_text(os.environ["TRACE_RUN_DIR"])
         command = [sys.executable, "-m", "agentic_cad.harness.loop", "--input_dir", str(args.input_dir),
                    "--output_dir", str(args.output_dir), "--work_dir", str(work),
                    "--deadline", str(started + HARNESS_SECONDS)]
@@ -267,6 +269,8 @@ def main(args):
     # Records every step under runs/ for the dashboard (ui/); a no-op where it can't write
     with Tracer(meta={"input_dir": args.input_dir, "output_dir": args.output_dir, "workers": workers}) as tracer:
         run_dir = str(tracer.dir) if tracer.dir else None
+        if run_dir:
+            os.environ["TRACE_RUN_DIR"] = run_dir
         jobs = [(tc, str(outputs[tc.name]), run_dir, started, len(order), workers) for tc in order]
         print(f"processing {len(jobs)} test cases, {workers} at a time")
         counter = multiprocessing.get_context("spawn").Value("i", 0)

@@ -89,6 +89,18 @@ kept beside its successor. Older wording: `git show bda2104:docs/memory/decision
 - **The judge lets the outline worsen by 0.2 % of a view's part** (2026-11-12): step 1's
   tolerance, taken over so as not to pick a number on the practice parts.
 
+## Agents
+
+- **Agents start from the inputs, not from the pipeline's solid; the pipeline runs beside them as a fallback**
+  (2026-11-13, user: the pipeline's solid "confuses them"; `HARNESS_PARALLEL=1` on `main`, Utku's). With the base, a
+  Nemotron agent spent 15 minutes inspecting base.step (six checks of `result = base`) and cut nothing. The gate
+  (`HARNESS_GATE`, no agent on a case the pipeline already does well) stays in the code, off: with an hour for nine
+  parts every case gets its agent.
+- **The local score rewards the views' lines, as on `main`** (Utku's f0f67de, fitted to 27 leaderboard scores).
+  This session's own lines term (2026-11-13) was dropped for it. It also showed why the term is needed: a Nemotron
+  agent on eval 171 swapped its featured model for a thin-walled box of the right volume, which the old score
+  ranked higher (0.557 against 0.462).
+
 ## Run safety and time
 
 - **Every case has a valid file from the first second: box first, then only better files**
@@ -139,9 +151,17 @@ kept beside its successor. Older wording: `git show bda2104:docs/memory/decision
 - **Two views and a link** (2026-11-12, user): left the input and ground truth, right our solid,
   "Extracted" floating on the boundary. The left never shows our output. Under them only the
   steps and Diff. What a step does goes in a tooltip, not in text under the slider.
-- **Minimal: black background, little text, no rules or nested frames** (user, several times).
-  The case list stays in number order.
-- **Every case shows the same stops, whether a step ran or not** (2026-11-12, user).
+- **Minimal: black background, little text, no nested frames** (user, several times). The case list stays in
+  number order. **A thin line between panels** (2026-11-13, user: could not tell where a panel starts); the lines
+  are the drag grips, blue on hover.
+- **Only the steps that ran are stops; a skipped or switched-off step has none** (2026-11-13, user, reversing
+  "every case shows the same stops").
+- **An agent's work is steps of the same line, after the pipeline's: one stop per check that gave a solid, in its
+  own colour behind an "agent" border; no page of its own** (2026-11-13, user rejected a separate agents page and
+  then a separate agent panel as "far too confusing").
+- **What runs now lives in a side list at the far left, pipeline and agents alike, above the cases of every set;
+  each case shows its newest result and who made it (P pipeline, A agent, B box); the list can be shut**
+  (2026-11-13, user).
 - **A new step needs no UI change**: `with trace.step(...)` makes a stop. For the stop to exist
   before the step has run, add its trace name to `STEP_NAMES` in `hull_agent.py`; for old traces,
   to `STOPS` in `ui/static/app.js`; its one-line description to `ABOUT` there.

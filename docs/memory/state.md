@@ -27,10 +27,30 @@ reasons in `decisions.md`.
   2 1.000, 3 1.000, 4 0.990, 5 0.947, 6 0.756, 7 0.830, 8 0.984, 9 0.958), below `e4e4475`'s 0.962: practice 6 alone
   (0.756 against 0.996) costs 0.027 of the mean.
   The OpenAI account is out of credit (2026-11-13 03:45): OpenAI models cannot run now.
-- **Handover file: `team-d.env`** (repo root, git-ignored), since 2026-11-13 05:25: `OPENAI_BASE_URL=` (OpenAI), the new
-  OpenAI key (the old one ran out of credit; the Claude key was overwritten), `OPENAI_MODEL=gpt-6.1-terra`,
-  `HARNESS_PARALLEL=0` (pipeline first), `HARNESS_SECONDS=3000`, `HARNESS_GOOD_ENOUGH=0.995`; the image's defaults
-  match. OpenAI comes first in the code (2512e3b). Send it to the organisers by hand at code freeze; CI does not.
+- **Handover file: `team-d.env`** (repo root of the CPU box, git-ignored), since 2026-11-13 06:26: `OPENAI_BASE_URL=`
+  (OpenAI), the new OpenAI key (the old one ran out of credit), `OPENAI_MODEL=gpt-6.1-sol`, `HARNESS_EFFORT=medium`,
+  `HARNESS_SECONDS=2700`, `HARNESS_GOOD_ENOUGH=0.995`, `HARNESS_PARALLEL=1`, `HARNESS_PREFER_AGENT=1`,
+  `HARNESS_IDLE_SECONDS=600`, `HARNESS_PERMISSION=danger-full-access`; it matches the image of `62f5742`. Send it to
+  the organisers by hand at code freeze; CI does not.
+- **Open-weight model box: Brev `forge-gpu`** (org utkukalkanli, `dmz.rtxpro6000x2.pcie`, $6/h, since 2026-11-13
+  01:50 UTC; 2x RTX PRO 6000 96 GB, 64 cores, 2 TB RAM). vLLM v0.33.0 in docker serves
+  `nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4` as `nemotron-super-vl` on both GPUs (ports 8000, 8001,
+  containers `nemo`, `nemo2`), key in `~/vllm.key`, ports not open to the internet. `~/forge_run.sh` runs the image
+  built from an rsync of the working tree, `~/sim_run.sh` the organisers' command (read-only, non-root, killed after
+  `KILL_AFTER` s, image `IMAGE`); runs in `~/runs/index.txt`; dashboard in tmux `ui`, seen via
+  `ssh -N -L 8766:localhost:8765 forge-gpu`. No open-weight model has beaten the pipeline on any part
+  (`knowledge.md`); the box bills while it is up.
+- **`main` = `62f5742` (2026-11-13 06:26 UTC, branch `feat/terra-parallel`, this session), the code at freeze**:
+  gpt-6.1-sol, parallel mode, `HARNESS_PREFER_AGENT=1` (the agent's best checked candidate always the answer, pipeline
+  only when the agent has none; the user's rule for submissions; unset, the clearly higher local score wins), `outlines.json`/`outlines.py` in each workspace (the straight views' outlines in mm and a
+  CadQuery extrude helper), views.png first and full-size views one or two at a time, a restarted agent resumes from
+  best_part.py, 30 s wait after a rate-limit exit, `HARNESS_IDLE_SECONDS=600`, `HARNESS_SECONDS=2700`.
+  Practice outputs (49759b9): per part the best agent candidate of rehearsals sim4 (sol, 27 min: 1, 3, 5, 9) and sim6
+  (astra, 10 min: 2, 4, 6, 7, 8), local 0.993, 0.987, 0.987, 0.978, 0.972, 0.968, 0.842, 0.941, 0.966.
+  Submissions of this session: 7711dd3 (terra), fbe5fc4 (sol), 49759b9 (best of sol and astra), c165268 (code).
+  Leaderboard: not yet known. `team-d.env` on the CPU box set to match (backup `team-d.env.bak-0611`).
+  The OpenAI org hits its tokens-per-minute limit for gpt-6.1-sol with nine agents (6 of 9 in five minutes).
+  Utku's local `main` on the CPU box (sol, pipeline first, not pushed) is behind.
 - **First submission: `fdcc8c6` on `main`** (2026-11-12), this pipeline without `bowls`.
 - Work is on `uzum` (2026-11-12, cut from `main` at fdcc8c6, no upstream; see `decisions.md`). It
   adds the `bowls` step. `nar` and `ananas` score higher by volume on the practice set but are
@@ -298,11 +318,44 @@ image, emulated, took 10.5 minutes at phase 0.
   log and metrics. Below: the steps as one line of stops (name and volume ratio; tooltip with one
   sentence and the solid before and after) and "Diff" (truth, ours, difference; IoU, excess and
   missing volume computed in the browser).
-- Every case shows the same 18 stops; a step that did not run is dimmed as pending, off, skipped
-  or not run; steps outside the plan fold into the stop they happened in.
+- Only the steps that ran are stops; steps outside the plan fold into the stop they happened in. An agent
+  run's checks follow the pipeline's steps as purple stops behind an "agent" border.
 - Keys: D diff colouring (red excess, violet missing), C a colour per face, X section plane, S
   scores panel (per tier, worst first). Case and run lists filter by typing; the run list shows
   the runs of the case on screen with its score.
-- Black background, no rules or nested frames, little text.
+- Black background, little text; a thin line between panels (the drag grips).
+- **Side list** (far left, N; 2026-11-13, uncommitted). There is no top bar any more: the views reach the top; a
+  handle at the left edge opens the list while it is shut. In the list: a search (number or name, `/`), what runs
+  now (pipeline and agents), then the cases of every set (sets fold) with the newest result and its maker (P, A, B);
+  under the chosen case its runs, newest first (the newest opens by itself), and "Run this case". `setHTML` keeps
+  the scroll of everything scrolled inside what it redraws, and open `<details>`; `uv run python ui/check_ui.py`
+  checks that in a real headless Chrome (fake run of 12 agents; fails with the old `setHTML`). Agent runs are runs `agents-<label>-<time>` (`ui/agents.py`,
+  `ui/server.py`) made from `loop.py`'s work dirs, up to two levels under the roots: a pipeline stop (`base.step`),
+  then every agent step as it happened: each check (its `candidate.stp`, or red "failed"), each restart (red,
+  with why), and while the agent works a live "working" stop; bands over the line name the two parts ("pipeline",
+  "agent · <label>").
+  The traced run that started the agents is shown inside the agent run with all its steps: named in
+  `<work>/trace_run` (written by `scripts/main.py` from `TRACE_RUN_DIR`; in the VM's image since 03:50), else the traced
+  run whose id has the same start second (at most 1 s apart, one partner each). Work dirs are read from
+  `AGENT_DIRS`, else `HARNESS_DIR`, `~/runs/harness`, `runs/harness`, `runs/_harness_sample`, `runs/_agents`.
+  In parallel mode the pipeline's finished solid is a "pipeline done" stop, and a finished agent run ends on an
+  "output" stop: the solid the output file holds and its local score, the number the case list shows with its maker
+  (P or A, from the last `published` event's `source`). The runs part lists the runs of the last half hour: live ones
+  with their cases and a Stop button (two presses; `docker stop` of the container forge_run.sh named after the
+  run's label, then a `done` with `stopped` in each case's log), ended ones as one line with their state. A run is
+  live while its container runs; without docker, while any of its files was written in the last 10 minutes (one
+  agent alone can be silent for 15). Tested on forge-gpu with a dummy container. A part the pipeline hollowed ends on "output (hollow)", which
+  says why its lower local score is the better answer (the void rule of feat/terra-parallel). Deployed on forge-gpu (tmux `ui`). Agent stops keep their id (`agent-check3`, `agent-draft7`) and an agent run's events are sent whole on every poll
+  (`replace`), since stops can come in between. Seen in headless Chrome only.
+- **Previews** (`HARNESS_PREVIEW=1`, `harness/loop.py`, 2026-11-13, uncommitted, off by default): every script the
+  agent saves is run in the background with `runner.py` (no measurement, nothing the agent sees) into
+  `<work>/previews/NNN.stp` and `previews.jsonl`; the dashboard shows them as dashed "draft" stops among the checks,
+  so the model can be watched between checks. Tested in the forge-harness image (good, unchanged and broken
+  scripts). In the image since 04:12 UTC; `forge_run.sh` sets `HARNESS_PREVIEW=1` by default. Not yet seen in a real
+  run.
+- **Gate** (`HARNESS_GATE`, `harness/loop.py`, 2026-11-13, uncommitted, off by default): a case whose pipeline solid
+  has at least that local score gets no agent (`gated` in `log.jsonl`, an "agent not needed" stop); skips are logged
+  too. Needs the pipeline on (not `HARNESS_ONLY=1`); the Dockerfile is unchanged. In the `forge-harness` image on
+  forge-gpu since 03:50 UTC, with `HARNESS_GATE=0.985` by default in `forge_run.sh` (`decisions.md`, Agents).
 - Not yet looked at in a browser: the picture zoom controls, the run list per case, the
   "evidence" stop (it has no solid).

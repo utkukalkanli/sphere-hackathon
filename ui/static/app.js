@@ -33,6 +33,7 @@ const ICON = {
   pin: icon('<path d="M8 14s4-4.2 4-7.5a4 4 0 0 0-8 0C4 9.8 8 14 8 14z"/><circle cx="8" cy="6.5" r="1.3"/>'),
   play: icon('<path d="M5 3.5v9l7-4.5z" fill="currentColor"/>'),
   stop: icon('<rect x="4" y="4" width="8" height="8" rx="1" fill="currentColor"/>'),
+  nav: icon('<rect x="2.5" y="3" width="11" height="10" rx="1.5"/><path d="M6.5 3v10"/>'),
 };
 
 const S = {
@@ -50,10 +51,30 @@ let started = null;  // a run just launched here that /api/state may not list ye
 // -- helpers ------------------------------------------------------------------------------------
 
 const htmlCache = new WeakMap();
-function setHTML(element, html) {  // skip identical updates: keeps focus, scroll and open <details> intact
-  if (!element || htmlCache.get(element) === html) return;
+// Where an element sits under `root`, as the index at each level: finds "the same" element after a redraw
+function placeOf(node, root) {
+  const path = [];
+  for (let at = node; at && at !== root; at = at.parentElement) path.unshift([...at.parentElement.children].indexOf(at));
+  return path;
+}
+function atPlace(root, path) {
+  let at = root;
+  for (const i of path) { at = at && at.children[i]; }
+  return at;
+}
+// Puts new HTML in an element and says whether it changed. An identical update is skipped. A real one keeps
+// what the reader had: the scroll of the element and of everything scrolled inside it, and which <details>
+// were open, so a list redrawn by a poll never jumps back to its top.
+function setHTML(element, html) {
+  if (!element || htmlCache.get(element) === html) return false;
   htmlCache.set(element, html);
+  const scrolled = [element, ...element.querySelectorAll('*')].filter((n) => n.scrollTop > 0 || n.scrollLeft > 0)
+    .map((n) => [placeOf(n, element), n.scrollTop, n.scrollLeft]);
+  const open = [...element.querySelectorAll('details[open]')].map((n) => placeOf(n, element));
   element.innerHTML = html;
+  for (const path of open) { const n = atPlace(element, path); if (n && n.tagName === 'DETAILS') n.open = true; }
+  for (const [path, top, left] of scrolled) { const n = atPlace(element, path); if (n) { n.scrollTop = top; n.scrollLeft = left; } }
+  return true;
 }
 
 async function api(path, body) {
@@ -435,7 +456,7 @@ const envelope = (c) => {
 const generic = (c) => !c.title || /^mechanical part$/i.test(c.title) || c.title === c.name;
 
 const caseLabel = (c) => `${c.number} · ${generic(c) ? envelope(c) || c.name : c.title}${c.tier ? ` · ${c.tier}` : ''}`;
-const runLabel = (r) => `${clock(r.started_at)} · ${r.cases.length} case${r.cases.length === 1 ? '' : 's'} · ${r.status}`;
+const runLabel = (r) => `${clock(r.started_at)}${r.agents ? ' · agents' : ''} · ${r.cases.length} case${r.cases.length === 1 ? '' : 's'} · ${r.status}`;
 const noRun = () => (dataset() && dataset().committed ? 'Committed outputs' : 'None');
 const grade = (score) => (score < 0.6 ? 'bad' : score < 0.9 ? 'warn' : '');
 
@@ -501,24 +522,11 @@ function pick(value) {
   render();
 }
 
+// No bar across the top: the side list holds the case, its runs and the run button. What is left floats:
+// the handle that opens the side list while it is shut, and the note when the server is away.
 function renderBar() {
-  const run = currentRun(), current = currentCase();
-  const running = run && run.status === 'running';
-  setHTML($('#bar'), `
-    <div class="group">
-      <button class="icon" data-move="-1" title="Previous case (↑)" aria-label="Previous case">${ICON.prev}</button>
-      <button class="pick" data-menu="case" aria-haspopup="listbox" aria-expanded="${menu === 'case'}" aria-label="Test case"><span>${esc(current ? caseLabel(current) : 'No case')}</span>${ICON.down}</button>
-      <button class="icon" data-move="1" title="Next case (↓)" aria-label="Next case">${ICON.next}</button>
-      <button class="icon" data-scores aria-pressed="${scoresOpen}" title="Scores of all cases, worst first (S)" aria-label="Scores of all cases">${ICON.order}</button>
-    </div>
-    <label class="field"><span>Run</span>
-      <button class="pick" data-menu="run" aria-haspopup="listbox" aria-expanded="${menu === 'run'}" aria-label="Run"><span>${esc(run ? runLabel(run) : noRun())}</span>${ICON.down}</button>
-    </label>
-    <span class="spacer"></span>
-    <span class="offline-note">Dashboard server is not responding</span>
-    ${working().length ? `<button data-active aria-pressed="${!activeShut}" title="The cases being run now (R)" aria-label="The cases being run now"><i class="dot"></i>${working().length}</button>` : ''}
-    ${running && run.launched_by === 'ui' ? `<button data-action="stop">${ICON.stop}Stop</button>` : ''}
-    <button class="primary" data-action="run" title="Run scripts/main.py on this case with tracing">${ICON.play}Run this case</button>`);
+  setHTML($('#bar'), `${navOpen ? '' : `<button class="handle" data-nav title="Show the cases (N)" aria-label="Show the cases">${ICON.next}</button>`}
+    <span class="offline-note">Dashboard server is not responding</span>`);
 }
 
 // -- columns ------------------------------------------------------------------------------------
@@ -904,7 +912,7 @@ function renderMetrics(c, state) {
   const share = (part) => (volume ? ` <small>· ${num(part / volume * 100, 1)} %</small>` : '');
   const o = state.overlap;
   const scores = [
-    ours && volume ? ['Volume score', num(Math.min(ours.volume, volume) / Math.max(ours.volume, volume), 3), 'min / max of the two volumes: what tools/eval_hull.py reports'] : null,
+    ours && volume ? ['Volume only', num(Math.min(ours.volume, volume) / Math.max(ours.volume, volume), 3), 'The chosen solid\'s volume against the part\'s (min / max), measured here: volume alone, not the local score under the stops'] : null,
     o ? ['Overlap (IoU)', num(o.iou, 3), `sampled with ${num(o.points)} points`] : null,
     o ? ['Excess', `${num(o.onlyA / 1000)} <small>cm³</small>${share(o.onlyA)}`, 'in our solid, not in the part; the percentage is of the part\'s volume'] : null,
     o ? ['Missing', `${num(o.onlyB / 1000)} <small>cm³</small>${share(o.onlyB)}`, 'in the part, not in our solid; the percentage is of the part\'s volume'] : null,
@@ -954,7 +962,8 @@ async function fetchTrace(run, name, final = false) {
   entry.loading = true;
   try {
     const data = await api(`/api/events?run=${encodeURIComponent(run)}&case=${encodeURIComponent(name)}&after=${entry.events.length}`);
-    entry.events.push(...data.events);
+    if (data.replace) entry.events = data.events;   // an agent run: its stops are made up anew each time
+    else entry.events.push(...data.events);
     entry.loaded = true;
     entry.failed = null;
     if (final) entry.final = true;
@@ -1042,9 +1051,12 @@ function renderSteps(c) {
       status = `<span class="state ${state}">${state}</span> ${duration((t.end || (running ? now : t.last)) - t.start)}`;
       if (t.error) note = `<pre class="bad">${esc(t.error)}</pre>`;
       let model = null, lastRun = null, volumeWas = '';
-      // Every case shows the same stops: the plan. A step the plan does not list (a retry, a cut
-      // repeated inside a check) is folded into the stop it happened in.
+      // A stop per step that ran, in the order of the plan. A step the plan does not list (a retry, a cut
+      // repeated inside a check) is folded into the stop it happened in; a step of its own that no plan
+      // knows (the pipeline as one stop, each check of an agent) gets a stop after the plan's.
       const plan = fullPlan(t.plan);
+      t.list.filter((x) => !t.steps.get(x.parent) && (x.kind === 'agent' || x.kind === 'pipeline') && !plan.some((p) => p.name === x.name))
+        .forEach((x) => plan.push({ name: x.name }));
       const groups = plan.map(() => []), home = new Map();
       let at = 0, here = 0;
       t.list.forEach((s) => {
@@ -1056,14 +1068,7 @@ function renderSteps(c) {
       });
       plan.forEach((p, index) => {
         const steps = groups[index], s = steps.find((x) => x.name === p.name && home.get(x.id).own && !t.steps.get(x.parent));
-        if (!s) {  // has not run: still to come, switched off, or passed over
-          const state = p.off ? 'off' : index < here || t.skips.has(p.name) ? 'skipped' : running ? 'pending' : 'not run';
-          const why = t.skips.get(p.name) || p.off || { skipped: 'Skipped in this case.', pending: 'Not started yet.', 'not run': 'The case ended before this step.' }[state];
-          rows.push({ id: `plan:${p.name}`, raw: p.name, about: about({ name: p.name }), model, before: null, changed: false, state,
-            n: String(rows.length + 1).padStart(2, '0'), name: words(p.name.replace(/^cut_/, '')), ratio: '', chips: '',
-            detail: () => `<p class="note">${esc(why)}</p>` });
-          return;
-        }
+        if (!s) return;  // has not run: only the steps that ran are shown
         // The stop's solid: what the step itself left, or a folded step that went through with its own cuts
         const root = (x) => { while (t.steps.get(x.parent)) x = t.steps.get(x.parent); return x; };
         const counts = (x) => x === s || (root(x) !== s && root(x).status === 'ok');
@@ -1076,13 +1081,15 @@ function renderSteps(c) {
         const was = volumeWas;
         if (ratio != null) volumeWas = `×${ratio.toFixed(ratio < 10 ? 2 : 1)}`;
         const open = steps.some((x) => !x.end);
+        const agent = s.kind === 'agent', draft = agent && /^draft/.test((s.meta && s.meta.label) || '');
         rows.push({
-          was,
+          was, agent, draft, score: m.local_score, inFile: Boolean(s.meta && s.meta.in_file),
           id: s.id, raw: s.name, about: about(s), model, before, changed: Boolean(stage),
           state: !open ? s.status : running ? 'running' : 'interrupted',
-          n: String(rows.length + 1).padStart(2, '0'), name: words(s.name.replace(/^cut_/, '')),
+          n: String(rows.length + 1).padStart(2, '0'), name: (s.meta && s.meta.label) || words(s.name.replace(/^cut_/, '')),
           ratio: ratio == null ? '' : `×${ratio.toFixed(ratio < 10 ? 2 : 1)}`,
           chips: [
+            m.local_score != null ? `local score ${m.local_score.toFixed(3)}` : '',
             m.removed_cm3 ? `<i class="sw ghost"></i>removed ${num(m.removed_cm3)} cm³` : '',
             ratio != null ? `${num(ratio)} × true volume` : '',
           ].filter(Boolean).join(' · '),
@@ -1092,7 +1099,7 @@ function renderSteps(c) {
         lastRun = rows[rows.length - 1];
       });
       const last = lastRun;  // the exported file is the last step's solid, tidied
-      if (last && output && !running && t.status === 'ok') Object.assign(last, { model: output, before: null });
+      if (last && output && !running && t.status === 'ok') Object.assign(last, { model: output, before: null, final: true });
     }
   } else if (!output) note = '<p class="note">No output yet. Run this case to see its steps.</p>';
   if (!rows.length && output) {
@@ -1103,7 +1110,8 @@ function renderSteps(c) {
 
   // Which solid is on screen: the chosen step; else the final result, or while the run is still
   // going the newest step that left a solid
-  const chosen = rows.find((r) => r.id === S.sel) || (running && [...rows].reverse().find((r) => r.changed)) || [...rows].reverse().find((r) => !r.id.startsWith('plan:')) || rows[rows.length - 1];
+  // the chosen stop; else while running the newest that left a solid, after the run the last that went through
+  const chosen = rows.find((r) => r.id === S.sel) || [...rows].reverse().find((r) => (r.changed || r.final) && (running || r.state === 'ok')) || [...rows].reverse().find((r) => r.model) || rows[rows.length - 1];
   live.rows = rows;
   live.chosen = chosen ? chosen.id : null;
   if (run && !running) {  // warm up behind what is on screen, so scrubbing is instant: the nearest steps first
@@ -1148,6 +1156,9 @@ function fullPlan(given) {
 const SIDES = { front_back: 'front and back', right_left: 'right and left', top_bottom: 'top and bottom', iso: 'isometric' };
 const ABOUT = [
   [/^bounding_box$/, () => 'A box with the facts.json dimensions'],
+  [/^pipeline$/, () => 'The solid the deterministic pipeline made (its steps were not traced in this run)'],
+  [/^agent_/, () => 'A step of the agent'],
+  [/^agent_not_needed$/, () => 'The pipeline scored above the gate, so no agent was started'],
   [/^cut_(front_back|right_left|top_bottom|iso)$/, (m) => `Cuts away what the ${SIDES[m[1]]} views show as empty`],
   [/^retry_(.+)_first$/, (m) => `Cuts again, ${SIDES[m[1]] || words(m[1])} first`],
   [/^check_views$/, () => 'Compares the solid with the silhouettes'],
@@ -1191,15 +1202,20 @@ function layoutTimeline() {
 // The steps as a slider. It is rebuilt only when the steps change, so a drag is never interrupted.
 function renderTimeline(rows, chosen) {
   const timeline = $('#timeline');
-  const signature = JSON.stringify(rows.map((r) => [r.id, r.name, r.state, r.ratio, r.changed, r.about]));
+  const signature = JSON.stringify(rows.map((r) => [r.id, r.name, r.state, r.ratio, r.changed, r.about, r.agent, r.draft, r.score, r.inFile]));
+  // with an agent in the run the stops are grouped under two bands: the deterministic pipeline, then the agent
+  const phased = rows.some((r) => r.agent), run = currentRun();
+  const agentName = run && run.agents ? run.id.replace(/^agents-/, '').replace(/-?\d{8}-\d{6}$/, '') : '';
+  const band = (r, i) => (!phased ? '' : `<span class="phase ${r.agent ? 'agent' : 'pipe'}">${i === 0 || rows[i - 1].agent !== r.agent
+    ? `<b>${r.agent ? `agent${agentName ? ` · ${esc(agentName)}` : ''}` : 'pipeline'}</b>` : ''}</span>`);
   if (timeline.dataset.rows !== signature) {
     timeline.dataset.rows = signature;
-    timeline.innerHTML = rows.length < 2 ? '' : `<div class="track" style="--n:${rows.length}">
+    timeline.innerHTML = rows.length < 2 ? '' : `<div class="track ${phased ? 'phased' : ''}" style="--n:${rows.length}">
       <div class="rail"><i></i></div>
       <input type="range" id="scrub" min="0" max="${rows.length - 1}" step="1" aria-label="Pipeline step">
-      ${rows.map((r) => `<button class="stop ${r.changed ? 'cut' : ''} ${r.state.replace(' ', '-')}" data-sel="${r.id}">
-        <i class="dot"></i><span class="name">${esc(r.name)}</span>
-        <span class="v ${r.state === 'ok' ? '' : `state ${r.state}`}">${r.state === 'ok' ? r.ratio : r.state === 'pending' ? '' : r.state}</span></button>`).join('')}
+      ${rows.map((r, i) => `<button class="stop ${r.changed ? 'cut' : ''} ${r.state.replace(' ', '-')} ${r.agent ? 'agent' : ''} ${r.draft ? 'draft' : ''} ${r.inFile ? 'infile' : ''} ${phased && i && r.agent !== rows[i - 1].agent ? 'turn' : ''}" data-sel="${r.id}">
+        ${band(r, i)}<i class="dot"></i><span class="name">${esc(r.name)}</span>
+        ${r.inFile ? '<span class="file" title="This solid is in the output file now: the case list shows its score">in file</span>' : ''}<span class="v ${r.state === 'ok' ? '' : `state ${r.state}`}">${r.state === 'ok' ? (r.score != null ? r.score.toFixed(3) : r.ratio) : ({ pending: '', error: 'failed', running: 'now' }[r.state] ?? r.state)}</span></button>`).join('')}
     </div>`;
   }
   const scrub = $('#scrub');
@@ -1329,28 +1345,119 @@ function renderScores() {
 }
 let shownFor = null;
 
-// -- running ------------------------------------------------------------------------------------
-// One panel over the right of the big view, there while anything runs, whoever started it: the cases
-// of the runs in progress with the step they are in and the time since they began; the finished ones
-// dimmed, with the time they took. A click goes to that case in that run.
-let activeShut = false;
-const working = () => S.runs.filter((r) => r.status === 'running').flatMap((r) => r.cases.filter((c) => c.status === 'running'));
+// -- side list ----------------------------------------------------------------------------------
+// At the far left, shut and opened with N or the button at the left of the bar. On top whatever runs now,
+// pipeline or agents alike, with the step it is in (finished ones dimmed). Under it the cases of every set,
+// in order of number, with the newest result and who made it: P the pipeline, A an agent.
+let navOpen = localStorage.getItem('nav') !== '0';
+let stopArmed = null;   // a Stop pressed once: { id, until }; a second press within 4 s stops the run
+const navShut = new Set(JSON.parse(localStorage.getItem('nav-shut-sets') || '[]'));
 const stopwatch = (seconds) => (seconds == null || !isFinite(seconds) ? '' : `${Math.floor(Math.max(seconds, 0) / 60)}:${String(Math.floor(Math.max(seconds, 0) % 60)).padStart(2, '0')}`);
-function toggleActive() {
-  activeShut = !activeShut;
+function toggleNav() {
+  navOpen = !navOpen;
+  localStorage.setItem('nav', navOpen ? '1' : '0');
   render();
 }
-function renderActive() {
-  const panel = $('#active');
-  const runs = S.runs.filter((r) => r.status === 'running' && r.cases.length);
-  panel.hidden = activeShut || !runs.length;
-  if (panel.hidden) return;
-  setHTML(panel, runs.map((r) => r.cases.map((c) => {
-    const on = c.status === 'running';
-    return `<button data-live="${esc(r.id)}/${esc(c.name)}" class="${on ? '' : 'done'}" aria-current="${r.id === S.runId && c.name === S.caseName}" title="${esc(clock(r.started_at))}">
-      <i class="${on ? 'dot' : ''}"></i><b>${c.name.replace(/^test_case_/, '')}</b><span>${esc(on ? words(c.current || 'waiting') : c.status === 'error' ? 'failed' : '')}</span><em>${stopwatch((on ? S.now : c.ended_at) - c.started_at)}</em></button>`;
-  }).join('')).join('<hr>'));
+function toggleSet(id) {
+  if (navShut.has(id)) navShut.delete(id); else navShut.add(id);
+  localStorage.setItem('nav-shut-sets', JSON.stringify([...navShut]));
+  render();
 }
+const BY = { pipeline: ['P', 'The pipeline'], agent: ['A', 'An agent'], box: ['B', 'The bounding box'] };
+// The search box stays put while the lists under it are redrawn, so typing is never interrupted; the lists
+// are redrawn only when what they show changes, so a scroll in progress is not cut off.
+function navFrame(nav) {
+  if (nav.querySelector('#nav-filter')) return;
+  nav.innerHTML = `<div class="find"><input id="nav-filter" type="search" autocomplete="off" spellcheck="false" placeholder="Search cases" aria-label="Search cases by number or name">
+      <button class="icon" data-nav title="Hide the cases (N)" aria-label="Hide the cases">${ICON.prev}</button></div>
+    <div id="nav-now"></div><div id="nav-cases"></div>`;
+  const input = nav.querySelector('#nav-filter');
+  input.addEventListener('input', () => renderNav());
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') { input.value = ''; input.blur(); renderNav(); }
+    if (event.key === 'Enter') { const first = nav.querySelector('#nav-cases .row'); if (first) first.click(); }
+    event.stopPropagation();
+  });
+}
+// The runs of a case, newest first: what made them, when, the score of this case in them
+const RUNS_SHOWN = 6;
+// the time of day for a run of today, the day as well for an older one
+function shortClock(ts) {
+  if (!ts) return '';
+  const at = new Date(ts * 1000), time = at.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  return at.toDateString() === new Date().toDateString() ? time : `${at.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} ${time}`;
+}
+let runsAll = false;
+function runRowHTML(r) {
+  const rc = runCase(r, S.caseName) || {};
+  const label = r.agents ? r.id.replace(/^agents-/, '').replace(/-?\d{8}-\d{6}$/, '') || 'agents' : 'pipeline';
+  const value = r.agents ? rc.score : runScore(r);
+  const state = r.status === 'running' ? '<i class="dot"></i>' : r.status === 'ok' ? '' : `<small class="bad">${esc(r.status)}</small>`;
+  return `<button class="run ${r.agents ? 'ag' : ''}" data-run="${esc(r.id)}" aria-current="${r.id === S.runId}" title="${esc(runLabel(r))}">
+    <span>${esc(shortClock(r.started_at))}</span><small>${esc(label)}</small>${state}<em class="${value == null ? '' : grade(value)}">${value == null ? '' : value.toFixed(2)}</em></button>`;
+}
+function runsHTML() {
+  const list = caseRuns(), run = currentRun();
+  const shown = runsAll ? list : list.slice(0, RUNS_SHOWN);
+  return `<div class="runs">${shown.map(runRowHTML).join('')}
+    ${list.length > shown.length ? `<button class="more" data-runs-all>all ${list.length} runs</button>` : ''}
+    <div class="acts">${run && run.status === 'running' && run.launched_by === 'ui' ? `<button data-action="stop">${ICON.stop}Stop</button>` : ''}
+      <button class="primary" data-action="run" title="Run scripts/main.py on this case with tracing">${ICON.play}Run this case</button></div></div>`;
+}
+function renderNav() {
+  document.body.classList.toggle('nav-shut', !navOpen);
+  const nav = $('#side');
+  if (!navOpen) return;
+  navFrame(nav);
+  const words = $('#nav-filter').value.trim().toLowerCase(), number = /^\d+$/.test(words);
+  // the runs of the last half hour, one group per run: the live ones first with a Stop button, then the ones
+  // that ended or were stopped, dimmed; a run's live cases first. The whole part folds like a set.
+  const recent = S.runs.filter((x) => x.cases.length && (x.status === 'running' || (x.ended_at && S.now - x.ended_at < 1800)))
+    .sort((x, y) => (y.status === 'running') - (x.status === 'running') || (y.started_at || 0) - (x.started_at || 0));
+  const live = recent.reduce((n, r) => n + r.cases.filter((c) => c.status === 'running').length, 0);
+  const runShut = navShut.has('running');
+  const groups = recent.map((r) => {
+    const label = r.agents ? r.id.replace(/^agents-/, '').replace(/-?\d{8}-\d{6}$/, '') || 'agents' : 'pipeline';
+    const on = r.status === 'running', state = on ? '' : r.stopped || r.status === 'stopped' ? 'stopped' : r.status === 'ok' ? 'done' : r.status;
+    const stoppable = on && (r.container || r.launched_by === 'ui');
+    const armed = stopArmed && stopArmed.id === r.id && Date.now() < stopArmed.until;
+    const list = [...r.cases].sort((x, y) => (y.status === 'running') - (x.status === 'running'));
+    if (!on) {   // an ended run takes one line; a click opens it
+      return `<button class="grp over" data-live="${esc(r.id)}/${esc(list[0].name)}" aria-current="${r.id === S.runId}" title="${esc(runLabel(r))}">
+        <small class="${r.agents ? 'ag' : ''}">${esc(label)}</small><span>${esc(shortClock(r.started_at))}</span><em>${esc(state)}</em><em>${list.length} case${list.length === 1 ? '' : 's'}</em></button>`;
+    }
+    return `<p class="grp ${on ? '' : 'over'}"><small class="${r.agents ? 'ag' : ''}">${esc(label)}</small><span>${esc(shortClock(r.started_at))}</span>${state ? `<em>${esc(state)}</em>` : ''}
+      ${stoppable ? `<button class="stop-run ${armed ? 'armed' : ''}" data-stop-run="${esc(r.id)}" title="${r.container ? `Stop the container ${esc(r.container)}` : 'Stop this run'}">${armed ? 'Confirm?' : 'Stop'}</button>` : ''}</p>` + list.map((c) => {
+      const going = c.status === 'running';
+      const text = going ? (r.agents && c.current && c.current.startsWith('agent: ') ? c.current.slice(7) : words_(c.current || 'waiting'))
+        : c.status === 'error' ? 'failed' : c.status === 'stopped' ? 'stopped' : 'done';
+      return `<button data-live="${esc(r.id)}/${esc(c.name)}" class="${going ? '' : 'done'}" aria-current="${r.id === S.runId && c.name === S.caseName}">
+        <i class="${going ? 'dot' : ''}"></i><b>${c.name.replace(/^test_case_/, '')}</b><span>${esc(text)}</span><em>${stopwatch((going ? S.now : c.ended_at || r.ended_at) - c.started_at)}</em></button>`;
+    }).join('');
+  }).join('');
+  setHTML($('#nav-now'), recent.length && !words ? `<h4><button data-set="running" aria-expanded="${!runShut}">Runs <small>${live} running</small></button></h4>${runShut ? '' : `<div class="now">${groups}</div>`}` : '');
+  const match = (c) => !words || (number ? String(c.number).startsWith(words) : caseLabel(c).toLowerCase().includes(words));
+  const sets = S.datasets.map((d) => {
+    const list = (S.cases[d.id] || []).filter(match), shut = navShut.has(d.id) && !words;
+    if (words && !list.length) return '';
+    return `<h4><button data-set="${d.id}" aria-expanded="${!shut}">${esc(d.label)} <small>${list.length}</small></button></h4>${shut ? '' : list.map((c) => {
+      const sc = c.score, by = sc && BY[sc.by || 'pipeline'], here = d.id === S.dataset && c.name === S.caseName;
+      return `<button class="row" data-goto="${d.id}/${c.name}" aria-current="${here}" title="${esc(caseLabel(c))}${sc ? ` · ${sc.kind === 'local' ? 'local score' : sc.iou ? 'overlap with the truth' : 'volume score'} ${sc.score.toFixed(3)}${by ? `, made by ${by[1].toLowerCase()}` : ''}${sc.hollow ? '; hollow part: the local score cannot see the void and reads low' : ''}` : ''}">
+        <b>${c.number}</b><span>${esc(generic(c) ? envelope(c) || c.name : c.title)}</span><em class="${sc ? grade(sc.score) : ''}">${sc ? sc.score.toFixed(2) : ''}</em><i class="by ${sc ? sc.by || 'pipeline' : ''}">${by ? by[0] : ''}</i></button>${here ? runsHTML() : ''}`;
+    }).join('')}`;
+  }).join('');
+  const box = $('#nav-cases');
+  setHTML(box, sets || '<p class="note">Nothing found</p>');
+  if (navFor !== `${S.dataset}/${S.caseName}`) {  // follow the chosen case, leave the scroll alone otherwise
+    navFor = `${S.dataset}/${S.caseName}`;
+    runsAll = false;
+    const row = box.querySelector(`[data-goto="${S.dataset}/${S.caseName}"]`);
+    if (row && (row.offsetTop - box.offsetTop < box.clientHeight * 0.6)) box.scrollTop = 0;
+    else if (row) row.scrollIntoView({ block: 'center' });
+  }
+}
+const words_ = (name) => words(name);
+let navFor = null;
 function gotoLive(runId, name) {
   const run = S.runs.find((r) => r.id === runId);
   if (!run) return;
@@ -1365,7 +1472,7 @@ function render() {
   writeHash();
   renderBar();
   renderScores();
-  renderActive();
+  renderNav();
   renderMenu();
   renderMain();
 }
@@ -1401,11 +1508,27 @@ document.addEventListener('click', async (event) => {
   if (d.unmark) return picked('', { pin: marks[Number(d.unmark)] });
   if (d.marks) return d.marks === 'send' ? sendMarks() : clearMarks();
   if (d.scores !== undefined) return toggleScores();
-  if (d.active !== undefined) return toggleActive();
+  if (d.nav !== undefined) return toggleNav();
+  if (d.set) return toggleSet(d.set);
+  if (d.stopRun) {
+    if (!stopArmed || stopArmed.id !== d.stopRun || Date.now() > stopArmed.until) {
+      stopArmed = { id: d.stopRun, until: Date.now() + 4000 };
+      setTimeout(render, 4100);
+      return render();
+    }
+    stopArmed = null;
+    try {
+      const answer = await api('/api/stop', { run: d.stopRun });
+      toast(answer.result && answer.result !== 'stopped' ? `Not stopped: ${answer.result}` : 'Stopped', answer.result === 'stopped' || !answer.result ? 'ok' : '');
+    } catch (error) { toast(`Could not stop the run: ${error.message}`); }
+    return poll();
+  }
+  if (d.run) { Object.assign(S, { runId: d.run, sel: null }); hideTip(); return render(); }
+  if (d.runsAll !== undefined) { runsAll = true; return render(); }
   if (d.live) return gotoLive(d.live.slice(0, d.live.lastIndexOf('/')), d.live.slice(d.live.lastIndexOf('/') + 1));
   if (d.menu) return openMenu(d.menu);
   if (d.pick !== undefined) return pick(d.pick);
-  if (d.goto) return selectCase(d.goto);
+  if (d.goto) { const [set, name] = d.goto.includes('/') ? d.goto.split('/') : [S.dataset, d.goto]; return selectCase(name, set); }
   if (d.diff !== undefined) return toggleDiff();
   if (d.lightbox) return openOverlay(d.lightbox);
   if (d.sel) return selectStep(d.sel);
@@ -1511,14 +1634,18 @@ document.addEventListener('keydown', (event) => {
   }
   if (event.target.dataset && event.target.dataset.note && event.key === 'Enter') { event.preventDefault(); return event.metaKey || event.ctrlKey ? sendMarks() : event.target.blur(); }
   if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && marks.length) return sendMarks();
-  if (event.key === 'Escape') { if (scoresOpen) toggleScores(); return closeOverlay(); }
+  if (event.key === 'Escape') {
+    if (scoresOpen) toggleScores();
+    return closeOverlay();
+  }
   if (event.target.matches('select, textarea, input:not([type=range])') || event.metaKey || event.ctrlKey || event.altKey) return;
   if (event.target.matches('input[type=range]') && event.key.startsWith('Arrow')) return;  // the slider moves itself
   const act = {
     ArrowRight: () => moveStep(1), ArrowLeft: () => moveStep(-1), ']': () => moveStep(1), '[': () => moveStep(-1),
     ArrowDown: () => moveCase(1), ArrowUp: () => moveCase(-1),
-    '+': () => zoomBy(1.25), '=': () => zoomBy(1.25), '-': () => zoomBy(0.8), f: fit, 0: fit, t: toggleOrbit, g: toggleGhost, d: toggleDiff, c: toggleFaces, x: cycleSection, m: toggleMarking, s: toggleScores, r: toggleActive,
+    '+': () => zoomBy(1.25), '=': () => zoomBy(1.25), '-': () => zoomBy(0.8), f: fit, 0: fit, t: toggleOrbit, g: toggleGhost, d: toggleDiff, c: toggleFaces, x: cycleSection, m: toggleMarking, s: toggleScores, n: toggleNav,
     v: () => moveDerived(1), V: () => moveDerived(-1), ' ': () => setPeek(true),
+    '/': () => { if (!navOpen) toggleNav(); $('#nav-filter').focus(); },
   }[event.key] || (/^[1-8]$/.test(event.key) && (() => selectSource(VIEW_NAMES[Number(event.key) - 1])));
   if (!act) return;
   event.preventDefault();
@@ -1528,7 +1655,13 @@ document.addEventListener('keydown', (event) => {
 document.addEventListener('keyup', (event) => { if (event.key === ' ') setPeek(false); });
 window.addEventListener('blur', () => setPeek(false));
 
-window.addEventListener('hashchange', async () => { readHash(); await ensureCases(); render(); });
+window.addEventListener('hashchange', async () => {
+  const was = [S.dataset, S.caseName, S.runId].join('|');
+  readHash();
+  if ([S.dataset, S.caseName, S.runId].join('|') !== was) S.sel = null;   // a stop chosen in another run means nothing here
+  await ensureCases();
+  render();
+});
 
 // -- polling ------------------------------------------------------------------------------------
 

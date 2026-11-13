@@ -46,6 +46,16 @@ GOOD_ENOUGH = float(os.environ.get("HARNESS_GOOD_ENOUGH", 0.98))   # local score
 # minutes but costs 0.011 and 0.005 of mean local score; improvements came up to 20 minutes apart.
 PLATEAU_SECONDS = float(os.environ.get("HARNESS_PLATEAU_SECONDS", 0))
 IDLE_SECONDS = float(os.environ.get("HARNESS_IDLE_SECONDS", 240))
+# A case whose pipeline solid has at least this local score gets no agent: the GPU is kept for the cases that
+# need it. 0 switches this off, and it is off. The value depends on how measure.py scores: its calibration on the
+# 24 eval parts against the truth is in docs/memory/knowledge.md. Nothing happens without a base score.
+GATE = float(os.environ.get("HARNESS_GATE", 0))
+HARNESS_ONLY_BOX = os.environ.get("HARNESS_ONLY") == "1"   # the "pipeline solid" is then the bounding box
+# For the dashboard only: every time the agent saves a script, it is run in the background (no measurement, no
+# check, nothing the agent sees) and the solid kept under <work>/previews, so the model can be watched as it
+# changes between checks. Off unless HARNESS_PREVIEW=1; it costs a CadQuery run per save.
+PREVIEW = os.environ.get("HARNESS_PREVIEW") == "1"
+PREVIEW_TIMEOUT = 60
 OPENAI_HOSTS = ("api.openai.com",)
 
 TASK = """You model one mechanical part in CadQuery, in this directory, on your own: nobody answers questions.
@@ -190,6 +200,8 @@ class Case:
         self.base_score: float | None = None
         self.base_terms: dict = {}
         self.published: float | None = None
+        self.preview_seen: dict[str, float] = {}
+        self.preview_job: tuple[subprocess.Popen, dict] | None = None
 
     def log(self, **event) -> None:
         event["t"] = round(time.time(), 1)
@@ -307,6 +319,48 @@ class Case:
         self.claim()
         self.log(event="published", check=None, score=measurement["score"], source="pipeline")
 
+    def preview(self) -> None:
+        """Build the newest saved script once, in the background (see PREVIEW)."""
+        if self.preview_job is not None:
+            process, entry = self.preview_job
+            if process.poll() is None and time.time() - entry["t"] < PREVIEW_TIMEOUT:
+                return
+            if process.poll() is None:
+                self.stop(process)
+            entry["ok"] = process.returncode == 0 and Path(entry["path"]).is_file()
+            if not entry["ok"]:
+                entry["error"] = (process.stderr.read() or b"").decode(errors="replace").strip()[-300:] if process.stderr else ""
+            with (self.work / "previews.jsonl").open("a") as handle:
+                handle.write(json.dumps(entry) + "\n")
+            self.preview_job = None
+        scripts = [p for p in self.workspace.glob("*.py") if p.name != "best_part.py"]
+        if not scripts:
+            return
+        newest = max(scripts, key=lambda p: p.stat().st_mtime)
+        changed = newest.stat().st_mtime
+        if self.preview_seen.get(newest.name, 0) >= changed or time.time() - changed < 2:   # still being written
+            return
+        self.preview_seen[newest.name] = changed
+        text = newest.read_bytes()
+        if b"result" not in text:
+            return
+        import hashlib
+
+        folder = self.work / "previews"
+        folder.mkdir(exist_ok=True)
+        index = len(list(folder.glob("*.py")))
+        script = folder / f"{index:03d}.py"
+        script.write_bytes(text)
+        entry = {"index": index, "t": round(time.time(), 1), "script": newest.name, "path": str(folder / f"{index:03d}.stp"),
+                 "sha": hashlib.sha1(text).hexdigest()}
+        base = self.workspace / "base.step"
+        command = [cq_python(), str(Path(__file__).with_name("runner.py")), str(script), entry["path"]]
+        if base.is_file():
+            command.append(str(base))
+        process = subprocess.Popen(command, cwd=str(self.workspace), stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                                   start_new_session=True)
+        self.preview_job = (process, entry)
+
     def publish(self) -> None:
         """Put the agent's best checked candidate in the output file when it beats what is there."""
         from agentic_cad import export
@@ -405,10 +459,15 @@ class Case:
     def run(self) -> dict:
         while not PARALLEL and not (self.work / "hull_done").exists():
             if self.deadline - time.time() < MIN_AGENT_SECONDS:
+                self.log(event="skipped", why="the pipeline left no time")
                 return {"case": self.case_dir.name, "skipped": "the pipeline left no time"}
             time.sleep(1.0)
         if self.deadline - time.time() < MIN_AGENT_SECONDS or not self.output_path.is_file() or not self.prepare():
+            self.log(event="skipped", why="no time or no solid to start from")
             return {"case": self.case_dir.name, "skipped": "no time or no solid to start from"}
+        if GATE and not HARNESS_ONLY_BOX and self.base_score is not None and self.base_score >= GATE:
+            self.log(event="gated", base=self.base_score, gate=GATE)
+            return {"case": self.case_dir.name, "gated": round(self.base_score, 4)}
         process = self.start_agent()
         started, starts = time.time(), 1
         self.log(event="agent_started", pid=process.pid)
@@ -417,6 +476,11 @@ class Case:
             while time.time() < self.deadline - 10:
                 time.sleep(2.0)
                 self.publish()
+                if PREVIEW:
+                    try:
+                        self.preview()
+                    except Exception:
+                        pass   # a preview is for the dashboard only and never stops the case
                 if self.best_score() > best + 0.002:
                     best, risen = self.best_score(), time.time()
                 elif PLATEAU_SECONDS and best > 0 and time.time() - risen > PLATEAU_SECONDS:
