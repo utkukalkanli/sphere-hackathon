@@ -99,13 +99,38 @@ PARALLEL = os.environ.get("HARNESS_PARALLEL") == "1"
 USE_BASE = os.environ.get("HARNESS_BASE", "1") != "0" and not PARALLEL
 
 
+# Claude instead of an OpenAI model: with ANTHROPIC_API_KEY set the agents use Anthropic's own Messages API
+# (the harness's "anthropic-messages" route), model ANTHROPIC_MODEL. OPENAI_* are then not needed.
+ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-opus-5-5")
+ANTHROPIC_MAX_TOKENS = int(os.environ.get("HARNESS_ANTHROPIC_MAX_TOKENS", 64000))
+
+
+def use_anthropic() -> bool:
+    return bool(os.environ.get("ANTHROPIC_API_KEY"))
+
+
+def model_name() -> str:
+    return ANTHROPIC_MODEL if use_anthropic() else os.environ.get("OPENAI_MODEL", "")
+
+
 def provider_patch() -> list[dict]:
-    """The profile patch: which endpoint and model the agent uses, from the README's three variables."""
+    """The profile patch: which endpoint and model the agent uses, from the README's three variables
+    (or ANTHROPIC_API_KEY and ANTHROPIC_MODEL for Claude)."""
+    efforts = {"off": None, "low": "low", "medium": "medium", "high": "high"}
+    if use_anthropic():
+        model = ANTHROPIC_MODEL
+        entry = {"id": model, "input": ["text", "image"], "contextWindow": CONTEXT_WINDOW,
+                 "maxTokens": ANTHROPIC_MAX_TOKENS, "reasoningEfforts": efforts}
+        provider = "anthropic"
+        route = {"apiKeyEnv": "ANTHROPIC_API_KEY", "api": "anthropic-messages", "reasoning": EFFORT, "models": [entry]}
+        return [{"id": "agent-default-model", "config": {"provider": provider, "model": model}},
+                {"id": "llm-pi-ai", "config": {"providers": {provider: route}}},
+                {"id": "bash-sandbox", "config": {"timeoutMs": BASH_TIMEOUT_MS}}]
     model = os.environ["OPENAI_MODEL"]
     base = (os.environ.get("OPENAI_BASE_URL") or "").rstrip("/")
     # the model is declared by hand: the harness's own catalog is older than the newest models
     entry = {"id": model, "input": ["text", "image"], "contextWindow": CONTEXT_WINDOW, "maxTokens": MAX_TOKENS,
-             "reasoningEfforts": {"off": None, "low": "low", "medium": "medium", "high": "high"}}
+             "reasoningEfforts": efforts}
     if not base or any(host in base for host in OPENAI_HOSTS):
         provider = "openai"
         route = {"apiKeyEnv": "OPENAI_API_KEY", "api": API, "reasoning": EFFORT, "models": [entry]}
@@ -125,8 +150,8 @@ def dsh_command() -> str | None:
 
 
 def enabled() -> bool:
-    return bool(os.environ.get("HARNESS", "1") != "0" and os.environ.get("OPENAI_API_KEY")
-                and os.environ.get("OPENAI_MODEL") and dsh_command())
+    key = use_anthropic() or (os.environ.get("OPENAI_API_KEY") and os.environ.get("OPENAI_MODEL"))
+    return bool(os.environ.get("HARNESS", "1") != "0" and key and dsh_command())
 
 
 class Case:
@@ -387,7 +412,7 @@ def main() -> int:
                         help="HARNESS_PARALLEL: the directory the pipeline writes its solids to")
     args = parser.parse_args()
     if not enabled():
-        print("harness: off (needs OPENAI_API_KEY, OPENAI_MODEL and the dsh command)", flush=True)
+        print("harness: off (needs ANTHROPIC_API_KEY, or OPENAI_API_KEY and OPENAI_MODEL, and the dsh command)", flush=True)
         return 0
     cases = sorted((p for p in args.input_dir.glob("test_case_*") if (p / "facts.json").is_file()
                     and (p / "description.md").is_file()), key=lambda p: int(p.name.removeprefix("test_case_")))
@@ -399,7 +424,7 @@ def main() -> int:
              str((args.work_dir / case.name).resolve()), args.deadline,
              str((args.pipeline_dir / f"{case.name}.stp").resolve()) if args.pipeline_dir else None) for case in cases]
     workers = int(os.environ.get("HARNESS_WORKERS", len(jobs)))
-    print(f"harness: {len(jobs)} cases with {os.environ['OPENAI_MODEL']} (effort {EFFORT}), {workers} at a time, "
+    print(f"harness: {len(jobs)} cases with {model_name()} (effort {EFFORT}), {workers} at a time, "
           f"{args.deadline - time.time():.0f} s", flush=True)
     with ProcessPoolExecutor(max(1, workers), mp_context=multiprocessing.get_context("spawn")) as pool:
         for result in pool.map(run_case, jobs):

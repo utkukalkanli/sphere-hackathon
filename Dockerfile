@@ -50,5 +50,7 @@ ENV HARNESS_EFFORT=medium \
     HARNESS_PERMISSION=danger-full-access \
     HARNESS_SECONDS=3000
 ENV OPENAI_MODEL=gpt-6.1-terra
+# With ANTHROPIC_API_KEY set (in <team>.env) the agents use Claude through Anthropic's API instead, this model:
+ENV ANTHROPIC_MODEL=claude-opus-5-5
 
 CMD ["python", "scripts/main.py"]
