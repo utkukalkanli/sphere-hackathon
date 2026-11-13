@@ -97,6 +97,9 @@ WITHOUT_BASE = {
 # brief while the pipeline works on the same case as a fallback. Whichever solid scores higher locally
 # is in the output file; a case whose agent fails keeps the pipeline's.
 PARALLEL = os.environ.get("HARNESS_PARALLEL") == "1"
+# HARNESS_PREFER_AGENT=1 (parallel mode): the agent's best checked candidate is always the answer and the
+# pipeline's solid only for a case whose agent has none (the submission). Off: whichever scores clearly higher.
+PREFER_AGENT = os.environ.get("HARNESS_PREFER_AGENT") == "1"
 USE_BASE = os.environ.get("HARNESS_BASE", "1") != "0" and not PARALLEL
 
 
@@ -295,9 +298,9 @@ class Case:
             return
         measurement = ms.measure(shape, self.case_dir, verify.observe(self.case_dir))
         self.log(event="pipeline", measurement=ms.summary(measurement))
-        # The agent's solid always stays (the user, 2026-11-13: the answer is the agent's output whenever it
-        # has one); the pipeline's is the answer only for a case whose agent has no checked candidate.
-        if self.source == "agent":
+        # PREFER_AGENT: the agent's solid always stays. Otherwise it stays unless the pipeline's is clearly better:
+        # the local score is closest to the real one for a part modelled from the brief
+        if self.source == "agent" and (PREFER_AGENT or measurement["score"] <= (self.published or 0.0) + MARGIN):
             return
         export.publish(copy, self.output_path)
         self.published, self.source, self.base_terms = measurement["score"], "pipeline", measurement["terms"]
@@ -314,7 +317,7 @@ class Case:
             best = json.loads((self.state / "best.json").read_text())
         except Exception:
             return
-        if PARALLEL:
+        if PARALLEL and PREFER_AGENT:
             # the agent's best checked candidate replaces anything that is not the agent's own (box, pipeline);
             # after that only a better candidate of its own replaces it
             if self.source == "agent" and best["score"] <= (self.published or 0.0):
