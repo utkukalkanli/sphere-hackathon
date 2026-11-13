@@ -54,7 +54,7 @@ You have {minutes:.0f} minutes. `./check` prints the time left on every call.
 What is here:
 - description.md: the design brief. facts.json: numbers measured from the true part (bounding box, volume, surface area, number of through-holes, every cylindrical hole and boss with its diameter, axis and centre).
 - views.png: the eight renders of the true part on one sheet, 512 px a view. Look at it first.
-- views/: the same eight renders at full size, 1024 px each (view_0_front.png to view_7_iso_back_left_bottom.png). Open one with read_image when you need its detail (thin walls, small holes, lines inside the outline), one or two at a time: every picture you open stays in your context and slows every later step.
+- outlines.json, outlines.py: the part's outline in each pair of opposite straight views, measured from the renders in millimetres (lines, arcs, circles, holes through it). In a script `from outlines import silhouette`; `silhouette(\"front_back\")` is the front outline extruded through the box along Y, \"right_left\" along X, \"top_bottom\" along Z, and `silhouette(name, start, end)` only between two coordinates. Use them for exact profiles instead of reading coordinates off the pictures: intersect your body with them, or extrude a profile between the depths where the views show it. They give the outline, not what lies inside it.\n- views/: the same eight renders at full size, 1024 px each (view_0_front.png to view_7_iso_back_left_bottom.png). Open one with read_image when you need its detail (thin walls, small holes, lines inside the outline), one or two at a time: every picture you open stays in your context and slows every later step.
 {base_files}
 - ./check <script.py>: runs your script, measures the solid against facts.json and the eight views, prints a report, writes compare.png (every view of the part beside your solid from the same camera, 512 px a view) and compare/<view>.png (one view at full size, the part on the left, your solid on the right) and records the candidate. ./cqpy <file.py> runs any Python file with CadQuery, for experiments.
 {sections}
@@ -197,6 +197,29 @@ class Case:
         except Exception:
             pass
 
+    def write_outlines(self) -> None:
+        """outlines.json and outlines.py: each straight view pair's outline in mm, as the pipeline fits it from
+        the renders (lines, arcs, circles), and a CadQuery helper that extrudes it. Models read coordinates off
+        pixels badly; these are the outlines' measured numbers. Nothing is written when the fitting fails."""
+        try:
+            from agentic_cad import visual_hull as vh
+            from agentic_cad.harness.outlines_helper import SOURCE
+
+            dims = dict(zip("xyz", vh.read_dimensions(self.case_dir)))
+            views = sorted((self.case_dir / "images").glob("*.png"))
+            data = {}
+            for name, spec in vh.ORTHO.items():
+                silhouette = vh.ortho_silhouette(name, views, dims)
+                if silhouette is None:
+                    continue
+                data[name] = {"a": spec["u"], "b": spec["v"], "along": spec["along"], "depth": dims[spec["along"]],
+                              "outlines": json.loads(json.dumps(silhouette.outlines, default=float))}
+            if data:
+                (self.workspace / "outlines.json").write_text(json.dumps(data))
+                (self.workspace / "outlines.py").write_text(SOURCE)
+        except Exception as error:
+            self.log(event="outlines_failed", why=repr(error)[:300])
+
     def prepare(self) -> bool:
         """The agent's workspace. False when the pipeline's solid cannot be read."""
         from agentic_cad import verify
@@ -222,6 +245,7 @@ class Case:
             (self.workspace / "base_report.txt").write_text(ms.feedback(measurement) + "\n")
         if observed:
             (self.workspace / "views.png").write_bytes(ms.views_sheet(observed))
+            self.write_outlines()
             if USE_BASE:
                 (self.workspace / "base_compare.png").write_bytes(ms.compare_sheet(measurement, observed))
         (self.state / "meta.json").write_text(json.dumps({

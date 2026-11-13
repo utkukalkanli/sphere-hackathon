@@ -19,6 +19,14 @@ def main() -> int:
 
     import cadquery as cq
 
+    # the workspace's helpers (outlines.py): a check runs the script in .cad/cand_NNN, a preview in the workspace
+    import os
+    folder = os.path.dirname(os.path.abspath(script))
+    for _ in range(4):
+        if os.path.isfile(os.path.join(folder, "outlines.py")):
+            sys.path.insert(0, folder)
+            break
+        folder = os.path.dirname(folder)
     scope = {"cq": cq, "math": math, "__name__": "__main__", "base": None}
     if base_path:
         scope["base"] = cq.importers.importStep(base_path)
