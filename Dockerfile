@@ -49,6 +49,6 @@ ENV HARNESS_EFFORT=medium \
     HARNESS_PARALLEL=1 \
     HARNESS_PERMISSION=danger-full-access \
     HARNESS_SECONDS=3000
-ENV OPENAI_MODEL=gpt-6-astra
+ENV OPENAI_MODEL=gpt-6.1-terra
 
 CMD ["python", "scripts/main.py"]
