@@ -26,6 +26,11 @@ reasons in `decisions.md`.
   Best candidates elsewhere: 7 0.872 against the pipeline's 0.842 but 11 holes for 10, so refused; 9 0.910
   (0.909); 3 0.994 (0.993); 2 0.802; 1 0.593; 6 0.424; 4 none valid. The server takes about 2 full-length
   requests at once, so 9 agents queue.
+- **Gemma agents modelling from scratch, the pipeline's file as fallback** (`HARNESS_BASE=0`, 2026-11-13 01:34
+  UTC, same setup, 29 min 44 s, one run): no candidate replaced the pipeline's file, mean stays 0.943. The
+  agents' own best candidates, parts 1 to 9: 0.979, 0.802, 0.994, 0.835, 0.785, 0.806, 0.385, 0.720, 0.401,
+  mean 0.745 (`gpt-6.1-terra` alone: 0.987). 93 checks, 53 without a valid solid; parts 7 and 9 got one valid
+  candidate each, with 0 of 10 and 0 of 6 holes. With Gemma the fallback is what holds the score.
 - **First submission: `fdcc8c6` on `main`** (2026-11-12), this pipeline without `bowls`.
 - Work is on `uzum` (2026-11-12, cut from `main` at fdcc8c6, no upstream; see `decisions.md`). It
   adds the `bowls` step. `nar` and `ananas` score higher by volume on the practice set but are
