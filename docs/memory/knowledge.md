@@ -251,11 +251,16 @@ score, which reads higher, so compare only within one score).
 | gpt-6.1-terra | pipeline first, 30 min | old score, mean 0.980 |
 | gpt-6-astra | pipeline first, 30 min | old score, mean 0.987; its outputs were committed (leaderboard: see `state.md`) |
 | claude-sonnet-5-5 | parallel, stopped at 13 min | agents beat the pipeline on no part (mean 0.906). It ends its session after about 45 s ("Already good (0.856); I'll stop here … I made no changes"), is restarted, ends again: 14 to 16 starts in 13 minutes on parts 1 to 5. |
-| claude-opus-5-5 | parallel, 50 min, plus the rule "do not end the session early" (2c048aa) | 2969 s, exit 0, agent's solid on all 9; mean **0.960** (1 0.993, 2 0.986, 3 0.989, 4 0.970, 5 0.979, 6 0.967, 7 0.849, 8 0.965, 9 0.943); 78 to 132 checks a part; the hard parts used 3 to 8 sessions, parts 1 and 3 hit the 30 starts (they end sessions saying the part matches the brief exactly). At 13 min 0.940, 25 min 0.953, 39 min 0.958. These outputs were committed and submitted (state.md). |
+| claude-opus-5-5 | parallel, 50 min, plus the rule "do not end the session early" (2c048aa) | 2969 s, exit 0, agent's solid on all 9; mean **0.960** (1 0.993, 2 0.986, 3 0.989, 4 0.970, 5 0.979, 6 0.967, 7 0.849, 8 0.965, 9 0.943); 78 to 132 checks a part; the hard parts used 3 to 8 sessions, parts 1 and 3 hit the 30 starts (they end sessions saying the part matches the brief exactly). At 13 min 0.940, 25 min 0.953, 39 min 0.958. Submitted as e6a6720: **leaderboard 0.940** (1 0.994, 2 1.000, 3 1.000, 4 0.990, 5 0.947, 6 0.756, 7 0.830, 8 0.984, 9 0.958). |
 
 - The Claude route (`feat/claude-agents`): `OPENAI_BASE_URL=https://api.anthropic.com` with a Claude key in
   `OPENAI_API_KEY` and the model in `OPENAI_MODEL`, or `ANTHROPIC_API_KEY`; the harness's `anthropic-messages`
   route. Anthropic accepts the harness's thinking settings for Sonnet 5.5 and Opus 5.5.
+- **The local score misjudges practice 6** (the hollow part): Opus's solid read 0.967 locally (volume within 0.1 %) and
+  scored 0.756; the pipeline's solid, hollowed by `hidden_void`, read 0.859 and scored 0.996 in e4e4475. In parallel mode
+  the agent never sees the pipeline's solid, and the local score cannot see an inner void, so it picks the wrong one.
+  Leaderboard per part, Opus parallel (e6a6720) against terra pipeline-first (e4e4475): better on 2, 3, 7, 8, 9 and 1,
+  worse on 4 (0.990 against 0.996), 5 (0.947 against 0.948) and 6.
 - How persistent a model is matters more than how fast it is: the harness restarts an agent that ends below
   `HARNESS_GOOD_ENOUGH`, but at most 30 times a case, so a model that quits early burns its starts and leaves
   the pipeline's file.

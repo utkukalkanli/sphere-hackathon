@@ -23,7 +23,9 @@ reasons in `decisions.md`.
   Anthropic's API, `feat/claude-agents` merged into `main`; `HARNESS_PARALLEL=1`, `HARNESS_GOOD_ENOUGH=0.995`,
   `HARNESS_SECONDS=3000`, the rule "do not end the session early"). The committed outputs are this setup's own run
   in the image (04:14 UTC, `~/verify/opus50-0414`): mean local score 0.960 (new score), pipeline alone 0.906;
-  per part and the other models in `knowledge.md` (Which model drives the agents). Leaderboard: not yet known.
+  per part and the other models in `knowledge.md` (Which model drives the agents). **Leaderboard 0.940** (1 0.994,
+  2 1.000, 3 1.000, 4 0.990, 5 0.947, 6 0.756, 7 0.830, 8 0.984, 9 0.958), below `e4e4475`'s 0.962: practice 6 alone
+  (0.756 against 0.996) costs 0.027 of the mean.
   The OpenAI account is out of credit (2026-11-13 03:45): OpenAI models cannot run now.
 - **Handover file: `team-d.env`** (repo root, git-ignored): `OPENAI_BASE_URL=https://api.anthropic.com`, Claude key, `OPENAI_MODEL=claude-opus-5-5`,
   `HARNESS_EFFORT=medium`, `HARNESS_SECONDS=3000`, `HARNESS_GOOD_ENOUGH=0.995`. Send it to the organisers by hand at code freeze; CI does not.
