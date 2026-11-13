@@ -41,12 +41,14 @@ ENV TRACE=0 \
 # The agents are off without OPENAI_API_KEY, which is not in the image: it comes with <team>.env.
 # OPENAI_BASE_URL unset means OpenAI's own endpoint; https://api.anthropic.com means Claude through Anthropic's
 # Messages API. In the container the agent's shell is not sandboxed a second time (HARNESS_PERMISSION).
-# HARNESS_PARALLEL=0: the pipeline first, then each case's agent improves the pipeline's solid (base.step). Parallel
-# mode (1) let the agent model from scratch and lost practice 6's inner void (leaderboard 0.756 against 0.996).
+# HARNESS_PARALLEL=1: every case's agent starts at once and models the part from the brief, facts.json and the
+# views; the pipeline works on the same case beside it as a fallback, and the solid that scores higher locally is
+# the answer. A pipeline solid with an enclosed void (hidden_void.py) is kept whatever the agent scores: no local
+# score can see a void (practice 6 in e6a6720, parallel without this rule: 0.756 against 0.996).
 # HARNESS_GOOD_ENOUGH: an agent that ends with a local score below this is started again, until the time is up.
 ENV HARNESS_EFFORT=medium \
     HARNESS_GOOD_ENOUGH=0.995 \
-    HARNESS_PARALLEL=0 \
+    HARNESS_PARALLEL=1 \
     HARNESS_PERMISSION=danger-full-access \
     HARNESS_SECONDS=3000
 ENV OPENAI_MODEL=gpt-6.1-terra

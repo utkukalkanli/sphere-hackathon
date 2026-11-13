@@ -246,6 +246,13 @@ class VisualHullAgent:
                 continue
             if export.checkpoint(result, output_path, self.keep_faces):
                 solid, self._sound = result, True
+                if name == "void" and output_path is not None and os.environ.get("HARNESS_PARALLEL") == "1":
+                    # Parallel mode writes the pipeline's solid beside the agents' work, not into the outputs:
+                    # tell them this one is hollow, which no local score can see (harness/loop.py).
+                    try:
+                        Path(output_path).with_suffix(".void").touch()
+                    except Exception:
+                        pass
                 continue
             if self._sound is None:  # nobody has asked yet whether the solid before this step survives
                 self._sound = export.checkpoint(solid, None, kept[0])
