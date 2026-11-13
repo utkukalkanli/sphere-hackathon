@@ -211,6 +211,19 @@ Tiers by our rule (up to 30 faces simple, up to 200 medium): parts 1 to 3, 4 to 
   depth (up to 3.7 cm3). The isometric silhouette takes only 0.8 % off, under the minimum gain.
 - **Practice 7 is as thin a shell as practice 6 by volume**, but its cavity is open and seen.
 
+## The extended practice set
+
+- `artifacts/extended-practice/inputs/test_case_10` to `test_case_20` (2026-11-13, from the organisers'
+  `extended-practice.zip`): 11 parts in the format of the nine practice parts;
+  `artifacts/extended-practice/index.csv` has their names (camshaft, camshaft bushing, two belt wheels, intake
+  manifold, oil pan, side cover, valve cover, rocking arm spring, turbo shell, tubing spider). No ground truth.
+  The zip held 20 parts; the other 9 are byte for byte the practice parts 1 to 9 and were left out. They
+  must not lie in `artifacts/inputs`: pytest wants a `test_case_<n>.stp` in `artifacts/outputs` for every
+  input there, so with them inside (017b8a1) CI failed and nothing was submitted; they were moved out again
+  the same night. Run them with `--input_dir artifacts/extended-practice/inputs --output_dir <dir>`.
+- Its README calls `facts.json` "practice set only, for debugging" and lists only the images, `context.png`
+  and `description.md` as inputs for hidden parts (`open-questions.md`).
+
 ## The eval set
 
 - 266 parts (100 simple, 100 medium, 66 complex by face count; 113 ABC, 153 Fusion 360), built
@@ -359,3 +372,12 @@ Dashboard:
   walls would have about twice the outer area; 1697 means a compact inner void of a few hundred
   cm2. No view shows where it is or its shape. OpenCascade's inward `MakeThickSolidByJoin` on our
   finned solid gives an invalid solid at 4 mm and fails at 6 mm (about 40 s each).
+- **The run needs about 2 GB a case, and a killed process leaves cases waiting for good** (2026-11-12, the image run as
+  the organisers run it, on the GPU box). 9 practice parts at 4 at a time: 3 min 57 s, peak 7.4 GB, outputs equal
+  to the committed ones; with 2 cores and 8 GB 6 min 59 s (practice 7 a hair different: 1.460 for 1.458). With a
+  4 GB limit a process was killed for memory and after 20 minutes four cases were still their bounding boxes, the
+  container still running. `scripts/main.py` now takes the number of cases at once from the memory it may use
+  (cgroup limit or free memory, 2.5 GB a case) and runs cases whose worker died again one at a time.
+- **Islands**: of 29 flat areas standing above everything around them in our solids of the 24 eval parts, 14 are in
+  the part and 15 are not (`tools` none; measured in the session). The isometric view tells them apart: share of
+  the top outline on its lines 0.62 to 1.00 for the real ones, 0.09 to 0.60 for the others.

@@ -15,6 +15,11 @@ Remove a question when it is answered and record the answer in `decisions.md`, `
 - **Should each case run in its own process?** A segfault in the main process leaves the cases
   after it at their box or hull. Tracing lives in the main process.
 
+- **Do the hidden parts come with `facts.json`?** The README of the extended practice set (2026-11-12) says
+  it is "practice set only" and "nothing else is available for hidden parts"; the repo's README and
+  `knowledge.md` assume it is given. Without it the box comes only from the brief's Envelope line, and the
+  hole list, the true volume and every volume guard are gone. Ask the organisers.
+
 ## The model
 
 - **Does a served model's proposal raise the overlap?** Needs the endpoint, a hard set with

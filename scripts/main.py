@@ -39,6 +39,10 @@ HARNESS_SECONDS = float(os.environ.get("HARNESS_SECONDS", 19 * 60))
 # HARNESS_ONLY=1: no pipeline at all. Every case keeps its bounding box and its agent starts at once
 # (with HARNESS_BASE=0 it is not shown the box either): the agents on their own.
 HARNESS_ONLY = os.environ.get("HARNESS_ONLY") == "1"
+# HARNESS_PARALLEL=1: the agents start at once and model every part from the brief, the pipeline works on
+# the same cases beside them as a fallback and writes to a directory of its own; the agents' process puts
+# the better solid of the two into the output file (src/agentic_cad/harness/loop.py).
+HARNESS_PARALLEL = os.environ.get("HARNESS_PARALLEL") == "1" and not HARNESS_ONLY
 HARNESS_DIR = Path(os.environ.get("HARNESS_DIR", "/tmp/harness"))
 
 
@@ -86,13 +90,43 @@ def write_fallback(test_case: TestCase, output_path: Path) -> bool:
         return False
 
 
+MEMORY_PER_CASE = 2.5 * 1024 ** 3   # bytes a case may need at its peak, with its boolean child (9 practice parts
+                                    # at 4 at a time peaked at 7.4 GB on the GPU box)
+
+
+def memory_available() -> float | None:
+    """Bytes this run may use: the container's limit (cgroup) or the machine's free memory, whichever
+    is less. None when neither can be read."""
+    found = []
+    for path in ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
+        try:
+            value = Path(path).read_text().strip()
+            if value.isdigit() and int(value) < 1 << 60:
+                found.append(float(value))
+        except OSError:
+            pass
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemAvailable:"):
+                found.append(float(line.split()[1]) * 1024)
+    except OSError:
+        pass
+    return min(found) if found else None
+
+
 def case_workers(count: int) -> int:
-    """How many test cases run at once: CASE_WORKERS, else up to 4 and at most one per core. Each
-    case also starts a child process for its booleans, so this is about twice as many processes
-    (more than 4 ran the Windows PC out of memory once)."""
+    """How many test cases run at once: CASE_WORKERS, else up to 4, at most one per core and at most
+    as many as the memory holds. Each case also starts a child process for its booleans, so this is
+    about twice as many processes. With too little memory a process is killed, and a killed boolean
+    child leaves its case waiting for good (seen in a container limited to 4 GB: after 20 minutes
+    four cases were still their bounding boxes)."""
     if os.environ.get("CASE_WORKERS"):
         return max(1, int(os.environ["CASE_WORKERS"]))
-    return max(1, min(4, os.cpu_count() or 1, count))
+    workers = min(4, os.cpu_count() or 1, count)
+    memory = memory_available()
+    if memory is not None:
+        workers = min(workers, int(memory // MEMORY_PER_CASE))
+    return max(1, workers)
 
 
 def size(test_case: TestCase) -> int:
@@ -164,7 +198,11 @@ def start_harness(args, started: float, names: list[str]):
         work.mkdir(parents=True, exist_ok=True)
         command = [sys.executable, "-m", "agentic_cad.harness.loop", "--input_dir", str(args.input_dir),
                    "--output_dir", str(args.output_dir), "--work_dir", str(work),
-                   "--deadline", str(started + HARNESS_SECONDS), "--only", *names]
+                   "--deadline", str(started + HARNESS_SECONDS)]
+        if HARNESS_PARALLEL:
+            (work / "pipeline").mkdir(exist_ok=True)
+            command += ["--pipeline_dir", str(work / "pipeline")]
+        command += ["--only", *names]
         return subprocess.Popen(command, start_new_session=True), work
     except Exception:
         traceback.print_exc()
@@ -236,6 +274,9 @@ def main(args):
                                    initializer=_init_worker, initargs=(counter,))
         stopped = False
         harness = start_harness(args, started, [tc.name for tc in order])
+        if HARNESS_PARALLEL and harness is not None:
+            # the pipeline's solids go beside the agents' work, not into the output directory
+            jobs = [(job[0], str(harness[1] / "pipeline" / f"{job[0].name}.stp"), *job[2:]) for job in jobs]
         if HARNESS_ONLY and harness is not None:
             jobs = []
             for test_case in order:
@@ -249,7 +290,6 @@ def main(args):
                 except Exception:  # its process died (a crash inside OpenCascade): its last file stays
                     print(f"{name} FAILED in its worker process:")
                     traceback.print_exc()
-                    mark_done(harness, name)
                     continue
                 mark_done(harness, name)
                 if results.get(name) != "failed" or result == "ok":
@@ -266,9 +306,55 @@ def main(args):
                 process.terminate()   # SIGTERM: the worker exits and takes its boolean child with it
         finally:
             pool.shutdown(wait=not stopped, cancel_futures=True)
-        for test_case in order:   # also the cases the hard stop cut short: their last file is final now
+
+        # 3. A worker that is killed (out of memory, most likely) breaks the pool, and every case that was
+        # running or waiting is left with its box or its last step. Those are run again, one at a time,
+        # each in a pool of its own, for as long as the run has time: a single case needs a quarter of
+        # the memory, and one that dies again costs only itself.
+        again = [job for job in jobs if results.get(job[0].name) not in ("ok", "stopped")] if not stopped else []
+        # The agents may start on every case whose file is final: all but the ones about to run again
+        # (also the cases the hard stop cut short).
+        for test_case in order:
+            if test_case.name not in {job[0].name for job in again}:
+                mark_done(harness, test_case.name)
+        for number, job in enumerate(again):
+            # its share of the time: what is left, among the cases still to run again
+            with counter.get_lock():
+                counter.value = 0
+            job = (*job[:4], len(again) - number, 1)
+            left = HARD_STOP - (time.time() - started)
+            if left < 20:
+                print(f"no time left to run {job[0].name} again; its last file stays")
+                continue
+            print(f"{job[0].name} did not go through; running it again by itself ({left:.0f} s left)")
+            single = ProcessPoolExecutor(1, mp_context=multiprocessing.get_context("spawn"),
+                                         initializer=_init_worker, initargs=(counter,))
+            waited = True
+            try:
+                name, result = single.submit(run_case, job).result(timeout=left)
+                results[name] = result
+                print(f"{name}: {result}")
+            except TimeoutError:
+                waited = False
+                results[job[0].name] = "stopped"
+                for process in list(getattr(single, "_processes", {}).values()):
+                    process.terminate()
+            except Exception:
+                print(f"{job[0].name} FAILED again in its worker process:")
+                traceback.print_exc()
+            finally:
+                single.shutdown(wait=waited, cancel_futures=True)
+                mark_done(harness, job[0].name)
+        for test_case in order:
             mark_done(harness, test_case.name)
         finish_harness(harness, started)
+        if HARNESS_PARALLEL and harness is not None:
+            # a case the agents' process never wrote (it died, or never got that far) gets the pipeline's solid
+            for test_case in order:
+                side = harness[1] / "pipeline" / f"{test_case.name}.stp"
+                if not (harness[1] / test_case.name / "published").exists() and export.file_valid(side):
+                    export.publish(side, outputs[test_case.name])
+                    print(f"{test_case.name}: the agents left no file, the pipeline's solid is the answer")
 
     problems = {name: result for name, result in results.items() if result != "ok"}
     if problems:

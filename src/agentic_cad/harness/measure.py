@@ -130,7 +130,7 @@ def measure(shape: TopoDS_Shape, case_dir: Path, observed: dict | None = None) -
             check = verify.compare(view, drawing)
             excess, missing = drawing.mask & ~view.mask, view.mask & ~drawing.mask
             seen = max(int(view.mask.sum()), 1)
-            entry = {"silhouette": check.silhouette, "lines": check.lines,
+            entry = {"silhouette": check.silhouette, "lines": check.lines, "drawn": check.recall, "shown": check.precision,
                      "excess": float(excess.sum() / seen), "missing": float(missing.sum() / seen)}
             if name in verify.ORTHO_VIEWS:
                 least = max(int(0.002 * view.mask.size), 30)
@@ -158,11 +158,17 @@ def score(m: dict) -> dict:
         holes = min(ours, true) / max(ours, true) if min(ours, true) > 0 else 0.0
     silhouettes = [v["silhouette"] for v in m["views"].values()]
     overlap = float(np.mean(silhouettes)) if silhouettes else 1.0
-    volume = (_ratio(m["volume"]) if m["volume"] else 1.0) * overlap
-    surface = (_ratio(m["area"]) if m["area"] else 1.0) * overlap
+    # How well the edges agree with the lines drawn in the views: the only sign of what lies inside the
+    # outline (a pocket, a step, a boss in the wrong place). Fitted on the 27 solids of three submissions
+    # against their leaderboard scores (2026-11-13): mean error 0.036 without it, 0.027 with it; the part
+    # the old estimate overrated most (practice 7, 0.938 for a real 0.811) comes out at 0.813.
+    lines = [v["lines"] for v in m["views"].values()]
+    edges = float(np.mean(lines)) ** 0.5 if lines else 1.0
+    volume = (_ratio(m["volume"]) if m["volume"] else 1.0) * overlap * edges ** 0.5
+    surface = (_ratio(m["area"]) if m["area"] else 1.0) * overlap * edges
     total = 0.30 * volume + 0.30 * surface + 0.20 * dimensions + 0.20 * holes
     return {"score": total, "terms": {"volume": volume, "surface": surface, "dimensions": dimensions, "holes": holes},
-            "overlap": overlap}
+            "overlap": overlap, "edges": float(np.mean(lines)) if lines else 1.0}
 
 
 def summary(m: dict) -> dict:
@@ -173,7 +179,7 @@ def summary(m: dict) -> dict:
 
 def feedback(m: dict) -> str:
     """The measurement as the model reads it."""
-    lines = [f"Local score {m['score']:.3f} (volume {m['terms']['volume']:.2f}, surface {m['terms']['surface']:.2f}, "
+    lines = [f"Estimated score {m['score']:.3f} (volume {m['terms']['volume']:.2f}, surface {m['terms']['surface']:.2f}, "
              f"dimensions {m['terms']['dimensions']:.2f}, through-holes {m['terms']['holes']:.2f})."]
     size, target = m["size"], m["target_size"]
     if max(abs(a - b) / b for a, b in zip(size, target)) > 0.002:
@@ -206,6 +212,16 @@ def feedback(m: dict) -> str:
         lines.append(line)
     if all(view["silhouette"] > 0.985 for view in m["views"].values()) and m["views"]:
         lines.append("- All eight outlines fit.")
+    if m["views"]:
+        lines.append(f"- Edges: {m['edges']:.2f} agreement between your solid's edges and the lines drawn in the views (1.00 = "
+                     "every line of the part is an edge of yours and the other way round). This is what shows whether the "
+                     "features inside the outline (pockets, steps, bosses, ribs, cavities) are there and in the right place.")
+        worst = sorted(m["views"].items(), key=lambda item: item[1]["lines"])[:3]
+        for name, view in worst:
+            if view["lines"] > 0.9:
+                continue
+            lines.append(f"  - {name}: {100 * view.get('drawn', 0):.0f} % of the part's lines have an edge of yours, "
+                         f"{100 * view.get('shown', 0):.0f} % of your edges lie on a line of the part.")
     return "\n".join(lines)
 
 

@@ -33,14 +33,18 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 ENV PATH="/app/.venv/bin:$PATH"
 
 # Step-by-step traces are a development aid for the dashboard; the submitted run does not need them
-ENV TRACE=0
+ENV TRACE=0 \
+    PYTHONUNBUFFERED=1
 
 # Agent settings, frozen with your commit (README: Configuration). After code freeze, the values in
 # your handed-over <team>.env replace these.
 # The agents are off without OPENAI_API_KEY, which is not in the image: it comes with <team>.env.
 # OPENAI_BASE_URL unset means OpenAI's own endpoint. In the container the agent's shell is not
 # sandboxed a second time (HARNESS_PERMISSION).
+# HARNESS_PARALLEL: every case is modelled by its agent from the brief, facts.json and the views, while the
+# deterministic pipeline works on the same case as a fallback; the solid that scores higher locally is the answer.
 ENV HARNESS_EFFORT=medium \
+    HARNESS_PARALLEL=1 \
     HARNESS_PERMISSION=danger-full-access \
     HARNESS_SECONDS=1800
 ENV OPENAI_MODEL=gpt-6-astra

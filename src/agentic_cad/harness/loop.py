@@ -39,7 +39,7 @@ BASH_TIMEOUT_MS = 240000
 MAX_STARTS = int(os.environ.get("HARNESS_MAX_STARTS", 30))   # of one case's agent
 # An agent whose event log has not grown for this long is waiting on a model request that will not
 # come back (five of nine did, for 8 to 13 minutes, in the first full run): it is stopped and started again.
-GOOD_ENOUGH = float(os.environ.get("HARNESS_GOOD_ENOUGH", 0.985))   # local score at which an agent that ends is not restarted
+GOOD_ENOUGH = float(os.environ.get("HARNESS_GOOD_ENOUGH", 0.98))   # local score at which an agent that ends is not restarted
 # A case whose best local score has not risen for this long is finished: the agent is stopped and the
 # run can end before its deadline. 0 switches this off, and it is off: replayed on the first two runs
 # (practice 55 min, six eval parts 25 min) a plateau of 8 minutes ends the longest agent after 31 and 14
@@ -71,7 +71,7 @@ The script:
 The score of the true competition, after the best rigid alignment with the true part: 30 % volume overlap, 30 % surface match, 20 % bounding-box dimensions, 20 % number of through-holes (the genus of the solid, counted from its topology; it must be exact). So:
 - Keep the bounding box exact and the through-hole count equal to facts.json. A through-hole adds one to the count, a blind hole or a pocket adds none; do not break through a wall by accident and do not close a listed through-hole.
 - Then bring volume and surface area to the true values by putting material and recesses where the part has them: where the views show an opening, a pocket, a cavity or a thin wall. Removing material in the wrong place to reach the volume does not help.
-- The check's score is an estimate from these numbers and the outlines; it cannot see inside a cavity, so use the views and the brief to decide where material goes.
+- The check's score is an estimate from these numbers, the outlines and how well your edges agree with the lines drawn in the views. Matching the volume and area numbers with material in the wrong place does not raise the real score: never add or remove hidden material just to hit them. Put every feature where the brief, facts.json and the views put it; compare.png shows the part's lines beside your edges.
 """
 
 
@@ -92,7 +92,11 @@ WITHOUT_BASE = {
                  "revolved profiles, patterns of holes, pockets and cavities where the views show them. Start with the overall "
                  "body at the exact bounding box, check it, then add detail."),
 }
-USE_BASE = os.environ.get("HARNESS_BASE", "1") != "0"
+# HARNESS_PARALLEL=1: the agents start at once, without the pipeline's solid, and model the part from the
+# brief while the pipeline works on the same case as a fallback. Whichever solid scores higher locally
+# is in the output file; a case whose agent fails keeps the pipeline's.
+PARALLEL = os.environ.get("HARNESS_PARALLEL") == "1"
+USE_BASE = os.environ.get("HARNESS_BASE", "1") != "0" and not PARALLEL
 
 
 def provider_patch() -> list[dict]:
@@ -126,8 +130,12 @@ def enabled() -> bool:
 
 
 class Case:
-    def __init__(self, case_dir: Path, output_path: Path, work: Path, deadline: float):
+    def __init__(self, case_dir: Path, output_path: Path, work: Path, deadline: float, pipeline_path: Path | None = None):
         self.case_dir, self.output_path, self.work, self.deadline = case_dir, output_path, work, deadline
+        self.pipeline_path = pipeline_path     # PARALLEL: where the pipeline writes this case's solid
+        self.pipeline_final = False            # its finished solid has been measured
+        self.pipeline_seen = None              # modification time of the unfinished solid last taken over
+        self.source: str | None = None         # whose solid is in the output file: "agent", "pipeline", "pipeline so far"
         self.workspace = work / "ws"
         self.state = self.workspace / ".cad"
         self.base_score: float | None = None
@@ -183,15 +191,63 @@ class Case:
         self.log(event="base", measurement=ms.summary(measurement))
         return True
 
+    def claim(self) -> None:
+        """Leave the mark that this case's output file was written here (scripts/main.py reads it)."""
+        try:
+            (self.work / "published").touch()
+        except Exception:
+            pass
+
+    def take_pipeline(self) -> None:
+        """PARALLEL: bring the pipeline's solid of this case into the output file when it is the better one.
+        While the pipeline is still working its latest solid is taken as it is, as long as the agent has
+        nothing in place; once it has finished, its solid is measured like a candidate."""
+        from agentic_cad import export
+        from agentic_cad import verify
+        from agentic_cad.harness import measure as ms
+
+        path = self.pipeline_path
+        if path is None or self.pipeline_final or not path.is_file():
+            return
+        if not (self.work / "hull_done").exists():
+            stamp = path.stat().st_mtime
+            if self.source in (None, "pipeline so far") and stamp != self.pipeline_seen and export.file_valid(path):
+                export.publish(path, self.output_path)
+                self.pipeline_seen, self.source = stamp, "pipeline so far"
+                self.claim()
+            return
+        self.pipeline_final = True
+        copy = self.work / "pipeline.stp"
+        shutil.copyfile(path, copy)
+        shape, why = ms.load(copy)
+        if shape is None:
+            self.log(event="pipeline_unreadable", why=why)
+            return
+        measurement = ms.measure(shape, self.case_dir, verify.observe(self.case_dir))
+        self.log(event="pipeline", measurement=ms.summary(measurement))
+        # the agent's solid stays unless the pipeline's is clearly better: the local score is closest to
+        # the real one for a part modelled from the brief
+        if self.source == "agent" and measurement["score"] <= (self.published or 0.0) + MARGIN:
+            return
+        export.publish(copy, self.output_path)
+        self.published, self.source, self.base_terms = measurement["score"], "pipeline", measurement["terms"]
+        self.claim()
+        self.log(event="published", check=None, score=measurement["score"], source="pipeline")
+
     def publish(self) -> None:
-        """Put the agent's best checked candidate in the output file when it beats the pipeline's solid."""
+        """Put the agent's best checked candidate in the output file when it beats what is there."""
         from agentic_cad import export
 
+        if PARALLEL:
+            self.take_pipeline()
         try:
             best = json.loads((self.state / "best.json").read_text())
         except Exception:
             return
-        floor = self.published if self.published is not None else (self.base_score or 0.0) + MARGIN
+        if self.published is None:
+            floor = (self.base_score or 0.0) + MARGIN
+        else:   # its own earlier candidate, or the pipeline's finished solid, which it has to beat clearly
+            floor = self.published + (MARGIN if self.source == "pipeline" else 0.0)
         if best["score"] <= floor or not export.file_valid(Path(best["path"])):
             return
         # the two terms that are measured exactly must not get worse: a wrong hole count or size costs
@@ -200,8 +256,9 @@ class Case:
         if any(terms.get(name, 0.0) < self.base_terms.get(name, 0.0) - 0.005 for name in ("holes", "dimensions")):
             return
         export.publish(Path(best["path"]), self.output_path)
-        self.published = best["score"]
-        self.log(event="published", check=best["index"], score=best["score"], base=self.base_score)
+        self.published, self.source = best["score"], "agent"
+        self.claim()
+        self.log(event="published", check=best["index"], score=best["score"], base=self.base_score, source="agent")
 
     def start_agent(self, again: int = 0) -> subprocess.Popen:
         """Start the agent; `again` > 0 when an earlier one ended before the time was up."""
@@ -256,7 +313,7 @@ class Case:
                 pass
 
     def run(self) -> dict:
-        while not (self.work / "hull_done").exists():
+        while not PARALLEL and not (self.work / "hull_done").exists():
             if self.deadline - time.time() < MIN_AGENT_SECONDS:
                 return {"case": self.case_dir.name, "skipped": "the pipeline left no time"}
             time.sleep(1.0)
@@ -292,18 +349,23 @@ class Case:
         finally:
             self.stop(process)
         self.publish()
+        # the pipeline may still be working on the case after the agent is done: its solid is still wanted
+        while PARALLEL and self.pipeline_path is not None and not self.pipeline_final and time.time() < self.deadline - 5:
+            time.sleep(2.0)
+            self.publish()
         checks = len(list(self.state.glob("cand_*")))
         result = {"case": self.case_dir.name, "agent_seconds": round(time.time() - started), "exit": process.poll(),
                   "checks": checks, "starts": starts, "base": self.base_score and round(self.base_score, 4),
-                  "published": self.published and round(self.published, 4)}
+                  "published": self.published and round(self.published, 4), "source": self.source}
         self.log(event="done", **result)
         return result
 
 
 def run_case(job: tuple) -> dict:
-    case_dir, output_path, work, deadline = job
+    case_dir, output_path, work, deadline, pipeline_path = job
     try:
-        return Case(Path(case_dir), Path(output_path), Path(work), deadline).run()
+        return Case(Path(case_dir), Path(output_path), Path(work), deadline,
+                    Path(pipeline_path) if pipeline_path else None).run()
     except Exception:
         error = traceback.format_exc()
         try:
@@ -321,6 +383,8 @@ def main() -> int:
     parser.add_argument("--work_dir", type=Path, required=True)
     parser.add_argument("--deadline", type=float, required=True, help="unix time at which every case must have stopped")
     parser.add_argument("--only", nargs="*", default=None)
+    parser.add_argument("--pipeline_dir", type=Path, default=None,
+                        help="HARNESS_PARALLEL: the directory the pipeline writes its solids to")
     args = parser.parse_args()
     if not enabled():
         print("harness: off (needs OPENAI_API_KEY, OPENAI_MODEL and the dsh command)", flush=True)
@@ -332,7 +396,8 @@ def main() -> int:
     if not cases:
         return 0
     jobs = [(str(case.resolve()), str((args.output_dir / f"{case.name}.stp").resolve()),
-             str((args.work_dir / case.name).resolve()), args.deadline) for case in cases]
+             str((args.work_dir / case.name).resolve()), args.deadline,
+             str((args.pipeline_dir / f"{case.name}.stp").resolve()) if args.pipeline_dir else None) for case in cases]
     workers = int(os.environ.get("HARNESS_WORKERS", len(jobs)))
     print(f"harness: {len(jobs)} cases with {os.environ['OPENAI_MODEL']} (effort {EFFORT}), {workers} at a time, "
           f"{args.deadline - time.time():.0f} s", flush=True)

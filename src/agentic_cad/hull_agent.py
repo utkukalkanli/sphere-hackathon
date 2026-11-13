@@ -16,6 +16,7 @@ from agentic_cad import hole_count
 from agentic_cad import holes as hl
 from agentic_cad import mouths
 from agentic_cad import spans
+from agentic_cad import islands
 from agentic_cad import iso_support
 from agentic_cad import outline_fit as of
 from agentic_cad import pockets
@@ -62,7 +63,7 @@ HOLES_TIMEOUT = float(os.environ.get("HULL_HOLES_TIMEOUT", 40))
 RETRY_BUDGET = float(os.environ.get("HULL_RETRY_BUDGET", 20))
 
 
-# Steps after the holes, in order; HULL_SKIP=seen,bowls,rounds,curved,cavities,depth,model,shading,pockets,void,holecount,split
+# Steps after the holes, in order; HULL_SKIP=seen,bowls,rounds,curved,cavities,depth,model,shading,pockets,islands,void,holecount,split
 # switches some off. "seen" and "bowls" look for the same openings (a mouth a view draws over a listed hole);
 # "seen" cuts first, as a cylinder, and what it has cut "bowls" no longer finds.
 # "model" (propose.py) does nothing unless an endpoint is configured; it comes before the fine cuts,
@@ -70,7 +71,7 @@ RETRY_BUDGET = float(os.environ.get("HULL_RETRY_BUDGET", 20))
 # "holecount" comes after every step that removes material, so that it counts the holes of the solid we hand in.
 # "split" moves no material and must stay last: a later cut or merge would undo it.
 LATER_STEPS = {"seen": seen_mouths, "bowls": bowls, "rounds": rounds, "curved": curved, "cavities": cavities, "depth": depth,
-               "model": propose, "shading": shading, "pockets": pockets, "void": hidden_void, "holecount": hole_count,
+               "model": propose, "shading": shading, "pockets": pockets, "islands": islands, "void": hidden_void, "holecount": hole_count,
                "split": split}
 # The "evidence" step is for the dashboard only and runs only while tracing; TRACE_EVIDENCE=0 leaves it
 # out, so a traced run takes the time the image (TRACE=0) takes.
@@ -79,7 +80,7 @@ SKIP_STEPS = {name for name in os.environ.get("HULL_SKIP", "").split(",") if nam
 # The name each later step gives its trace step, for the plan the dashboard shows before anything has run
 STEP_NAMES = {"seen": "seen_mouths", "bowls": "cut_bowls", "rounds": "cut_rounds", "curved": "cut_curved", "cavities": "cut_cavities",
               "depth": "level_faces", "model": "model_cuts", "shading": "shading_depth", "pockets": "cut_pockets",
-              "void": "hidden_void", "holecount": "hole_count", "split": "split_faces"}
+              "islands": "lower_islands", "void": "hidden_void", "holecount": "hole_count", "split": "split_faces"}
 
 
 class VisualHullAgent:
