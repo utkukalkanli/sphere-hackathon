@@ -320,6 +320,13 @@ class Case:
         self.claim()
         self.log(event="published", check=best["index"], score=best["score"], base=self.base_score, source="agent")
 
+    def rate_limited(self, index: int) -> bool:
+        """Whether agent `index` ended on the provider's rate limit."""
+        try:
+            return "RATE_LIMIT" in (self.work / f"agent_{index}.err").read_text(errors="replace")[-2000:]
+        except Exception:
+            return False
+
     def start_agent(self, again: int = 0) -> subprocess.Popen:
         """Start the agent; `again` > 0 when an earlier one ended before the time was up."""
         home = self.work / "dsh-home"
@@ -406,7 +413,12 @@ class Case:
                 if process.returncode == 0 and max(self.best_score(), self.base_score or 0.0) >= GOOD_ENOUGH:
                     break   # it stopped by itself on a part that leaves next to nothing to gain
                 self.publish()   # the best candidate so far is in the output file before anything starts again
-                time.sleep(min(5.0 * starts, 30.0))
+                wait = min(5.0 * starts, 30.0)
+                if self.rate_limited(starts - 1):
+                    # the provider's limit is per minute: an agent started at once would hit it again
+                    wait = 30.0
+                    self.log(event="rate_limited", starts=starts)
+                time.sleep(wait)
                 process = self.start_agent(starts)
                 starts += 1
         finally:
