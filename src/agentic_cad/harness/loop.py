@@ -294,19 +294,7 @@ class Case:
             self.log(event="pipeline_unreadable", why=why)
             return
         measurement = ms.measure(shape, self.case_dir, verify.observe(self.case_dir))
-        hollow = path.with_suffix(".void").exists()
-        self.log(event="pipeline", measurement=ms.summary(measurement), hollow=hollow)
-        if hollow:
-            # The pipeline hollows a solid only when every view is explained and it still holds far more than
-            # the part's volume (hidden_void.py, which leaves the .void mark). No view and so no local score can
-            # see an inner void: the agent's solid would win on the estimate and lose on the real score
-            # (practice 6 in e6a6720: 0.756 against 0.996). The pipeline's solid is the answer and the agent's
-            # cannot replace it.
-            export.publish(copy, self.output_path)
-            self.published, self.source, self.base_terms = measurement["score"], "pipeline void", measurement["terms"]
-            self.claim()
-            self.log(event="published", check=None, score=measurement["score"], source="pipeline void")
-            return
+        self.log(event="pipeline", measurement=ms.summary(measurement))
         # the agent's solid stays unless the pipeline's is clearly better: the local score is closest to
         # the real one for a part modelled from the brief
         if self.source == "agent" and measurement["score"] <= (self.published or 0.0) + MARGIN:
@@ -322,8 +310,6 @@ class Case:
 
         if PARALLEL:
             self.take_pipeline()
-        if self.source == "pipeline void":
-            return
         try:
             best = json.loads((self.state / "best.json").read_text())
         except Exception:
