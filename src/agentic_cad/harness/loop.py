@@ -99,30 +99,46 @@ PARALLEL = os.environ.get("HARNESS_PARALLEL") == "1"
 USE_BASE = os.environ.get("HARNESS_BASE", "1") != "0" and not PARALLEL
 
 
-# Claude instead of an OpenAI model: with ANTHROPIC_API_KEY set the agents use Anthropic's own Messages API
-# (the harness's "anthropic-messages" route), model ANTHROPIC_MODEL. OPENAI_* are then not needed.
+# Claude instead of an OpenAI model, through Anthropic's own Messages API (the harness's "anthropic-messages"
+# route), in either of two ways:
+# - the README's variables: OPENAI_BASE_URL=https://api.anthropic.com, OPENAI_API_KEY=<Claude key>,
+#   OPENAI_MODEL=<Claude model>;
+# - ANTHROPIC_API_KEY=<Claude key>, model ANTHROPIC_MODEL; this wins over the OPENAI_* variables.
 ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-opus-5-5")
 ANTHROPIC_MAX_TOKENS = int(os.environ.get("HARNESS_ANTHROPIC_MAX_TOKENS", 64000))
+ANTHROPIC_HOSTS = ("api.anthropic.com",)
+
+
+def anthropic_route() -> tuple[str, str] | None:
+    """(model, environment variable holding the key) when the agents use Claude, else None."""
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return ANTHROPIC_MODEL, "ANTHROPIC_API_KEY"
+    base = os.environ.get("OPENAI_BASE_URL") or ""
+    if any(host in base for host in ANTHROPIC_HOSTS) and os.environ.get("OPENAI_API_KEY"):
+        return os.environ.get("OPENAI_MODEL") or ANTHROPIC_MODEL, "OPENAI_API_KEY"
+    return None
 
 
 def use_anthropic() -> bool:
-    return bool(os.environ.get("ANTHROPIC_API_KEY"))
+    return anthropic_route() is not None
 
 
 def model_name() -> str:
-    return ANTHROPIC_MODEL if use_anthropic() else os.environ.get("OPENAI_MODEL", "")
+    route = anthropic_route()
+    return route[0] if route else os.environ.get("OPENAI_MODEL", "")
 
 
 def provider_patch() -> list[dict]:
     """The profile patch: which endpoint and model the agent uses, from the README's three variables
     (or ANTHROPIC_API_KEY and ANTHROPIC_MODEL for Claude)."""
     efforts = {"off": None, "low": "low", "medium": "medium", "high": "high"}
-    if use_anthropic():
-        model = ANTHROPIC_MODEL
+    claude = anthropic_route()
+    if claude:
+        model, key_env = claude
         entry = {"id": model, "input": ["text", "image"], "contextWindow": CONTEXT_WINDOW,
                  "maxTokens": ANTHROPIC_MAX_TOKENS, "reasoningEfforts": efforts}
         provider = "anthropic"
-        route = {"apiKeyEnv": "ANTHROPIC_API_KEY", "api": "anthropic-messages", "reasoning": EFFORT, "models": [entry]}
+        route = {"apiKeyEnv": key_env, "api": "anthropic-messages", "reasoning": EFFORT, "models": [entry]}
         return [{"id": "agent-default-model", "config": {"provider": provider, "model": model}},
                 {"id": "llm-pi-ai", "config": {"providers": {provider: route}}},
                 {"id": "bash-sandbox", "config": {"timeoutMs": BASH_TIMEOUT_MS}}]
