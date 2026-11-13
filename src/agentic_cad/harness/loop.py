@@ -40,6 +40,11 @@ MAX_STARTS = int(os.environ.get("HARNESS_MAX_STARTS", 30))   # of one case's age
 # An agent whose event log has not grown for this long is waiting on a model request that will not
 # come back (five of nine did, for 8 to 13 minutes, in the first full run): it is stopped and started again.
 GOOD_ENOUGH = float(os.environ.get("HARNESS_GOOD_ENOUGH", 0.985))   # local score at which an agent that ends is not restarted
+# A case whose best local score has not risen for this long is finished: the agent is stopped and the
+# run can end before its deadline. 0 switches this off, and it is off: replayed on the first two runs
+# (practice 55 min, six eval parts 25 min) a plateau of 8 minutes ends the longest agent after 31 and 14
+# minutes but costs 0.011 and 0.005 of mean local score; improvements came up to 20 minutes apart.
+PLATEAU_SECONDS = float(os.environ.get("HARNESS_PLATEAU_SECONDS", 0))
 IDLE_SECONDS = float(os.environ.get("HARNESS_IDLE_SECONDS", 240))
 OPENAI_HOSTS = ("api.openai.com",)
 
@@ -49,17 +54,17 @@ You have {minutes:.0f} minutes. `./check` prints the time left on every call.
 What is here:
 - description.md: the design brief. facts.json: numbers measured from the true part (bounding box, volume, surface area, number of through-holes, every cylindrical hole and boss with its diameter, axis and centre).
 - views/: eight renders of the true part; views.png shows all eight in one picture. Look at it first.
-- base.step: the solid a silhouette-carving pipeline found for this part. base_report.txt is its check report and base_compare.png shows it beside the views. Its outlines fit the views and its bounding box is exact, but it is full wherever no outline shows a recess: cavities, pockets, blind bores, hollow interiors, walls that should be thin.
+{base_files}
 - ./check <script.py>: runs your script, measures the solid against facts.json and the eight views, prints a report, writes compare.png (every view of the part beside your solid from the same camera) and records the candidate. ./cqpy <file.py> runs any Python file with CadQuery, for experiments.
-- ./sections [file.step]: writes sections.png, five cross-sections across each axis of base.step (or of the STEP file you name, such as .cad/cand_003/candidate.stp), material dark, positions in millimetres. No view shows the inside of a solid; this does. Use it to see where base.step is full and to verify a cut landed where you meant.
+{sections}
 
 Work in small steps and do not plan at length: a short script checked early teaches more than a long deliberation.
 
 The work: write a CadQuery 2 script, check it, read the report and look at compare.png, improve it, check again; repeat until the time is nearly up. Every checked candidate is recorded and the best one is handed in automatically: there is nothing to submit, and a script that was never checked counts for nothing. Make the first check within three minutes and then check after every change.
 
 The script:
-- `import cadquery as cq`; assign the finished part to `result`, a cq.Workplane holding exactly one solid. In the script `base` is a cq.Workplane with the solid of base.step.
-- Either cut and add to it (`result = base.cut(tool)`) or model the part from the brief. Model from the brief when the part can be described exactly with a few features (plates, cylinders, revolved profiles, patterns of holes); work on `base` when its shape is too complex to rebuild. You can try both and keep what scores higher.
+- `import cadquery as cq`; assign the finished part to `result`, a cq.Workplane holding exactly one solid.{base_script}
+{approach}
 - Frame: the bounding box goes from (0, 0, 0) to the X, Y, Z of facts.json; all coordinates in the brief and facts.json are in this frame, in millimetres. "front" is seen from -Y (image right = +X, up = +Z), "back" from +Y, "left" from -X, "right" from +X, "top" from +Z (image up = +Y), "bottom" from -Z; the isometric views from (+X, -Y, +Z) and (-X, +Y, -Z).
 - A fillet or chamfer that can fail goes into try/except. A script has 90 seconds.
 
@@ -68,6 +73,26 @@ The score of the true competition, after the best rigid alignment with the true 
 - Then bring volume and surface area to the true values by putting material and recesses where the part has them: where the views show an opening, a pocket, a cavity or a thin wall. Removing material in the wrong place to reach the volume does not help.
 - The check's score is an estimate from these numbers and the outlines; it cannot see inside a cavity, so use the views and the brief to decide where material goes.
 """
+
+
+# The parts of the task that depend on whether the agent is given the pipeline's solid (HARNESS_BASE=0: it is not)
+WITH_BASE = {
+    "base_files": '- base.step: the solid a silhouette-carving pipeline found for this part. base_report.txt is its check report and base_compare.png shows it beside the views. Its outlines fit the views and its bounding box is exact, but it is full wherever no outline shows a recess: cavities, pockets, blind bores, hollow interiors, walls that should be thin.',
+    "sections": '- ./sections [file.step]: writes sections.png, five cross-sections across each axis of base.step (or of the STEP file you name, such as .cad/cand_003/candidate.stp), material dark, positions in millimetres. No view shows the inside of a solid; this does. Use it to see where base.step is full and to verify a cut landed where you meant.',
+    "base_script": " In the script `base` is a cq.Workplane with the solid of base.step.",
+    "approach": '- Either cut and add to it (`result = base.cut(tool)`) or model the part from the brief. Model from the brief when the part can be described exactly with a few features (plates, cylinders, revolved profiles, patterns of holes); work on `base` when its shape is too complex to rebuild. You can try both and keep what scores higher.',
+}
+WITHOUT_BASE = {
+    "base_files": "- There is no starting solid: you model the part from the brief, facts.json and the views.",
+    "sections": ("- ./sections <file.step>: writes sections.png, five cross-sections across each axis of the STEP file you name, "
+                 "such as .cad/cand_003/candidate.stp, material dark, positions in millimetres. No view shows the inside of a "
+                 "solid; this does. Use it to verify that a pocket or cavity landed where you meant."),
+    "base_script": "",
+    "approach": ("- Build the part from features the brief and facts.json give with their sizes and positions: plates, cylinders, "
+                 "revolved profiles, patterns of holes, pockets and cavities where the views show them. Start with the overall "
+                 "body at the exact bounding box, check it, then add detail."),
+}
+USE_BASE = os.environ.get("HARNESS_BASE", "1") != "0"
 
 
 def provider_patch() -> list[dict]:
@@ -127,7 +152,9 @@ class Case:
         for name in ("description.md", "facts.json"):
             shutil.copyfile(self.case_dir / name, self.workspace / name)
         shutil.copytree(self.case_dir / "images", self.workspace / "views", dirs_exist_ok=True)
-        base = self.workspace / "base.step"
+        # without HARNESS_BASE the solid is still measured (it is what a candidate has to beat) but the agent
+        # does not get it
+        base = (self.workspace if USE_BASE else self.work) / "base.step"
         shutil.copyfile(self.output_path, base)
         shape, why = ms.load(base)
         if shape is None:
@@ -137,12 +164,15 @@ class Case:
         measurement = ms.measure(shape, self.case_dir, observed)
         self.base_score = measurement["score"]
         self.base_terms = measurement["terms"]
-        (self.workspace / "base_report.txt").write_text(ms.feedback(measurement) + "\n")
+        if USE_BASE:
+            (self.workspace / "base_report.txt").write_text(ms.feedback(measurement) + "\n")
         if observed:
             (self.workspace / "views.png").write_bytes(ms.views_sheet(observed))
-            (self.workspace / "base_compare.png").write_bytes(ms.compare_sheet(measurement, observed))
+            if USE_BASE:
+                (self.workspace / "base_compare.png").write_bytes(ms.compare_sheet(measurement, observed))
         (self.state / "meta.json").write_text(json.dumps({
-            "case_dir": str(self.case_dir), "deadline": self.deadline - 20, "base_score": self.base_score}))
+            "case_dir": str(self.case_dir), "deadline": self.deadline - 20,
+            "base_score": self.base_score if USE_BASE else None}))
         python = sys.executable
         for name, line in (("check", f'TMPDIR="$PWD/.cad/tmp" exec "{python}" -m agentic_cad.harness.check "$@"'),
                            ("sections", f'exec "{python}" -m agentic_cad.harness.sections "$@"'),
@@ -185,7 +215,7 @@ class Case:
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120)
             profile.mkdir(parents=True, exist_ok=True)
             (profile / "cordis.patch.yml").write_text(json.dumps(provider_patch(), indent=1))
-        task = TASK.format(minutes=max(self.deadline - 20 - time.time(), 60) / 60)
+        task = TASK.format(minutes=max(self.deadline - 20 - time.time(), 60) / 60, **(WITH_BASE if USE_BASE else WITHOUT_BASE))
         if again:
             task += ("\nYou worked on this before and were interrupted. Your scripts are still here; best_part.py is the "
                      "best checked one so far (if any). Go on from there.\n")
@@ -236,9 +266,15 @@ class Case:
         started, starts = time.time(), 1
         self.log(event="agent_started", pid=process.pid)
         try:
+            best, risen = self.best_score(), time.time()
             while time.time() < self.deadline - 10:
                 time.sleep(2.0)
                 self.publish()
+                if self.best_score() > best + 0.002:
+                    best, risen = self.best_score(), time.time()
+                elif PLATEAU_SECONDS and best > 0 and time.time() - risen > PLATEAU_SECONDS:
+                    self.log(event="plateau", best=best, seconds=round(time.time() - risen))
+                    break
                 if process.poll() is None:
                     if self.idle(starts - 1) < IDLE_SECONDS:
                         continue

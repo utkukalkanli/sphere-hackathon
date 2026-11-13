@@ -1,6 +1,6 @@
 # Project state
 
-Last updated: 2026-11-12 (compacted; the long version with every intermediate measurement is
+Last updated: 2026-11-12 late evening (agents added; compacted; the long version with every intermediate measurement is
 `git show bda2104:docs/memory/state.md`).
 
 This file describes the present. Findings about the inputs and the code are in `knowledge.md`,
@@ -8,6 +8,25 @@ reasons in `decisions.md`.
 
 ## Summary
 
+- **Best submission: `e4e4475` on `main`, 0.962** (2026-11-12 23:05 UTC; the pipeline alone, d430ae3, had
+  0.895). It is the pipeline plus one DeepSeek Harness agent per case (`src/agentic_cad/harness`, model
+  `gpt-6.1-terra`, on only with `OPENAI_API_KEY`): the agent writes CadQuery, checks it against facts.json and
+  the views with `./check`, and its best candidate replaces the pipeline's file when it scores higher. Real
+  scores per part 1 to 9: 0.986, 0.995, 0.998, 0.996, 0.948, 0.996, 0.816, 0.977, 0.944 (outputs of a 55 minute
+  run in the image).
+- **Truth check on six eval parts** (38, 110, 123, 171, 182, 236; 25 minutes each run; `tools/score_truth.py`
+  against the ground truth; one run each): pipeline alone 0.913, pipeline + agents 0.986, agents alone
+  (`HARNESS_ONLY=1 HARNESS_BASE=0`, no pipeline) 0.990. The pipeline gave no measurable benefit there.
+- Mean local score of the nine practice parts against time, pipeline + agents (gpt-6.1-terra): 0.943 at the start,
+  0.962 at 15 minutes, 0.979 at 30, 0.984 at 55.
+- **The image now runs `gpt-6-astra` for 30 minutes** (`OPENAI_MODEL`, `HARNESS_SECONDS=1800`; the user, 2026-11-13).
+  Its run in the image exactly as the organisers run it (2026-11-13 01:44 UTC, this 16-core box, `--user`, inputs
+  read-only, `team-d.env`): exit 0, 9 single solids, no stray file. Local score pipeline -> agents: 4 0.950 -> 0.993,
+  5 0.934 -> 0.993, 6 0.937 -> 0.998, 7 0.842 -> 0.938, 8 0.938 -> 0.988, 9 0.909 -> 0.994; 1 to 3 keep the pipeline's
+  (0.995, 0.987, 0.993); mean 0.987 (terra in the same setting, 00:58 UTC: 0.980). Astra's agents finish 1 to 4 on
+  their own after 0.5 to 15 minutes. These outputs are the committed `artifacts/outputs`.
+- **Handover file: `team-d.env`** (repo root, git-ignored): `OPENAI_BASE_URL=` (OpenAI), key, `OPENAI_MODEL=gpt-6-astra`,
+  `HARNESS_EFFORT=medium`, `HARNESS_SECONDS=1800`. Send it to the organisers by hand at code freeze; CI does not.
 - **First submission: `fdcc8c6` on `main`** (2026-11-12), this pipeline without `bowls`.
 - Work is on `uzum` (2026-11-12, cut from `main` at fdcc8c6, no upstream; see `decisions.md`). It
   adds the `bowls` step. `nar` and `ananas` score higher by volume on the practice set but are

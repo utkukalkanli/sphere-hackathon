@@ -42,8 +42,10 @@ Keep them current as part of the work, without being asked:
 - **Do not change the submission format**: entrypoint `python scripts/main.py --input_dir <dir>
   --output_dir <dir>`, outputs named `test_case_<n>.stp`, one solid each, in millimetres. A missing,
   broken or non-solid file scores 0.
-- **The whole run has 20 minutes** for all test cases, as a non-root user that can write only to the
-  output directory and `/tmp`.
+- **The whole run has 1 hour** for the 9 test cases together, no limit per part (organisers,
+  2026-11-12; the README's "20 minutes" is out of date). It runs as a non-root user that can write
+  only to the output directory and `/tmp`. Network access is allowed: hosted LLM APIs may be called.
+- **Code freeze: Friday 2026-11-13 08:00.** Hand over `team-d.env` (git-ignored, repo root).
 - **Build for unseen parts.** The final ranking uses 9 hidden parts (3 simple, 3 medium, 3 complex).
   Never tune to the 9 practice parts.
 - **`datasets/`, `ui/` and `runs/` never enter the Docker image**, and the agent must not read
