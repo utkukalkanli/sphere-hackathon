@@ -41,10 +41,10 @@ ENV TRACE=0 \
 # The agents are off without OPENAI_API_KEY, which is not in the image: it comes with <team>.env.
 # OPENAI_BASE_URL unset means OpenAI's own endpoint. In the container the agent's shell is not
 # sandboxed a second time (HARNESS_PERMISSION).
-# HARNESS_ONLY and HARNESS_BASE=0: the agents alone, without the deterministic pipeline or its solid.
+# HARNESS_PARALLEL: every case is modelled by its agent from the brief, facts.json and the views, while the
+# deterministic pipeline works on the same case as a fallback; the solid that scores higher locally is the answer.
 ENV HARNESS_EFFORT=medium \
-    HARNESS_ONLY=1 \
-    HARNESS_BASE=0 \
+    HARNESS_PARALLEL=1 \
     HARNESS_PERMISSION=danger-full-access \
     HARNESS_SECONDS=1800
 ENV OPENAI_MODEL=gpt-6.1-terra

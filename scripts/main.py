@@ -39,6 +39,10 @@ HARNESS_SECONDS = float(os.environ.get("HARNESS_SECONDS", 19 * 60))
 # HARNESS_ONLY=1: no pipeline at all. Every case keeps its bounding box and its agent starts at once
 # (with HARNESS_BASE=0 it is not shown the box either): the agents on their own.
 HARNESS_ONLY = os.environ.get("HARNESS_ONLY") == "1"
+# HARNESS_PARALLEL=1: the agents start at once and model every part from the brief, the pipeline works on
+# the same cases beside them as a fallback and writes to a directory of its own; the agents' process puts
+# the better solid of the two into the output file (src/agentic_cad/harness/loop.py).
+HARNESS_PARALLEL = os.environ.get("HARNESS_PARALLEL") == "1" and not HARNESS_ONLY
 HARNESS_DIR = Path(os.environ.get("HARNESS_DIR", "/tmp/harness"))
 
 
@@ -194,7 +198,11 @@ def start_harness(args, started: float, names: list[str]):
         work.mkdir(parents=True, exist_ok=True)
         command = [sys.executable, "-m", "agentic_cad.harness.loop", "--input_dir", str(args.input_dir),
                    "--output_dir", str(args.output_dir), "--work_dir", str(work),
-                   "--deadline", str(started + HARNESS_SECONDS), "--only", *names]
+                   "--deadline", str(started + HARNESS_SECONDS)]
+        if HARNESS_PARALLEL:
+            (work / "pipeline").mkdir(exist_ok=True)
+            command += ["--pipeline_dir", str(work / "pipeline")]
+        command += ["--only", *names]
         return subprocess.Popen(command, start_new_session=True), work
     except Exception:
         traceback.print_exc()
@@ -266,6 +274,9 @@ def main(args):
                                    initializer=_init_worker, initargs=(counter,))
         stopped = False
         harness = start_harness(args, started, [tc.name for tc in order])
+        if HARNESS_PARALLEL and harness is not None:
+            # the pipeline's solids go beside the agents' work, not into the output directory
+            jobs = [(job[0], str(harness[1] / "pipeline" / f"{job[0].name}.stp"), *job[2:]) for job in jobs]
         if HARNESS_ONLY and harness is not None:
             jobs = []
             for test_case in order:
@@ -337,6 +348,13 @@ def main(args):
         for test_case in order:
             mark_done(harness, test_case.name)
         finish_harness(harness, started)
+        if HARNESS_PARALLEL and harness is not None:
+            # a case the agents' process never wrote (it died, or never got that far) gets the pipeline's solid
+            for test_case in order:
+                side = harness[1] / "pipeline" / f"{test_case.name}.stp"
+                if not (harness[1] / test_case.name / "published").exists() and export.file_valid(side):
+                    export.publish(side, outputs[test_case.name])
+                    print(f"{test_case.name}: the agents left no file, the pipeline's solid is the answer")
 
     problems = {name: result for name, result in results.items() if result != "ok"}
     if problems:
