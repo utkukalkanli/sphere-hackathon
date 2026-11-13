@@ -56,7 +56,7 @@ ENV HARNESS_EFFORT=medium \
     HARNESS_PARALLEL=1 \
     HARNESS_PREFER_AGENT=1 \
     HARNESS_PERMISSION=danger-full-access \
-    HARNESS_SECONDS=2700 \
+    HARNESS_SECONDS=1800 \
     HARNESS_IDLE_SECONDS=600
 ENV OPENAI_MODEL=gpt-6-astra
 # With ANTHROPIC_API_KEY set and no OpenAI key, the agents use Claude with this model:
