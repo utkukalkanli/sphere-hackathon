@@ -47,15 +47,18 @@ ENV TRACE=0 \
 # (unset: whichever scores clearly higher locally).
 # HARNESS_IDLE_SECONDS: an agent silent this long is taken for hung and started again; a step after reading
 # several full-size views took terra over four minutes.
-# HARNESS_GOOD_ENOUGH: an agent that ends with a local score below this is started again, until the time is up.
+# HARNESS_GOOD_ENOUGH: an agent that ends with a local score below this is started again, until the time is up;
+# with HARNESS_STOP_AT_GOOD_ENOUGH=1 an agent is stopped once it reaches it, leaving the rate limit to the others
+# (practice 2 and 3 read 0.987 locally and score 1.000; on the eval parts 0.968 and more meant 0.986 to 0.999).
 ENV HARNESS_EFFORT=medium \
-    HARNESS_GOOD_ENOUGH=0.995 \
+    HARNESS_GOOD_ENOUGH=0.985 \
+    HARNESS_STOP_AT_GOOD_ENOUGH=1 \
     HARNESS_PARALLEL=1 \
     HARNESS_PREFER_AGENT=1 \
     HARNESS_PERMISSION=danger-full-access \
     HARNESS_SECONDS=2700 \
     HARNESS_IDLE_SECONDS=600
-ENV OPENAI_MODEL=gpt-6.1-sol
+ENV OPENAI_MODEL=gpt-6-astra
 # With ANTHROPIC_API_KEY set and no OpenAI key, the agents use Claude with this model:
 ENV ANTHROPIC_MODEL=claude-opus-5-5
 
