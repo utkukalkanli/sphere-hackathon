@@ -103,7 +103,8 @@ USE_BASE = os.environ.get("HARNESS_BASE", "1") != "0" and not PARALLEL
 # route), in either of two ways:
 # - the README's variables: OPENAI_BASE_URL=https://api.anthropic.com, OPENAI_API_KEY=<Claude key>,
 #   OPENAI_MODEL=<Claude model>;
-# - ANTHROPIC_API_KEY=<Claude key>, model ANTHROPIC_MODEL; this wins over the OPENAI_* variables.
+# - ANTHROPIC_API_KEY=<Claude key>, model ANTHROPIC_MODEL. OpenAI comes first: this is used only when the
+#   OPENAI_* variables do not name an OpenAI (or other OpenAI-compatible) endpoint with a key and a model.
 ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-opus-5-5")
 ANTHROPIC_MAX_TOKENS = int(os.environ.get("HARNESS_ANTHROPIC_MAX_TOKENS", 64000))
 ANTHROPIC_HOSTS = ("api.anthropic.com",)
@@ -111,11 +112,14 @@ ANTHROPIC_HOSTS = ("api.anthropic.com",)
 
 def anthropic_route() -> tuple[str, str] | None:
     """(model, environment variable holding the key) when the agents use Claude, else None."""
+    base = os.environ.get("OPENAI_BASE_URL") or ""
+    openai_key = os.environ.get("OPENAI_API_KEY")
+    if any(host in base for host in ANTHROPIC_HOSTS) and openai_key:
+        return os.environ.get("OPENAI_MODEL") or ANTHROPIC_MODEL, "OPENAI_API_KEY"
+    if openai_key and os.environ.get("OPENAI_MODEL"):
+        return None   # OpenAI first
     if os.environ.get("ANTHROPIC_API_KEY"):
         return ANTHROPIC_MODEL, "ANTHROPIC_API_KEY"
-    base = os.environ.get("OPENAI_BASE_URL") or ""
-    if any(host in base for host in ANTHROPIC_HOSTS) and os.environ.get("OPENAI_API_KEY"):
-        return os.environ.get("OPENAI_MODEL") or ANTHROPIC_MODEL, "OPENAI_API_KEY"
     return None
 
 
