@@ -237,36 +237,8 @@ class Case:
         except Exception as error:
             self.log(event="outlines_failed", why=repr(error)[:300])
 
-    def own_facts(self) -> None:
-        """Hidden parts come without facts.json (only images/, context.png and description.md). The brief's
-        Envelope line gives the box, the volume and the through-hole count: the case is copied where it can be
-        written and a facts.json with those is put in it, so that the agent and ./check have their numbers."""
-        if (self.case_dir / "facts.json").is_file():
-            return
-        import re
-
-        text = (self.case_dir / "description.md").read_text(errors="replace")
-        line = next((l for l in text.splitlines() if "envelope" in l.lower()), "")
-
-        facts: dict = {}
-        sizes = re.findall(r"(\d+(?:\.\d+)?)", line)
-        if len(sizes) >= 3:
-            facts["bounding_box_mm"] = dict(zip("xyz", (float(v) for v in sizes[:3])))
-        volume = re.search(r"volume\s*([\d.]+)\s*cm", line, re.I)
-        if volume:
-            facts["volume_mm3"] = float(volume.group(1)) * 1000.0
-        holes = re.search(r"(\d+)\s*through", line, re.I)
-        if holes:
-            facts["through_holes_genus"] = int(holes.group(1))
-        copy = self.work / "input" / self.case_dir.name
-        shutil.copytree(self.case_dir, copy, dirs_exist_ok=True)
-        (copy / "facts.json").write_text(json.dumps(facts))
-        self.log(event="facts_from_brief", facts=facts)
-        self.case_dir = copy
-
     def prepare(self) -> bool:
         """The agent's workspace. False when the pipeline's solid cannot be read."""
-        self.own_facts()
         from agentic_cad import verify
         from agentic_cad.harness import measure as ms
 
@@ -584,7 +556,8 @@ def main() -> int:
     if not enabled():
         print("harness: off (needs ANTHROPIC_API_KEY, or OPENAI_API_KEY and OPENAI_MODEL, and the dsh command)", flush=True)
         return 0
-    cases = sorted((p for p in args.input_dir.glob("test_case_*") if (p / "description.md").is_file()), key=lambda p: int(p.name.removeprefix("test_case_")))
+    cases = sorted((p for p in args.input_dir.glob("test_case_*") if (p / "facts.json").is_file()
+                    and (p / "description.md").is_file()), key=lambda p: int(p.name.removeprefix("test_case_")))
     if args.only:
         cases = [case for case in cases if case.name in args.only]
     if not cases:
