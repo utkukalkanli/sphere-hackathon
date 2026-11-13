@@ -19,7 +19,7 @@ reasons in `decisions.md`.
   (`HARNESS_ONLY=1 HARNESS_BASE=0`, no pipeline) 0.990. The pipeline gave no measurable benefit there.
 - Mean local score of the nine practice parts against time, pipeline + agents (gpt-6.1-terra): 0.943 at the start,
   0.962 at 15 minutes, 0.979 at 30, 0.984 at 55.
-- **Submitted 2026-11-13 ~05:10 UTC: parallel mode, agents with `claude-opus-5-5` for 50 minutes** (Claude through
+- **Opus 5.5 is on branch `opus-5-5`, not `main`** (the user, 2026-11-13: not good enough). Submitted ~05:10 UTC as e6a6720: parallel mode, agents with `claude-opus-5-5` for 50 minutes** (Claude through
   Anthropic's API, `feat/claude-agents` merged into `main`; `HARNESS_PARALLEL=1`, `HARNESS_GOOD_ENOUGH=0.995`,
   `HARNESS_SECONDS=3000`, the rule "do not end the session early"). The committed outputs are this setup's own run
   in the image (04:14 UTC, `~/verify/opus50-0414`): mean local score 0.960 (new score), pipeline alone 0.906;
@@ -27,6 +27,9 @@ reasons in `decisions.md`.
   2 1.000, 3 1.000, 4 0.990, 5 0.947, 6 0.756, 7 0.830, 8 0.984, 9 0.958), below `e4e4475`'s 0.962: practice 6 alone
   (0.756 against 0.996) costs 0.027 of the mean.
   The OpenAI account is out of credit (2026-11-13 03:45): OpenAI models cannot run now.
+- **`main` (local, not pushed) is set for OpenAI**: `gpt-6.1-sol`, pipeline first (`HARNESS_PARALLEL=0`), 50 min,
+  agent stopped at local score 0.99 (`HARNESS_GOOD_ENOUGH`). Its `artifacts/outputs` are terra's of e4e4475
+  (leaderboard 0.962), not yet a run of this setup. The user: no run and no push until asked.
 - **Handover file: `team-d.env`** (repo root, git-ignored), since 2026-11-13 05:25: `OPENAI_BASE_URL=` (OpenAI), the new
   OpenAI key (the old one ran out of credit; the Claude key was overwritten), `OPENAI_MODEL=gpt-6.1-terra`,
   `HARNESS_PARALLEL=0` (pipeline first), `HARNESS_SECONDS=3000`, `HARNESS_GOOD_ENOUGH=0.995`; the image's defaults
