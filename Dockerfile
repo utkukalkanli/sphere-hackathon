@@ -42,7 +42,7 @@ ENV TRACE=0
 # sandboxed a second time (HARNESS_PERMISSION).
 ENV HARNESS_EFFORT=medium \
     HARNESS_PERMISSION=danger-full-access \
-    HARNESS_SECONDS=1800
+    HARNESS_SECONDS=3000
 ENV OPENAI_MODEL=gpt-6.1-terra
 
 CMD ["python", "scripts/main.py"]
