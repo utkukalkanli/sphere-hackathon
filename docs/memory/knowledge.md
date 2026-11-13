@@ -353,3 +353,12 @@ Dashboard:
   walls would have about twice the outer area; 1697 means a compact inner void of a few hundred
   cm2. No view shows where it is or its shape. OpenCascade's inward `MakeThickSolidByJoin` on our
   finned solid gives an invalid solid at 4 mm and fails at 6 mm (about 40 s each).
+- **The run needs about 2 GB a case, and a killed process leaves cases waiting for good** (2026-11-12, the image run as
+  the organisers run it, on the GPU box). 9 practice parts at 4 at a time: 3 min 57 s, peak 7.4 GB, outputs equal
+  to the committed ones; with 2 cores and 8 GB 6 min 59 s (practice 7 a hair different: 1.460 for 1.458). With a
+  4 GB limit a process was killed for memory and after 20 minutes four cases were still their bounding boxes, the
+  container still running. `scripts/main.py` now takes the number of cases at once from the memory it may use
+  (cgroup limit or free memory, 2.5 GB a case) and runs cases whose worker died again one at a time.
+- **Islands**: of 29 flat areas standing above everything around them in our solids of the 24 eval parts, 14 are in
+  the part and 15 are not (`tools` none; measured in the session). The isometric view tells them apart: share of
+  the top outline on its lines 0.62 to 1.00 for the real ones, 0.09 to 0.60 for the others.
