@@ -205,6 +205,18 @@ Tiers by our rule (up to 30 faces simple, up to 200 medium): parts 1 to 3, 4 to 
   depth (up to 3.7 cm3). The isometric silhouette takes only 0.8 % off, under the minimum gain.
 - **Practice 7 is as thin a shell as practice 6 by volume**, but its cavity is open and seen.
 
+## The extended practice set
+
+- `artifacts/inputs/test_case_10` to `test_case_20` (2026-11-13, from the organisers'
+  `extended-practice.zip`, moved in from `datasets/` on the user's word): 11 parts in the format of the nine
+  practice parts; `artifacts/extended-practice/index.csv` has their names
+  (camshaft, camshaft bushing, two belt wheels, intake manifold, oil pan, side cover, valve cover, rocking arm
+  spring, turbo shell, tubing spider). No ground truth. The zip held 20 parts; the other 9 are byte for byte
+  the practice parts 1 to 9 and were left out. pytest wants a `test_case_<n>.stp` in
+  `artifacts/outputs` for each of them, and `scripts/main.py` without arguments now runs all 20.
+- Its README calls `facts.json` "practice set only, for debugging" and lists only the images, `context.png`
+  and `description.md` as inputs for hidden parts (`open-questions.md`).
+
 ## The eval set
 
 - 266 parts (100 simple, 100 medium, 66 complex by face count; 113 ABC, 153 Fusion 360), built

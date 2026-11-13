@@ -1,0 +1,12 @@
+case,part
+test_case_10,engine_a__camshaft
+test_case_11,engine_a__camshaft_bushing
+test_case_12,engine_a__engine_belt_wheel
+test_case_13,engine_a__engine_belt_wheel_pt2
+test_case_14,engine_a__engine_intake_manifold
+test_case_15,engine_a__engine_oil_pan
+test_case_16,engine_a__engine_side_cover
+test_case_17,engine_a__engine_valve_cover
+test_case_18,engine_a__rocking_arm_spring
+test_case_19,engine_a__turbo_shell
+test_case_20,tubing_spider
