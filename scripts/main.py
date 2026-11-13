@@ -279,7 +279,6 @@ def main(args):
                 except Exception:  # its process died (a crash inside OpenCascade): its last file stays
                     print(f"{name} FAILED in its worker process:")
                     traceback.print_exc()
-                    mark_done(harness, name)
                     continue
                 mark_done(harness, name)
                 if results.get(name) != "failed" or result == "ok":
@@ -296,15 +295,17 @@ def main(args):
                 process.terminate()   # SIGTERM: the worker exits and takes its boolean child with it
         finally:
             pool.shutdown(wait=not stopped, cancel_futures=True)
-        for test_case in order:   # also the cases the hard stop cut short: their last file is final now
-            mark_done(harness, test_case.name)
-        finish_harness(harness, started)
 
         # 3. A worker that is killed (out of memory, most likely) breaks the pool, and every case that was
         # running or waiting is left with its box or its last step. Those are run again, one at a time,
         # each in a pool of its own, for as long as the run has time: a single case needs a quarter of
         # the memory, and one that dies again costs only itself.
         again = [job for job in jobs if results.get(job[0].name) not in ("ok", "stopped")] if not stopped else []
+        # The agents may start on every case whose file is final: all but the ones about to run again
+        # (also the cases the hard stop cut short).
+        for test_case in order:
+            if test_case.name not in {job[0].name for job in again}:
+                mark_done(harness, test_case.name)
         for number, job in enumerate(again):
             # its share of the time: what is left, among the cases still to run again
             with counter.get_lock():
@@ -332,6 +333,10 @@ def main(args):
                 traceback.print_exc()
             finally:
                 single.shutdown(wait=waited, cancel_futures=True)
+                mark_done(harness, job[0].name)
+        for test_case in order:
+            mark_done(harness, test_case.name)
+        finish_harness(harness, started)
 
     problems = {name: result for name, result in results.items() if result != "ok"}
     if problems:
